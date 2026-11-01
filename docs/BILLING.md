@@ -147,6 +147,32 @@ The support team works in its own page, **support.html** (the 🎧 Support desk 
 * **For the team member:** the company appears in the ERP's company list with a banner saying what they may do and until when. They don't become a member: they take no user seat and aren't listed among the company's people. When the time is up, or the customer ends it, they are out at once. The server refuses their changes after that, and refuses all changes while access is view only.
 * **Signed changes:** the customer's app adds a user "Name · BeyondERP Support" to the books the first time; adding it takes no seat. Every change the team member makes is a normal entry, through the same screens and rules as anyone's, signed with their name in the audit trail and the shared change log, and reversible the same way. The user stays in the books for next time, with no access between grants; a super administrator can deactivate it.
 
+### What each support team member may do
+
+Owner console → **Team** → a person → **On the support desk** (only the owner, with full access, changes this; every change is in the Activity log). Pick a role, then switch anything on or off:
+
+| Role | May do |
+|---|---|
+| **Shadow** | Read tickets and write internal notes. Nothing the customer sees; customers' emails are hidden. |
+| **Agent** | Reply and chat; notes; status, priority, assignee and ending chats; close and share solutions; enter books when the customer allows it; see customer contacts; see bug reports |
+| **Lead** | All of the above, plus editing saved replies and Help & FAQ, and support visits |
+
+The ten switches are: reply to customers, internal notes, manage (status, priority, assignee, end chats), close and share, customers' books, customer contacts, saved replies, Help & FAQ, bug reports, visits. **Access ends** (optional) stops the person's access at that moment, for someone shadowing or helping for a while. Team members added before these switches keep everything they had. The database enforces each switch; hiding a button is only the visible part. Someone without "customer contacts" sees addresses as `b•••@o•••` everywhere on the desk.
+
+### Emailing customers (maintenance, changes)
+
+**Announcements** (owner console, and the support desk for team members with the Announcements permission) → **✉ Email customers…**, or **Send by email…** on an announcement.
+
+1. Write the subject and message. Arabic is optional and is sent below the English in the same email.
+2. Choose who: companies (everyone, on trial, paying, not paying), optionally only some plans, then everyone in them or administrators only. The panel shows how many people that is.
+3. **Send me a test** sends it to your own address only. **Send…** asks once more, with the number, and then sends.
+
+* Each person gets their own email: nobody sees anyone else's address. Replies go to info@mybeyonderp.com.
+* People in several companies get it once. Deleted and archived companies, and people not yet approved, are left out.
+* Sending continues while the console is open, with the progress at the bottom of the screen. **Emails sent** lists every email with sent, failed and waiting counts; open one to stop, resume, or retry the addresses that failed (each with the reason).
+* Nothing is sent automatically. Use it for service news, not advertising (that needs people's consent; see the plan for the newsletter).
+* The email service's key stays on the server. Setting it up: [EMAIL_SETUP.md](EMAIL_SETUP.md).
+
 ## Referral program and upgrades
 
 Every signed-in user of the online workspace has a personal share link (`https://mybeyonderp.com/?ref=CODE`) on **🎁 Referral program** in the user menu. The share button uses the same link.

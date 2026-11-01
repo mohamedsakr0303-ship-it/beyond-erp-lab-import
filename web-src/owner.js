@@ -156,17 +156,21 @@ const NAV0 = () => [
     ["people", "☺", L("People", "الأشخاص"), "customers"], ["referrals", "🎁", L("Referrals", "الإحالات"), "customers"], ["cancellations", "✗", L("Cancellations & churn", "الإلغاءات والمغادرة"), "customers"]]],
   [L("Money", "المال"), [["payments", "⧗", L("Payments to verify", "مدفوعات للتحقق"), "billing"], ["ledger", "≣", L("All payments", "كل المدفوعات"), "billing"],
     ["methods", "💳", L("Payment methods", "طرق الدفع"), "settings"]]],
-  [L("Support", "الدعم"), [["queue", "☰", L("Support queue", "قائمة الدعم"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "support"],
-    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "support"], ["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "support"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "support"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"],
+  [L("Support", "الدعم"), [["queue", "☰", L("Support queue", "قائمة الدعم"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "desk:replies"],
+    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]]],
   [L("Product", "المنتج"), [["plans", "◎", L("Plans", "الباقات"), "settings"], ["addons", "＋", L("Modules, AI & support", "الأقسام والذكاء الاصطناعي والدعم"), "settings"],
     ["menus", "☰", L("Menus by industry", "القوائم حسب النشاط"), "settings"], ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"]]],
   [L("Console", "اللوحة"), [["team", "☷", L("Team", "الفريق"), "_full"], ["look", "🎨", L("Look of this console", "مظهر اللوحة"), "settings"],
     ["log", "⌚", L("Activity", "السجل"), "_full"], ["deleted", "⌫", L("Deleted companies", "الشركات المحذوفة"), "customers"]]]];
-const navOk = a => a === "*" || can(a);
+// what this team member may do on the support desk (full access: everything; members added before: everything)
+const DESK_KEYS = ["reply", "notes", "manage", "close", "books", "contacts", "replies", "help", "bugs", "visits"];
+const dcan = k => !!S.me && (S.me.full || !!(S.me.desk || {})[k]);
+const navOk = a => a === "*" || (a.startsWith("desk:") ? dcan(a.slice(5)) : can(a));
 const DESK_NAV = () => [[L("Support", "الدعم"), [["queue", "☰", L("Queue", "قائمة الانتظار"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"],
-    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "support"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "support"]], "support"],
-  [L("Help center", "مركز المساعدة"), [["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "support"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "support"]], "product"],
+    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "desk:replies"],
+    ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]], "support"],
+  [L("Help center", "مركز المساعدة"), [["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"]], "product"],
   [L("Customers", "العملاء"), [["customers", "▦", L("Customers", "العملاء"), "customers"], ["people", "☺", L("People", "الأشخاص"), "customers"]], "business"],
   [L("Me", "أنا"), [["alerts", "🔔", L("Notifications", "الإشعارات"), "*"]], "console"]];
 
@@ -1212,16 +1216,16 @@ PAGES.ticket = async (view, parts) => {
     ${m.body ? `<div class="t" dir="auto">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}${extra}</div>`;
   const thread = () => msg({ email: tk.email, body: tk.body, files: tk.files, created_at: tk.created_at }, `<div class="muted small">${esc(tk.kind)}${tk.company_name ? " · " + esc(tk.company_name) : ""}</div>`) + (tk.messages || []).map(m => msg(m)).join("");
   const head = () => `<a class="btn" href="#/queue">← ${esc(L("Queue", "قائمة الانتظار"))}</a>${mapChip(TK_ST(), tk.status)}${mapChip(PRIO(), tk.priority)}${mapChip(CHAT(), tk.chat)}
-    ${cust ? rankChip(cust.priority) : ""}<span class="sp"></span>${(tk.assignee || "").toLowerCase() !== myEmail() ? `<button class="btn" data-a="mine">✋ ${esc(L("Assign to me", "إسناد إليّ"))}</button>` : ""}
-    ${tk.chat === "live" ? `<button class="btn danger" data-a="chatend">⏹ ${esc(L("End the chat", "إنهاء المحادثة"))}</button>` : ""}
-    ${tk.status !== "closed" ? `<button class="btn" data-a="tclose">✓ ${esc(L("Close…", "إغلاق…"))}</button>` : `${chip(tk.shared ? L("Shared as a solution", "منشور كحل") : L("Not shared", "غير منشور"), tk.shared ? "ok" : "")}`}`;
+    ${cust ? rankChip(cust.priority) : ""}<span class="sp"></span>${dcan("manage") && (tk.assignee || "").toLowerCase() !== myEmail() ? `<button class="btn" data-a="mine">✋ ${esc(L("Assign to me", "إسناد إليّ"))}</button>` : ""}
+    ${tk.chat === "live" && dcan("manage") ? `<button class="btn danger" data-a="chatend">⏹ ${esc(L("End the chat", "إنهاء المحادثة"))}</button>` : ""}
+    ${tk.status !== "closed" && dcan("close") ? `<button class="btn" data-a="tclose">✓ ${esc(L("Close…", "إغلاق…"))}</button>` : `${chip(tk.shared ? L("Shared as a solution", "منشور كحل") : L("Not shared", "غير منشور"), tk.shared ? "ok" : "")}`}`;
   const draw = () => { const h = $("#thead"), t = $("#thr"); if (!h || !t) return; h.innerHTML = head(); const end = t.scrollHeight - t.scrollTop - t.clientHeight < 60;
     t.innerHTML = thread(); previews(t); if (end) t.scrollTop = t.scrollHeight; };
   const diag = Object.entries(tk.diag || {}).filter(([, v]) => v), log = (tk.log || []).slice().reverse(), co = cust && cust.company, pr = cust && cust.priority;
   view.innerHTML = `<div class="row" id="thead" style="margin-bottom:12px;flex-wrap:wrap;gap:6px">${head()}</div>
     <div class="split"><div><div class="card thread" id="thr" style="max-height:62vh;overflow:auto">${thread()}</div>
       <div class="card"><div class="row" style="gap:8px;margin-bottom:6px"><h3 style="margin:0">${esc(L("Reply", "رد"))}</h3><span class="sp"></span>
-        ${(S.replies || []).length ? `<select data-change="canned" style="max-width:260px"><option value="">💬 ${esc(L("Saved replies…", "الردود المحفوظة…"))}</option>${S.replies.map((r, i) => `<option value="${i}">${esc(r.title)}</option>`).join("")}</select>` : `<a class="small" href="#/replies">💬 ${esc(L("Add saved replies", "إضافة ردود محفوظة"))}</a>`}</div>
+        ${(S.replies || []).length ? `<select data-change="canned" style="max-width:260px"><option value="">💬 ${esc(L("Saved replies…", "الردود المحفوظة…"))}</option>${S.replies.map((r, i) => `<option value="${i}">${esc(r.title)}</option>`).join("")}</select>` : dcan("replies") ? `<a class="small" href="#/replies">💬 ${esc(L("Add saved replies", "إضافة ردود محفوظة"))}</a>` : ""}</div>
         <textarea id="rbody" rows="4" dir="auto" placeholder="${esc(L("Write to the customer… (Ctrl + Enter sends)", "اكتب للعميل… (Ctrl + Enter للإرسال)"))}"></textarea>
         <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><input type="file" id="rfiles" multiple accept="image/*,video/*,audio/*,application/pdf,.txt,.xlsx,.zip">
           ${navigator.mediaDevices && window.MediaRecorder ? `<button type="button" class="btn" data-a="voice">🎤 ${esc(L("Voice note", "رسالة صوتية"))}</button>` : ""}</div>
@@ -1245,11 +1249,14 @@ PAGES.ticket = async (view, parts) => {
         <label class="f">${esc(L("Assigned to", "مسند إلى"))}<select name="assignee" data-change="tset"><option value="">—</option>${(((q || {}).team) || S.team || []).concat(tk.assignee && !((q || {}).team || S.team || []).some(m => m.email === tk.assignee) ? [{ email: tk.assignee }] : [])
           .map(m => `<option value="${esc(m.email)}" ${m.email === tk.assignee ? "selected" : ""}>${esc(m.name || m.email)}</option>`).join("")}</select></label></div>
       <p class="small"><b>${esc(L("Opened", "فُتح"))}</b>: ${esc(dt(tk.created_at))}${tk.first_reply_at ? `<br><b>${esc(L("First reply", "أول رد"))}</b>: ${esc(dt(tk.first_reply_at))}` : ""}</p>
-      ${tk.company_id ? `<button class="btn" data-a="tvisit">🚗 ${esc(L("Arrange a visit for this…", "ترتيب زيارة لهذا…"))}</button>` : ""}</div>
+      ${tk.company_id && dcan("visits") ? `<button class="btn" data-a="tvisit">🚗 ${esc(L("Arrange a visit for this…", "ترتيب زيارة لهذا…"))}</button>` : ""}</div>
       ${diag.length ? `<div class="card"><h3>${esc(L("Technical details", "التفاصيل الفنية"))}</h3><div class="small">${diag.map(([k, v]) => `<div><b>${esc(k)}</b>: ${esc(v)}</div>`).join("")}</div></div>` : ""}
       ${log.length ? `<div class="card"><h3>${esc(L("What happened before the report", "ما حدث قبل البلاغ"))} <span class="muted">(${log.length})</span></h3><div class="tbl log"><table><tbody>${log.map(a => `<tr class="${a.t === "error" || (a.t === "api" && (a.s >= 400 || a.s === "err")) ? "neg" : ""}"><td class="muted" dir="ltr">${esc(a.at || "")}</td><td>${esc(a.t)}</td><td dir="ltr">${esc(a.t === "api" ? `${a.m} ${a.p} → ${a.s}${a.ms != null ? ` · ${a.ms} ms` : ""}${a.e ? ` · ${a.e}` : ""}` : a.t === "screen" ? a.h : a.m || "")}</td></tr>`).join("")}</tbody></table></div></div>` : ""}</div></div>`;
   if (q) S.team = q.team;
-  afterHooks.push(v => { const t = $("#thr", v); if (t) t.scrollTop = t.scrollHeight;
+  afterHooks.push(v => { if (!dcan("manage")) $$("[data-change=tset]", v).forEach(x => { x.disabled = true; });
+    const ri = $("#rint", v); if (ri && !dcan("reply")) { ri.checked = true; ri.disabled = true; $("#rbody", v).placeholder = L("Internal note for the team (you cannot write to the customer)", "ملاحظة داخلية للفريق (لا يمكنك الكتابة للعميل)"); }
+    if (ri && !dcan("reply") && !dcan("notes")) { const c = ri.closest(".card"); if (c) c.innerHTML = `<p class="muted" style="margin:0">👁 ${esc(L("You can read this ticket. Replying is not part of your access.", "يمكنك قراءة هذا البلاغ. الرد ليس ضمن صلاحياتك."))}</p>`; }
+    const t = $("#thr", v); if (t) t.scrollTop = t.scrollHeight;
     const ta = $("#rbody", v); if (ta) ta.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("[data-a=reply]").click(); } }); });
   // new messages appear by themselves while the ticket is open
   S.live = setInterval(async () => { if (document.hidden || parse().parts[0] !== "ticket" || +parse().parts[1] !== id) return;
@@ -1434,16 +1441,82 @@ PAGES.notices = async view => {
       { k: "starts_at", l: L("From", "من"), type: "date", v: String(n.starts_at || today()).slice(0, 10) }, { k: "ends_at", l: L("Until (blank: until switched off)", "حتى (فارغ: حتى الإيقاف)"), type: "date", v: String(n.ends_at || "").slice(0, 10) },
       { k: "active", l: L("Shown", "ظاهر"), type: "check", v: n.active }]),
       async v => { await rpc("console_notice_save", { p: { ...v, id: n.id || "", starts_at: v.starts_at ? v.starts_at + "T00:00:00Z" : "", ends_at: v.ends_at ? v.ends_at + "T23:59:59Z" : "" } }); toast(L("Saved.", "تم الحفظ.")); },
-      { extra: n.id ? `<button type="button" class="btn danger" data-a="ndel">${esc(L("Delete", "حذف"))}</button>` : "" });
+      { extra: (n.id ? `<button type="button" class="btn danger" data-a="ndel">${esc(L("Delete", "حذف"))}</button>` : "") + `<button type="button" class="btn" data-a="nmail">✉ ${esc(L("Send by email…", "إرسال بالبريد…"))}</button>` });
+    S.H.nmail = () => { const v = readForm($("#panel")); mailPanel({ subject: v.title, subject_ar: v.title_ar, body: v.body, body_ar: v.body_ar, status: v.audience, notice_id: n.id || "" }); };
     S.H.ndel = async () => { if (!await confirmIt(L("Delete this announcement?", "حذف هذا الإعلان؟"), { danger: true })) return; await rpc("console_notice_save", { p: { id: n.id, title: n.title, delete: true } }); closePanel(); route(); }; };
   S.H.nnew = () => edit();
-  view.innerHTML = `<div class="row" style="margin-bottom:12px"><button class="btn pri" data-a="nnew">+ ${esc(L("Announcement", "إعلان"))}</button><span class="muted small">${esc(L("Shown as a bar at the top of the ERP for the companies chosen. Each person can hide it.", "يظهر شريطاً أعلى النظام للشركات المختارة. يمكن لكل شخص إخفاؤه."))}</span></div><div class="card"><div id="ntbl"></div></div>`;
+  S.H.mnew = () => mailPanel({});
+  const [mails, ms] = await Promise.all([rpc("console_mailings").catch(() => []), mailStatus()]);
+  view.innerHTML = `<div class="row" style="margin-bottom:12px;gap:8px;flex-wrap:wrap"><button class="btn pri" data-a="nnew">+ ${esc(L("Announcement", "إعلان"))}</button><button class="btn" data-a="mnew">✉ ${esc(L("Email customers…", "مراسلة العملاء بالبريد…"))}</button><span class="muted small">${esc(L("Announcements show as a bar at the top of the ERP for the companies chosen; each person can hide it. Emails go to each person's inbox, only when you send them.", "تظهر الإعلانات شريطاً أعلى النظام للشركات المختارة ويمكن لكل شخص إخفاؤها. ويصل البريد لصندوق كل شخص عند إرسالك فقط."))}</span></div>
+    <div class="card"><div id="ntbl"></div></div>
+    <div class="card"><h2>✉ ${esc(L("Emails sent", "الرسائل المرسلة"))}</h2>${mailReadyNote(ms)}<div id="mtbl"></div></div>`;
+  afterHooks.push(v => table($("#mtbl", v), "mailings", mails, { sort: "created_at", dir: "desc", search: ["subject", "created_by"], onRow: mailDetail,
+    cols: [{ k: "subject", l: L("Subject", "الموضوع"), h: m => `<b>${esc(m.subject)}</b><span class="sub">${esc(mailWho(m.audience))}</span>` },
+      { k: "sent", l: L("Sent", "أُرسل"), num: true, h: m => `${num(m.sent)} / ${num(m.total)}` }, { k: "failed", l: L("Failed", "فشل"), num: true, h: m => m.failed ? chip(num(m.failed), "bad") : "0" },
+      { k: "status", l: L("Status", "الحالة"), h: m => mapChip(MAIL_ST(), m.status) }, { k: "created_at", l: L("When", "متى"), date: true, h: m => `${esc(dt(m.created_at))}<span class="sub">${esc(m.created_by || "")}</span>` }] }));
   afterHooks.push(v => table($("#ntbl", v), "notices", rows, { sort: "starts_at", dir: "desc", search: ["title", "body"], onRow: edit, rowCls: n => n.active ? "" : "dim",
     cols: [{ k: "title", l: L("Title", "العنوان"), h: n => `<b>${esc(n.title)}</b><span class="sub">${esc(LV[n.level])}</span>` }, { k: "audience", l: L("Shown to", "يظهر لـ"), v: n => AU[n.audience] },
       { k: "starts_at", l: L("From", "من"), date: true, h: n => esc(day(n.starts_at)) }, { k: "ends_at", l: L("Until", "حتى"), date: true, h: n => esc(day(n.ends_at)) },
       { k: "active", l: L("Status", "الحالة"), v: n => n.active ? 1 : 0, h: n => n.active ? chip(L("Shown", "ظاهر"), "ok") : chip(L("Off", "معطل")) }],
     filters: [{ k: "on", l: L("Status", "الحالة"), type: "select", opts: [["1", L("Shown", "ظاهر")], ["0", L("Off", "معطل")]], test: (n, v) => String(+!!n.active) === v }] }));
 };
+
+// ================================================================== announcement emails (sent by the "mail" function, one email per person)
+const MAIL_ST = () => ({ sending: [L("Sending", "جارٍ الإرسال"), "info"], stopped: [L("Stopped", "متوقف"), "warn"], done: [L("Sent", "أُرسل"), "ok"] });
+const MAIL_AU = () => ({ all: L("Everyone", "الجميع"), trial: L("Companies on trial", "شركات في التجربة"), paying: L("Paying companies", "الشركات المدفوعة"), unpaid: L("Companies not paying", "شركات غير مدفوعة") });
+const mailWho = a => { a = a || {}; return `${MAIL_AU()[a.status || "all"]} · ${a.who === "admins" ? L("administrators", "المسؤولون") : L("everyone in them", "كل من فيها")}${(a.plans || []).length ? " · " + a.plans.join(", ") : ""}`; };
+const mailStatus = () => fnCall("mail", { action: "status" }).catch(e => ({ ready: false, error: e.message }));
+const mailReadyNote = ms => ms.ready ? `<p class="muted small">${esc(L("Sent from", "تُرسل من"))} <span dir="ltr">${esc(ms.from)}</span></p>`
+  : `<div class="banner warn small">${esc(L("Email sending is not set up yet: the owner adds an email service's key to the workspace (see docs/EMAIL_SETUP.md). Until then you can prepare emails but not send them.", "لم يُضبط إرسال البريد بعد: يضيف المالك مفتاح خدمة البريد لمساحة العمل (انظر docs/EMAIL_SETUP.md). حتى ذلك الحين يمكنك تجهيز الرسائل دون إرسالها."))}</div>`;
+// keep sending while this console is open; the progress shows at the bottom of the screen
+async function mailRun(id) {
+  if (S.mailing === id) return; S.mailing = id;
+  let bar = $("#mailbar"); if (!bar) { bar = document.createElement("div"); bar.id = "mailbar"; bar.className = "mailbar"; document.body.appendChild(bar); }
+  const show = r => { bar.innerHTML = `✉ ${esc(L(`Sending… ${num(r.done || 0)} of ${num(r.total || 0)} sent`, `جارٍ الإرسال… أُرسل ${num(r.done || 0)} من ${num(r.total || 0)}`))}${r.failures ? ` · ${esc(L(`${r.failures} failed`, `فشل ${r.failures}`))}` : ""}`; };
+  show({});
+  try {
+    for (let i = 0; i < 500; i++) {
+      const r = await fnCall("mail", { action: "send", mailing: id }); show(r);
+      if (!r.left || r.status !== "sending") { toast(r.status === "done" ? L(`Sent to ${num(r.done)} people${r.failures ? `; ${r.failures} failed` : ""}.`, `أُرسل إلى ${num(r.done)} شخص${r.failures ? `؛ فشل ${r.failures}` : ""}.`) : L("Sending stopped.", "توقف الإرسال."), !!r.failures); break; }
+    }
+  } catch (e) { toast(e.message, true); } finally { S.mailing = null; bar.remove(); if (parse().parts[0] === "notices") route(); }
+}
+async function mailPanel(m) {
+  const ms = await mailStatus();
+  const plans = await rpc("billing_admin_overview").then(o => o.config.plans || []).catch(() => []);
+  const aud = () => { const v = readForm($("#panel")); return { status: v.status, who: v.who, plans: plans.filter(p => v["pl_" + p.code]).map(p => p.code) }; };
+  const count = async () => { const el = $("#mcount"); if (!el) return; try { const r = await rpc("console_mail_audience", { p: aud() });
+    el.innerHTML = `👥 ${esc(L(`Goes to ${num(r.people)} people in ${num(r.companies)} companies.`, `يصل إلى ${num(r.people)} شخص في ${num(r.companies)} شركة.`))}`; el.dataset.n = r.people; } catch (e) { el.textContent = e.message; } };
+  panel(L("Email customers", "مراسلة العملاء بالبريد"), mailReadyNote(ms) + form([
+    { k: "subject", l: L("Subject", "الموضوع"), v: m.subject || "", req: 1 }, { k: "subject_ar", l: L("Subject (Arabic, optional)", "الموضوع (عربي، اختياري)"), v: m.subject_ar || "", dir: "rtl" },
+    { k: "body", l: L("Message", "الرسالة"), type: "area", rows: 7, v: m.body || "", req: 1 }, { k: "body_ar", l: L("Message (Arabic, optional — sent below the English)", "الرسالة (عربي، اختياري — تُرسل أسفل الإنجليزية)"), type: "area", rows: 7, v: m.body_ar || "", dir: "rtl" },
+    { k: "status", l: L("Companies", "الشركات"), type: "select", v: m.status || "all", opts: Object.entries(MAIL_AU()) },
+    { k: "who", l: L("People in them", "الأشخاص فيها"), type: "select", v: "everyone", opts: [["everyone", L("Everyone", "الجميع")], ["admins", L("Administrators only", "المسؤولون فقط")]] },
+    ...(plans.length ? [{ type: "html", span: 1, html: `<div class="small"><b>${esc(L("Only these plans (none ticked: all plans)", "هذه الباقات فقط (بدون تحديد: كل الباقات)"))}</b><div class="row" style="gap:10px;flex-wrap:wrap;margin-top:4px">${plans.map(p => `<label class="chk"><input type="checkbox" name="pl_${esc(p.code)}"> ${esc((S.lang === "ar" && p.name_ar) || p.name)}</label>`).join("")}</div></div>` }] : []),
+    { type: "html", span: 1, html: `<div class="banner info small" id="mcount">…</div><p class="muted small" style="margin:6px 0 0">${esc(L("Each person gets their own email; no one sees the others. Replies come to the company inbox. Use it for service news (maintenance, changes), not advertising.", "يحصل كل شخص على رسالته الخاصة ولا يرى أحد الآخرين. تصل الردود إلى بريد الشركة. استخدمه لأخبار الخدمة (الصيانة والتغييرات)، لا للإعلانات."))}</p>` }], 2),
+    async v => { const n = +($("#mcount").dataset.n || 0); if (!n) throw new Error(L("No one matches — choose other people.", "لا أحد مطابق — اختر أشخاصاً آخرين."));
+      if (!ms.ready) throw new Error(L("Email sending is not set up yet.", "لم يُضبط إرسال البريد بعد."));
+      if (!await confirmIt(L(`Send “${v.subject}” to ${num(n)} people now?`, `إرسال «${v.subject}» إلى ${num(n)} شخص الآن؟`))) return false;
+      const r = await rpc("console_mail_create", { p: { subject: v.subject, subject_ar: v.subject_ar, body: v.body, body_ar: v.body_ar, audience: aud(), notice_id: m.notice_id || "" } });
+      closePanel(); mailRun(r.id); route(); return false; },
+    { wide: true, saveLabel: L("Send…", "إرسال…"), stay: true, extra: `<button type="button" class="btn" data-a="mtest">🧪 ${esc(L("Send me a test", "أرسل لي تجربة"))}</button>`,
+      onOpen: p => { count(); p.addEventListener("change", e => { if (/^(status|who|pl_)/.test(e.target.name || "")) count(); }); } });
+  S.H.mtest = async el => { const v = readForm($("#panel")); if (!v.subject.trim() || !v.body.trim()) return toast(L("Write the subject and the message first.", "اكتب الموضوع والرسالة أولاً."), true);
+    el.disabled = true; try { const r = await fnCall("mail", { action: "test", subject: v.subject, subject_ar: v.subject_ar, body: v.body, body_ar: v.body_ar }); toast(L(`Test sent to ${r.sent}.`, `أُرسلت التجربة إلى ${r.sent}.`)); } catch (e) { toast(e.message, true); } finally { el.disabled = false; } };
+}
+function mailDetail(m) {
+  const left = m.total - m.sent - m.failed;
+  panel(m.subject, `<p>${mapChip(MAIL_ST(), m.status)} ${esc(mailWho(m.audience))}</p>
+    <p class="small">${esc(L(`${num(m.sent)} of ${num(m.total)} sent · ${num(m.failed)} failed · ${num(left)} waiting`, `أُرسل ${num(m.sent)} من ${num(m.total)} · فشل ${num(m.failed)} · بانتظار ${num(left)}`))}<br>${esc(L(`By ${m.created_by || ""}, ${dt(m.created_at)}`, `بواسطة ${m.created_by || ""}، ${dt(m.created_at)}`))}</p>
+    ${m.subject_ar ? `<p dir="rtl"><b>${esc(m.subject_ar)}</b></p>` : ""}<div class="card small" style="white-space:pre-wrap" dir="auto">${esc(m.body)}</div>${m.body_ar ? `<div class="card small" style="white-space:pre-wrap" dir="rtl">${esc(m.body_ar)}</div>` : ""}
+    ${(m.failures || []).length ? `<h3>${esc(L("Not delivered", "لم تُسلّم"))}</h3><div class="small">${m.failures.map(f => `<div dir="ltr"><b>${esc(f.email)}</b> — ${esc(f.error || "")}</div>`).join("")}</div>` : ""}`, null,
+    { extra: [m.status === "sending" && left ? `<button type="button" class="btn pri" data-a="mgo">▶ ${esc(L("Continue sending", "متابعة الإرسال"))}</button>` : "",
+      m.status === "sending" ? `<button type="button" class="btn" data-a="mstate" data-s="stop">⏸ ${esc(L("Stop", "إيقاف"))}</button>` : "",
+      m.status === "stopped" ? `<button type="button" class="btn pri" data-a="mstate" data-s="resume">▶ ${esc(L("Resume", "استئناف"))}</button>` : "",
+      m.failed ? `<button type="button" class="btn" data-a="mstate" data-s="retry">↻ ${esc(L("Retry the failed", "إعادة محاولة الفاشلة"))}</button>` : ""].join("") });
+  S.H.mgo = () => { closePanel(); mailRun(m.id); };
+  S.H.mstate = async el => { const r = await rpc("console_mail_state", { p_mailing: m.id, p_state: el.dataset.s }); closePanel(); if (r.status === "sending") mailRun(m.id); route(); };
+}
 
 // ================================================================== plans: what customers see, what each includes
 const planCard = (p, cfg, tools = "") => {
@@ -1642,22 +1715,48 @@ PAGES.methods = async view => {
 const AREAS = () => [["overview", L("Overview", "نظرة عامة")], ["customers", L("Customers, people, cancellations", "العملاء والأشخاص والإلغاءات")], ["billing", L("See orders and payments", "عرض الطلبات والمدفوعات")],
   ["approve", L("Approve payments; trials, free use, suspend, archive, accounts", "اعتماد المدفوعات؛ التجارب والمجاني والإيقاف والأرشفة والحسابات")], ["support", L("Support tickets and visits", "بلاغات وزيارات الدعم")],
   ["notices", L("Announcements", "الإعلانات")], ["settings", L("Plans, prices, rules, payment methods, look", "الباقات والأسعار والقواعد وطرق الدفع والمظهر")]];
+const DESK_L = () => ({ reply: L("Reply to customers and start live chats", "الرد على العملاء وبدء المحادثات"), notes: L("Write internal notes", "كتابة ملاحظات داخلية"),
+  manage: L("Change status, priority and who it is assigned to; end live chats", "تغيير الحالة والأولوية والمسؤول؛ إنهاء المحادثات"), close: L("Close tickets and share solutions", "إغلاق البلاغات ونشر الحلول"),
+  books: L("Enter customers' books when they allow it", "دخول دفاتر العملاء عند سماحهم"), contacts: L("See customers' emails and company details", "رؤية بريد العملاء وبيانات الشركة"),
+  replies: L("Edit saved replies", "تعديل الردود المحفوظة"), help: L("Edit Help & FAQ and shared solutions", "تعديل المساعدة والحلول المنشورة"),
+  bugs: L("See bug reports", "رؤية بلاغات الأخطاء"), visits: L("Handle support visits", "إدارة زيارات الدعم") });
+// ready-made support roles; the switches can then be changed one by one
+const DESK_ROLES = () => ({ shadow: [L("Shadow — reads tickets, writes internal notes only", "مرافق — يقرأ البلاغات ويكتب ملاحظات داخلية فقط"), ["notes"]],
+  agent: [L("Agent — answers and closes tickets", "موظف دعم — يرد على البلاغات ويغلقها"), ["reply", "notes", "manage", "close", "books", "contacts", "bugs"]],
+  lead: [L("Lead — everything on the support desk", "مسؤول — كل شيء في مكتب الدعم"), DESK_KEYS] });
+const deskOf = perms => perms == null ? Object.fromEntries(DESK_KEYS.map(k => [k, true])) : perms.desk && typeof perms.desk === "object" ? perms.desk : Object.fromEntries(DESK_KEYS.map(k => [k, !!perms.support]));
+const deskRole = d => Object.entries(DESK_ROLES()).find(([, [, ks]]) => DESK_KEYS.every(k => !!d[k] === ks.includes(k)))?.[0] || "custom";
+const localDT = v => { if (!v) return ""; const d = new Date(v); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 PAGES.team = async view => {
   const rows = await rpc("console_staff");
   const edit = s => { s = s || { active: true, perms: {} };
+    const d = deskOf(s.email ? s.perms : { support: false }), role = deskRole(d);
     panel(s.email || L("Add a team member", "إضافة عضو للفريق"), form([
       { k: "email", l: L("Their sign-in email", "بريد تسجيل الدخول"), v: s.email || "", req: 1, dis: !!s.email, dir: "ltr" }, { k: "name", l: L("Name", "الاسم"), v: s.name || "" },
       { k: "full", l: L("Full access (everything, including the team, backups and deleting)", "صلاحية كاملة (كل شيء، بما في ذلك الفريق والنسخ الاحتياطية والحذف)"), type: "check", v: !!s.email && s.perms == null, span: 1 },
-      ...AREAS().map(([k, l]) => ({ k: "a_" + k, l, type: "check", v: !!(s.perms || {})[k], span: 1 })), { k: "active", l: L("Active", "نشط"), type: "check", v: s.active }], 1),
+      ...AREAS().map(([k, l]) => ({ k: "a_" + k, l, type: "check", v: !!(s.perms || {})[k], span: 1 })),
+      { type: "html", span: 1, html: `<div class="desk-perms"><h3 style="margin:8px 0 4px">${esc(L("On the support desk", "في مكتب الدعم"))}</h3>
+        <p class="muted small" style="margin:0 0 8px">${esc(L("Applies when “Support tickets and visits” is ticked. Pick a role, then change any switch.", "يُطبق عند تحديد «بلاغات وزيارات الدعم». اختر دوراً ثم غيّر أي مفتاح."))}</p>
+        <label class="f">${esc(L("Role", "الدور"))}<select data-change="deskrole">${Object.entries(DESK_ROLES()).map(([k, [l]]) => `<option value="${k}" ${k === role ? "selected" : ""}>${esc(l)}</option>`).join("")}
+          <option value="custom" ${role === "custom" ? "selected" : ""}>${esc(L("Custom", "مخصص"))}</option></select></label>
+        <div class="grid g1" style="gap:4px;margin-top:6px">${DESK_KEYS.map(k => `<label class="chk"><input type="checkbox" name="d_${k}" data-change="deskone" ${d[k] ? "checked" : ""}> ${esc(DESK_L()[k])}</label>`).join("")}</div></div>` },
+      { k: "until", l: L("Access ends (blank: no end)", "تنتهي الصلاحية (فارغ: بلا نهاية)"), type: "datetime-local", v: localDT(s.until), help: L("For someone shadowing or helping for a while. Not used with full access.", "لمن يرافق أو يساعد لفترة. لا يُستخدم مع الصلاحية الكاملة.") },
+      { k: "active", l: L("Active", "نشط"), type: "check", v: s.active }], 1),
       async v => { const perms = Object.fromEntries(AREAS().filter(([k]) => v["a_" + k]).map(([k]) => [k, true]));
-        await rpc("console_staff_save", { p: { email: s.email || v.email, name: v.name, full: !!v.full, perms, active: !!v.active } }); toast(L("Saved.", "تم الحفظ.")); },
+        if (perms.support) perms.desk = Object.fromEntries(DESK_KEYS.map(k => [k, !!v["d_" + k]]));
+        await rpc("console_staff_save", { p: { email: s.email || v.email, name: v.name, full: !!v.full, perms, active: !!v.active, until: v.until && !v.full ? new Date(v.until).toISOString() : "" } }); toast(L("Saved.", "تم الحفظ.")); },
       { extra: s.email && s.email !== S.me.email ? `<button type="button" class="btn danger" data-a="sdel">${esc(L("Remove", "إزالة"))}</button>` : "" });
+    S.H.deskrole = el => { const ks = (DESK_ROLES()[el.value] || [, null])[1]; if (!ks) return; DESK_KEYS.forEach(k => { const c = $(`#panel [name=d_${k}]`); if (c) c.checked = ks.includes(k); }); };
+    S.H.deskone = () => { const dd = Object.fromEntries(DESK_KEYS.map(k => [k, !!($(`#panel [name=d_${k}]`) || {}).checked])); const r = $("#panel [data-change=deskrole]"); if (r) r.value = deskRole(dd); };
     S.H.sdel = async () => { if (!await confirmIt(L(`Remove ${s.email} from the team?`, `إزالة ${s.email} من الفريق؟`), { danger: true })) return; await rpc("console_staff_save", { p: { email: s.email, delete: true } }); closePanel(); route(); }; };
   S.H.snew = () => edit();
+  const ended = s => s.until && new Date(s.until) <= new Date();
   view.innerHTML = `<div class="row" style="margin-bottom:12px"><button class="btn pri" data-a="snew">+ ${esc(L("Team member", "عضو فريق"))}</button><span class="muted small">${esc(L("They sign in here with their usual account and see only what is ticked. The console button appears in their ERP menu.", "يسجلون الدخول هنا بحسابهم المعتاد ويرون ما حُدد فقط. يظهر زر اللوحة في قائمة النظام لديهم."))}</span></div><div class="card"><div id="stbl"></div></div>`;
-  afterHooks.push(v => table($("#stbl", v), "team", rows, { sort: "email", dir: "asc", onRow: edit, rowCls: s => s.active ? "" : "dim",
+  afterHooks.push(v => table($("#stbl", v), "team", rows, { sort: "email", dir: "asc", onRow: edit, rowCls: s => s.active && !ended(s) ? "" : "dim",
     cols: [{ k: "email", l: L("Person", "الشخص"), h: s => `<b>${esc(s.name || s.email)}</b><span class="sub" dir="ltr">${esc(s.email)}</span>` },
-      { k: "perms", l: L("Access", "الصلاحيات"), v: s => s.perms == null ? "full" : Object.keys(s.perms).join(" "), h: s => s.perms == null ? chip(L("Full access", "صلاحية كاملة"), "ok") : AREAS().filter(([k]) => s.perms[k]).map(([, l]) => chip(l)).join(" ") || "—" },
+      { k: "perms", l: L("Access", "الصلاحيات"), v: s => s.perms == null ? "full" : Object.keys(s.perms).join(" "), h: s => s.perms == null ? chip(L("Full access", "صلاحية كاملة"), "ok")
+        : (AREAS().filter(([k]) => s.perms[k]).map(([k, l]) => chip(k === "support" ? `${l} · ${(DESK_ROLES()[deskRole(deskOf(s.perms))] || [L("Custom", "مخصص")])[0].split(" — ")[0]}` : l)).join(" ") || "—") },
+      { k: "until", l: L("Access ends", "تنتهي الصلاحية"), date: true, h: s => s.until ? (ended(s) ? chip(L("Ended", "انتهت"), "bad") + " " : "") + esc(dt(s.until)) : "—" },
       { k: "active", l: L("Status", "الحالة"), v: s => s.active ? 1 : 0, h: s => s.active ? chip(L("Active", "نشط"), "ok") : chip(L("Off", "معطل")) }] }));
 };
 
