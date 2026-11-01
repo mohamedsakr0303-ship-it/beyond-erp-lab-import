@@ -748,10 +748,21 @@ async function route() {
   if (view.isConnected) { if ($("[data-a=xsave]", view)) Drafts.track(view, $("h1,h2", view)?.textContent || t("m_invoices"), { page: true }); Drafts.banner(view); Hist.page(view); }
   if (parts.length === 1) addImportMenu(view, parts[0]).catch(() => {});
   stackify(view);
+  insLink(here);
   if (view.isConnected) pageTo(0);                       // every screen opens at its top
   if (view.isConnected) tabsAfterRoute();
 }
 
+// 📈 next to a screen's title: that part of the app's insights (when the person may see them)
+function insLink(here) {
+  const box = $(".ttl-box"); if (!box) return; const old = $("#inslink", box); if (old) old.remove();
+  const mod = here && INS_MOD[String(here[2]).split(/[.|]/)[0]];
+  if (!mod || parseHash().parts[0] === "insights" || !insCan(mod)) return;
+  box.insertAdjacentHTML("beforeend", `<a id="inslink" class="ins-link" href="#/insights?m=${mod}" title="${esc(L2("Insights for this part", "تحليلات هذا القسم"))}">📈 ${esc(L2("Insights", "التحليلات"))}</a>`);
+}
+const INS_PERM = { business: ["reports"], sales: ["sales", "reports"], purchasing: ["purchasing", "reports"], crm: ["crm"], units: ["business_units", "projects", "reports"],
+  rentals: ["rentals"], equipment: ["equipment"], people: ["payroll"] };
+const insCan = mod => (INS_PERM[mod] || []).some(p => can(p));
 // Phones show list tables (".tbl.stack") as one card per row: each cell carries its column heading.
 function stackify(root) {
   $$(".tbl.stack table", root).forEach(tb => {
@@ -2770,6 +2781,24 @@ const WIDGET_DRAW = {
       ${x.target ? `<span class="chip ${p >= exp ? "ok" : "bad"}">${pct(p)}</span>` : ""}</div>
       <div class="tgt-bar"><i style="width:${Math.min(100, p * 100).toFixed(1)}%"></i>${x.target ? `<em style="left:${Math.min(100, exp * 100).toFixed(1)}%" title="${esc(L2("Target to date", "المستهدف حتى تاريخه"))}"></em>` : ""}</div>
       <small class="muted">${esc(x.mine ? L2("Your sales", "مبيعاتك") : L2("Invoiced sales", "المبيعات المفوترة"))} ${esc(per)} · ${x.days_left} ${esc(L2("days remaining", "يوم متبقٍ"))}${x.target ? ` · ${esc(p >= exp ? L2("ahead of target", "متقدم عن المستهدف") : L2("behind target", "متأخر عن المستهدف"))}` : ""}</small></div>`; },
+  kpi_target: (x, w) => { const lower = x.lower_is_better, ok = x.projected_pct == null ? "" : (x.projected_pct >= 1) !== !!lower ? "ok" : "bad";
+    return heroCard(lower ? "h-cost" : "h-rev", lower ? "out" : "in", `${L2(x.label[0], x.label[1])} · ${L2("projected", "المتوقع")}`, x.projected, x.series, lower ? "#ff5a5f" : "#34c77b",
+      x.target ? `<span class="chip ${ok} hero-chip" title="${esc(L2("Against the target", "مقابل المستهدف"))}">${pct(x.projected_pct)}</span>` : "",
+      `<a class="hero-floor" href="#/insights"><small>${esc(L2(`${money(x.so_far)} so far · last month ${money(x.last_month)}`, `${money(x.so_far)} حتى الآن · الشهر الماضي ${money(x.last_month)}`))}${x.target ? ` · ${esc(L2("target", "المستهدف"))} ${money(x.target)}` : ""}</small></a>`); },
+  month_pace: x => { const p = x.target ? x.so_far / x.target : 0, exp = x.day / x.days, lower = x.lower_is_better, ahead = lower ? p <= exp : p >= exp;
+    return `<div class="tgt"><div class="tgt-nums"><b>${money(x.so_far)}</b><span>/ ${x.target ? money(x.target) : esc(L2("no target", "بلا مستهدف"))}</span>${x.target ? `<span class="chip ${ahead ? "ok" : "bad"}">${pct(p)}</span>` : ""}</div>
+      ${x.target ? `<div class="tgt-bar"><i style="width:${Math.min(100, p * 100).toFixed(1)}%"></i><em style="left:${Math.min(100, exp * 100).toFixed(1)}%"></em></div>` : ""}
+      <small class="muted">${esc(L2(`Heading for ${money(x.projected)} (last month ${money(x.last_month)})`, `متجه إلى ${money(x.projected)} (الشهر الماضي ${money(x.last_month)})`))}${x.need_per_day != null ? " · " + esc(L2(`${money(Math.max(0, x.need_per_day))} a day needed for ${x.days_left} days`, `${money(Math.max(0, x.need_per_day))} يومياً مطلوبة لمدة ${x.days_left} يوماً`)) : ""}${x.early ? " · " + esc(L2("early in the month", "بداية الشهر")) : ""}</small></div>`; },
+  why_changed: x => { const lab = [monthL(x.a[0].slice(0, 7)), monthL(x.b[0].slice(0, 7))];
+    return `<div class="wsum">${esc(L2(x.label[0], x.label[1]))} ${esc(lab[0])} → ${esc(lab[1])}: <b class="${goodWay(x.change, x.lower_is_better)}">${signed(x.change)}</b></div>
+      <div class="small muted">${esc(L2(`${signed(x.volume_effect)} from how many, ${signed(x.value_effect)} from the value of each`, `${signed(x.volume_effect)} من العدد، و${signed(x.value_effect)} من قيمة كل منها`))}</div>
+      ${wList(x.rows.filter(r => r.change).slice(0, 5).map(r => ({ title: r.group === "…" ? L2("Others", "أخرى") : grpL(r.group, x.dim), sub: `${money(r.before)} → ${money(r.after)}`, value: r.change, level: goodWay(r.change, x.lower_is_better) === "bad" ? "bad" : "ok", href: "#/insights" })), L2("No change.", "لا تغيير."))}`; },
+  deal_funnel: x => { const top = Math.max(1, ...x.stages.map(s => s.count));
+    return x.deals ? `<div class="funnel">${x.stages.map(s => `<div class="fn-row"><span class="fn-l">${esc(L2(s.en, s.ar))}</span><span class="fn-bar"><i style="width:${(s.count / top * 100).toFixed(1)}%"></i></span><b>${s.count}</b></div>`).join("")}</div>
+      <div class="wsum">${esc(L2("Win rate", "نسبة الفوز"))}: <b>${x.win_rate == null ? "—" : pct(x.win_rate)}</b> · ${esc(L2("Lost", "خسارة"))}: <b>${x.lost}</b></div>` : `<div class="empty small">${esc(L2("No deals yet.", "لا صفقات بعد."))}</div>`; },
+  capacity: x => x.total ? `<div class="wsum"><b>${pct(x.share || 0)}</b> ${esc(L2(`in use (${num(x.used)} of ${num(x.total)})`, `مستغل (${num(x.used)} من ${num(x.total)})`))}</div>
+      ${x.groups.map(g => `<div class="fn-row"><span class="fn-l">${esc(S.lang === "ar" ? g.group_ar || g.group || "—" : g.group || "—")}</span><span class="fn-bar"><i style="width:${Math.min(100, (g.share || 0) * 100).toFixed(1)}%"></i></span><b>${g.share == null ? "—" : pct(g.share)}</b></div>`).join("")}`
+    : `<div class="empty small">${esc(L2("Nothing recorded yet.", "لا شيء مسجل بعد."))}</div>`,
   installments_upcoming: x => `<div class="wsum">${esc(L2(`Next ${x.days} days`, `خلال ${x.days} يوماً`))}: <b>${money(x.total)}</b></div>` + wList(x.rows, L2("No upcoming instalments.", "لا توجد أقساط قادمة.")),
   installments_overdue: x => wStat(x.value, [`${x.count} instalments · ${x.customers} customers`, `${x.count} قسط · ${x.customers} عميل`], x.href, true) + wList(x.rows, L2("No overdue items.", "لا توجد مستحقات متأخرة.")),
   cheques_due: x => (x.rows.length ? `<div class="wsum">${esc(L2("Total", "الإجمالي"))}: <b>${money(x.total)}</b></div>` : "") + wList(x.rows, L2("No cheques due.", "لا توجد شيكات مستحقة.")),
@@ -2811,6 +2840,7 @@ function widgetOpts(e, info) {
   drawer(L2("Card options", "خيارات البطاقة") + " — " + L2(info.en, info.ar), form(Object.entries(info.opts).map(([k, [en, ar, kind]]) =>
     kind === "check" ? { k, l: L2(en, ar), type: "checkbox", v: !!o[k], span: "spanall" }
       : kind === "period" ? { k, l: L2(en, ar), type: "select", v: o[k] || "month", opts: [["month", L2("Month", "شهر")], ["quarter", L2("Quarter", "ربع سنة")], ["year", L2("Year", "سنة")]] }
+      : kind === "choice" ? { k, l: L2(en, ar), type: "select", v: o[k] || (info.opts[k][3][0] || [])[0], opts: info.opts[k][3].map(([v, e2, a2]) => [v, L2(e2, a2)]) }
         : kind === "text" ? { k, l: L2(en, ar), v: o[k] ?? "" } : { k, l: L2(en, ar), type: "number", v: o[k] ?? "" })),
     async v => { e.opts = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== "" && x !== false).map(([k, x]) => [k, typeof x === "string" && x.trim() !== "" && !isNaN(+x) ? +x : x])); route(); },
     { submitLabel: L2("Done", "تم"), noDraft: true });
@@ -9330,7 +9360,22 @@ const APP_MODES = ["standalone", "window-controls-overlay", "minimal-ui"];
 const inAppWindow = () => { try { return APP_MODES.some(m => matchMedia(`(display-mode: ${m})`).matches) || !!navigator.standalone; } catch { return false; } };
 const appInstalled = () => inAppWindow() || store.get("pwaInstalled", 0) === 1;
 const onInstallChange = () => { if (/#\/settings\?tab=perms/.test(location.hash) && S.permDraw) S.permDraw(); else if (/^#\/download/.test(location.hash)) route(); };
-window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installPrompt = e; store.set("pwaInstalled", 0); });   // offered = not installed
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installPrompt = e; store.set("pwaInstalled", 0); if (inAppWindow()) movedBanner(); });   // offered = not installed
+// An app window that is not this address's own app: the app was installed from the earlier address and is now sent
+// here, so the browser shows its "left the app" bar on top. Installing from here gives the app its new home.
+function movedBanner() {
+  if (document.getElementById("movedbar")) return;
+  const d = document.createElement("div"); d.id = "movedbar"; d.className = "movedbar";
+  d.innerHTML = `<span>🏠 ${esc(L2(`BeyondERP has a new home: ${location.host}. Install the app from here, then remove the old one — the grey bar at the top goes away.`,
+      `انتقل BeyondERP إلى عنوانه الجديد: ${location.host}. ثبّت التطبيق من هنا ثم احذف القديم — يختفي الشريط الرمادي أعلى الشاشة.`))}</span>
+    <button type="button" class="btn sm pri" data-a="movedinstall">${esc(L2("Install", "تثبيت"))}</button><button type="button" class="btn sm" data-a="movedclose" aria-label="${esc(L2("Close", "إغلاق"))}">✕</button>`;
+  document.body.appendChild(d);
+}
+Object.assign(S.GLOBAL_H, {
+  movedinstall: async () => { if (!installPrompt) return; installPrompt.prompt(); const c = await installPrompt.userChoice.catch(() => ({})); installPrompt = null;
+    if (c.outcome === "accepted") { store.set("pwaInstalled", 1); const b = document.getElementById("movedbar"); if (b) b.remove();
+      toast(L2("Installed. Open BeyondERP from the new icon, and uninstall the old one (its menu ⋮ → Uninstall).", "تم التثبيت. افتح BeyondERP من الأيقونة الجديدة، واحذف القديمة (قائمتها ⋮ ← إلغاء التثبيت).")); } },
+  movedclose: () => { const b = document.getElementById("movedbar"); if (b) b.remove(); } });
 window.addEventListener("appinstalled", () => { installPrompt = null; store.set("pwaInstalled", 1); toast(L2("BeyondERP is installed.", "تم تثبيت BeyondERP.")); onInstallChange(); });
 APP_MODES.forEach(m => { try { matchMedia(`(display-mode: ${m})`).addEventListener("change", onInstallChange); } catch { /* old browsers */ } });
 PAGES.download = async view => {
@@ -13771,6 +13816,127 @@ async function supportVisit(view, id) {
   filePreviews(view);
 }
 // one ticket: what was reported, then the conversation (the customer's view, or staff's in the console)
+// ------------------------------------------------------------ Insights: why figures moved, the month's pace, targets, funnel, capacity
+// Everything comes from the books (erp/insights.py). Each part of the app shows what suits it: money measures split
+// into "more documents" (volume) and "more per document" (value), the deal funnel, or how much of what it has is in use.
+const INS_MOD = { sales: "sales", shop: "sales", purchasing: "purchasing", stock: "purchasing", crm: "crm", business_units: "units", projects: "units",
+  contracts: "units", rentals: "rentals", equipment: "equipment", payroll: "people", reports: "business", accounting: "business", assets: "business" };
+const monthL = ym => { try { return new Date(+ym.slice(0, 4), +ym.slice(5, 7) - 1, 1).toLocaleDateString(S.lang === "ar" ? "ar-EG" : "en-GB", { month: "short", year: "numeric" }); } catch { return ym; } };
+const signed = v => (v > 0 ? "+" : v < 0 ? "−" : "") + money(Math.abs(v));
+const num = v => (Number(v) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
+// entries without a unit / customer are grouped under "—": say what that means
+const grpL = (g, dim) => g !== "—" ? g : dim === "unit" ? L2("No business unit (company-wide)", "بدون وحدة أعمال (على مستوى الشركة)")
+  : dim === "party" ? L2("No customer / supplier named", "بدون عميل / مورد محدد") : L2("Other", "أخرى");
+const short = v => { const a = Math.abs(v), f = a >= 1e6 ? (a / 1e6).toFixed(a >= 1e7 ? 1 : 2) + "M" : a >= 1e3 ? (a / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "K" : String(Math.round(a)); return (v < 0 ? "−" : "") + f; };
+const goodWay = (v, lower) => v === 0 ? "" : (v > 0) !== !!lower ? "ok" : "bad";
+// a trend in plain words
+const trendSay = tr => !tr || tr.direction === "short" ? L2("Not enough months yet to show a direction.", "لا توجد أشهر كافية بعد لإظهار اتجاه.")
+  : tr.direction === "up" ? L2(`Growing about ${pct(tr.pct_per_month)} a month.`, `ينمو نحو ${pct(tr.pct_per_month)} شهرياً.`)
+  : tr.direction === "down" ? L2(`Declining about ${pct(-tr.pct_per_month)} a month.`, `يتراجع نحو ${pct(-tr.pct_per_month)} شهرياً.`)
+  : tr.direction === "swings" ? L2(`No clear direction: it swings about ±${pct(tr.swing)} from month to month.`, `لا اتجاه واضح: يتأرجح نحو ±${pct(tr.swing)} من شهر لآخر.`)
+  : L2("Steady from month to month.", "مستقر من شهر لآخر.");
+// the bridge from one month to the next: start, each group's change, end
+function waterfall(br, labels) {
+  const rows = br.rows.filter(r => r.change), W = Math.max(520, (rows.length + 2) * 92), H = 250, pad = 34, bw = 46;
+  let run = br.before; const bars = [{ l: labels[0], from: 0, to: br.before, kind: "end" }];
+  rows.forEach(r => { bars.push({ l: r.group === "…" ? L2("Others", "أخرى") : grpL(r.group, br.dim), from: run, to: run + r.change, kind: r.change >= 0 ? "up" : "down" }); run += r.change; });
+  bars.push({ l: labels[1], from: 0, to: br.after, kind: "end" });
+  const vals = bars.flatMap(b => [b.from, b.to]), lo = Math.min(0, ...vals), hi = Math.max(...vals) || 1, y = v => H - pad - (v - lo) / (hi - lo) * (H - pad * 2);
+  const step = W / bars.length, good = k => (k === "up") !== !!br.lower_is_better;
+  return `<div class="wf-wrap"><svg class="wf" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img">
+    ${bars.map((b, i) => { const x = i * step + (step - bw) / 2, top = y(Math.max(b.from, b.to)), h = Math.max(2, Math.abs(y(b.from) - y(b.to)));
+      const cls = b.kind === "end" ? "wf-end" : good(b.kind) ? "wf-up" : "wf-down", v = b.kind === "end" ? b.to : b.to - b.from;
+      return `<rect x="${x}" y="${top}" width="${bw}" height="${h}" rx="4" class="${cls}"><title>${esc(b.l)}: ${money(v)}</title></rect>
+        <text x="${x + bw / 2}" y="${top - 6}" text-anchor="middle" class="wf-v">${b.kind === "end" ? short(v) : (v >= 0 ? "+" : "") + short(v)}</text>
+        <text x="${x + bw / 2}" y="${H - 12}" text-anchor="middle" class="wf-l">${esc(String(b.l).length > 14 ? String(b.l).slice(0, 13) + "…" : b.l)}</text>`; }).join("")}
+    <line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" class="wf-0"/></svg></div>`;
+}
+function insKpi(k, m) {
+  const lower = k.lower_is_better, pctT = k.projected_pct, ok = pctT == null ? "" : (pctT >= 1) !== !!lower ? "ok" : "bad";
+  return `<div class="card ins-kpi"><div class="ins-k-top"><div><div class="muted small">${esc(L2(k.label[0], k.label[1]))} · ${esc(L2("this month, projected", "هذا الشهر، المتوقع"))}</div>
+      <div class="ins-k-v">${money(k.projected)}</div>
+      <div class="small">${esc(L2(`${money(k.so_far)} in ${k.day} of ${k.days} days`, `${money(k.so_far)} خلال ${k.day} من ${k.days} يوماً`))}
+        ${k.last_month ? ` · <span class="${goodWay(k.vs_last, lower)}">${k.vs_last >= 0 ? "▲" : "▼"} ${k.vs_last_pct != null ? pct(Math.abs(k.vs_last_pct)) : ""}</span> ${esc(L2("vs last month", "عن الشهر الماضي"))}` : ""}</div></div>
+      ${k.target ? `<span class="chip ${ok}" title="${esc(L2("Projected against the target", "المتوقع مقابل المستهدف"))}">${pct(pctT)}</span>` : ""}</div>
+    ${spark(k.series, lower ? "#ff8a65" : "#34c77b", "ik" + m)}
+    <div class="small">${k.target ? esc(L2(`Target ${money(k.target)} (${k.target_source === "budget" ? "budget" : "set"}).`, `المستهدف ${money(k.target)} (${k.target_source === "budget" ? "الموازنة" : "محدد"}).`)) + " " +
+      (k.need_per_day != null ? esc(lower ? L2(`To stay within it: at most ${money(Math.max(0, k.need_per_day))} a day for the ${k.days_left} days left (now ${money(k.pace_per_day)} a day).`, `للبقاء ضمنه: ${money(Math.max(0, k.need_per_day))} يومياً كحد أقصى للأيام الـ${k.days_left} المتبقية (حالياً ${money(k.pace_per_day)} يومياً).`)
+        : L2(`To reach it: ${money(Math.max(0, k.need_per_day))} a day for the ${k.days_left} days left (now ${money(k.pace_per_day)} a day).`, `لبلوغه: ${money(Math.max(0, k.need_per_day))} يومياً للأيام الـ${k.days_left} المتبقية (حالياً ${money(k.pace_per_day)} يومياً).`)) : "")
+      : esc(L2("No target: set a budget (Budgets) or a target on a dashboard card.", "لا مستهدف: ضع موازنة (الموازنات) أو مستهدفاً في بطاقة لوحة المعلومات."))}
+      ${k.early ? `<div class="muted">${esc(L2("Early in the month: the projection is rough.", "بداية الشهر: التوقع تقريبي."))}</div>` : ""}<div class="muted">${esc(trendSay(k.trend))}</div></div></div>`;
+}
+function insBridge(x, data) {
+  const br = x.bridge, labels = [monthL(br.a[0].slice(0, 7)), monthL(br.b[0].slice(0, 7))], lower = br.lower_is_better, ch = br.change;
+  const say = !br.before && !br.after ? L2("Nothing in either month.", "لا شيء في أي من الشهرين.")
+    : !ch ? L2(`${x.label[0]} did not change from ${labels[0]} to ${labels[1]} (${money(br.after)}).`, `لم تتغير ${x.label[1]} من ${labels[0]} إلى ${labels[1]} (${money(br.after)}).`)
+    : L2(`${x.label[0]} ${ch >= 0 ? "rose" : "fell"} ${money(Math.abs(ch))}${br.before ? ` (${pct(Math.abs(ch / br.before))})` : ""} from ${labels[0]} to ${labels[1]}: ${signed(br.volume_effect)} from how many documents, ${signed(br.value_effect)} from the value of each.`,
+         `${x.label[1]} ${ch >= 0 ? "ارتفعت" : "انخفضت"} ${money(Math.abs(ch))}${br.before ? ` (${pct(Math.abs(ch / br.before))})` : ""} من ${labels[0]} إلى ${labels[1]}: ${signed(br.volume_effect)} من عدد المستندات، و${signed(br.value_effect)} من قيمة كل مستند.`)
+      + (br.lift ? " " + L2(`Biggest lift: ${grpL(br.lift, x.dim)}.`, `أكبر دفعة: ${grpL(br.lift, x.dim)}.`) : "") + (br.drag ? " " + L2(`Biggest drag: ${grpL(br.drag, x.dim)}.`, `أكبر عائق: ${grpL(br.drag, x.dim)}.`) : "");
+  const dims = x.dims.map(d => `<option value="${d}" ${d === x.dim ? "selected" : ""}>${esc(L2(...data.dims[d]))}</option>`).join("");
+  return `<div class="card"><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><h3 style="margin:0">${esc(L2(`Why ${x.label[0].toLowerCase()} changed`, `لماذا تغيّرت ${x.label[1]}`))} · ${esc(labels[0])} → ${esc(labels[1])}</h3>
+      <span class="spacer"></span><label class="small">${esc(L2("Split by", "التقسيم حسب"))} <select data-change="insdim">${dims}</select></label></div>
+    <div class="banner ${goodWay(ch, lower) === "bad" ? "warn" : "info"}" style="margin:10px 0">${esc(say)}</div>
+    ${br.rows.length ? waterfall(br, labels) : ""}
+    <div class="tbl stack"><table><thead><tr><th>${esc(L2(...data.dims[x.dim]))}</th><th class="num">${esc(labels[0])}</th><th class="num">${esc(labels[1])}</th><th class="num">${esc(L2("Change", "التغير"))}</th>
+      <th class="num">${esc(L2("From how many", "من العدد"))}</th><th class="num">${esc(L2("From value of each", "من قيمة كل منها"))}</th><th class="num">${esc(L2("Documents", "المستندات"))}</th></tr></thead><tbody>
+      ${br.rows.map(r => `<tr><td>${esc(r.group === "…" ? L2(`${r.other} others`, `${r.other} أخرى`) : grpL(r.group, x.dim))}</td><td class="num">${money(r.before)}</td><td class="num"><b>${money(r.after)}</b></td>
+        <td class="num ${goodWay(r.change, lower)}">${signed(r.change)}</td><td class="num">${signed(r.volume_effect)}</td><td class="num">${signed(r.value_effect)}</td><td class="num">${r.docs_before} → <b>${r.docs_after}</b></td></tr>`).join("")}
+      <tr class="tot"><td>${esc(L2("Total", "الإجمالي"))}</td><td class="num">${money(br.before)}</td><td class="num"><b>${money(br.after)}</b></td><td class="num ${goodWay(ch, lower)}">${signed(ch)}</td>
+        <td class="num">${signed(br.volume_effect)}</td><td class="num">${signed(br.value_effect)}</td><td></td></tr></tbody></table></div>
+    <details class="ins-hist"><summary>${esc(L2("Month by month: what changed and why", "شهراً بشهر: ما الذي تغيّر ولماذا"))}</summary>
+      <div class="tbl stack"><table><thead><tr><th>${esc(L2("Month", "الشهر"))}</th><th class="num">${esc(x.label[S.lang === "ar" ? 1 : 0])}</th><th class="num">${esc(L2("Change", "التغير"))}</th>
+        <th class="num">${esc(L2("From how many", "من العدد"))}</th><th class="num">${esc(L2("From value of each", "من قيمة كل منها"))}</th><th>${esc(L2("Biggest lift", "أكبر دفعة"))}</th><th>${esc(L2("Biggest drag", "أكبر عائق"))}</th></tr></thead><tbody>
+        ${x.history.slice().reverse().map(h => `<tr><td>${esc(monthL(h.month))}</td><td class="num"><b>${money(h.value)}</b></td><td class="num ${goodWay(h.change, lower)}">${signed(h.change)}${h.pct != null ? ` <small>(${pct(h.pct)})</small>` : ""}</td>
+          <td class="num">${signed(h.volume_effect)}</td><td class="num">${signed(h.value_effect)}</td>
+          <td>${(lower ? h.drag : h.lift) ? `${esc(grpL((lower ? h.drag : h.lift).group, x.dim))} <small class="ok">${signed((lower ? h.drag : h.lift).change)}</small>` : "—"}</td>
+          <td>${(lower ? h.lift : h.drag) ? `${esc(grpL((lower ? h.lift : h.drag).group, x.dim))} <small class="bad">${signed((lower ? h.lift : h.drag).change)}</small>` : "—"}</td></tr>`).join("")}</tbody></table></div>
+      <p class="muted small">${esc(L2("Each change splits into how many documents (invoices, bills, receipts) there were and the value of each; the two add up to the change.", "يُقسم كل تغير إلى عدد المستندات (فواتير، فواتير موردين، إيصالات) وقيمة كل منها؛ ومجموعهما يساوي التغير."))}</p></details></div>`;
+}
+function insFunnel(f) {
+  const top = Math.max(1, ...f.stages.map(s => s.count));
+  const tbl = (rows, head) => rows.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(head)}</th><th class="num">${esc(L2("Deals", "الصفقات"))}</th><th class="num">${esc(L2("Won", "فوز"))}</th>
+    <th class="num">${esc(L2("Lost", "خسارة"))}</th><th class="num">${esc(L2("Win rate", "نسبة الفوز"))}</th><th class="num">${esc(L2("Won value", "قيمة الفوز"))}</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${esc(r.group)}</td><td class="num">${r.deals}</td><td class="num">${r.won}</td><td class="num">${r.lost}</td><td class="num">${r.win_rate == null ? "—" : pct(r.win_rate)}</td><td class="num">${money(r.won_value)}</td></tr>`).join("")}</tbody></table></div>` : "";
+  if (!f.deals) return `<div class="card"><h3 style="margin-top:0">${esc(L2("Deal funnel", "مسار الصفقات"))}</h3><div class="empty">${esc(L2("No deals yet. Add them in Customers & Deals → Deals pipeline.", "لا صفقات بعد. أضفها من العملاء والصفقات ← مسار الصفقات."))}</div></div>`;
+  return `<div class="card"><h3 style="margin-top:0">${esc(L2("Deal funnel", "مسار الصفقات"))}</h3>
+    <div class="kpis">${kpiBox(L2("Deals", "الصفقات"), String(f.deals))}${kpiBox(L2("Open", "مفتوحة"), String(f.open))}${kpiBox(L2("Won", "فوز"), String(f.won))}${kpiBox(L2("Win rate", "نسبة الفوز"), f.win_rate == null ? "—" : pct(f.win_rate))}${kpiBox(L2("Won value", "قيمة الفوز"), money(f.won_value))}</div>
+    <div class="funnel">${f.stages.map((s, i) => `<div class="fn-row"><span class="fn-l">${esc(L2(s.en, s.ar))}</span><span class="fn-bar"><i style="width:${(s.count / top * 100).toFixed(1)}%"></i></span>
+      <b>${s.count}</b><small class="muted">${i && f.stages[i - 1].count ? pct(s.count / f.stages[i - 1].count) : ""}</small></div>`).join("")}</div>
+    <p class="muted small">${esc(L2("Deals now at or past each stage; lost deals are counted apart with their reasons.", "الصفقات التي بلغت كل مرحلة أو تجاوزتها؛ وتُحسب الصفقات الخاسرة على حدة مع أسبابها."))}</p>
+    ${f.lost_reasons.length ? `<h4>${esc(L2("Why deals are lost", "لماذا تُخسر الصفقات"))}</h4><div class="funnel">${f.lost_reasons.map(r => `<div class="fn-row"><span class="fn-l">${esc(r.reason)}</span><span class="fn-bar bad"><i style="width:${(r.count / f.lost * 100).toFixed(1)}%"></i></span><b>${r.count}</b></div>`).join("")}</div>` : ""}
+    <div class="split" style="margin-top:12px"><div>${tbl(f.by_source, L2("Source", "المصدر"))}</div><div>${tbl(f.by_owner, L2("Owner", "المسؤول"))}</div></div></div>`;
+}
+function insCapacity(c) {
+  const title = { rentals: L2("Rental items out with customers", "أصناف الإيجار لدى العملاء"), equipment: L2("Equipment used this month", "المعدات المستخدمة هذا الشهر"), people: L2("People at work today", "الموظفون في العمل اليوم") }[c.kind];
+  const grid = g => g.total <= 120 ? `<div class="capgrid">${Array.from({ length: Math.round(g.total) }, (_, i) => `<i class="${i < Math.round(g.used) ? "on" : ""}"></i>`).join("")}</div>`
+    : `<div class="meter big"><i style="width:${Math.min(100, (g.share || 0) * 100).toFixed(1)}%"></i></div>`;
+  if (!c.total) return `<div class="card"><h3 style="margin-top:0">${esc(title)}</h3><div class="empty">${esc(L2("Nothing recorded yet.", "لا شيء مسجل بعد."))}</div></div>`;
+  return `<div class="card"><h3 style="margin-top:0">${esc(title)} · <span class="${(c.share || 0) >= .5 ? "ok" : "warn"}">${pct(c.share || 0)}</span></h3>
+    <div class="capcards">${c.groups.map(g => `<div class="capcard"><div class="row"><b>${esc(S.lang === "ar" ? g.group_ar || g.group || "—" : g.group || "—")}</b><span class="spacer"></span><span class="chip">${g.share == null ? "—" : pct(g.share)}</span></div>
+      <div class="small muted">${esc(L2(`${num(g.used)} of ${num(g.total)}`, `${num(g.used)} من ${num(g.total)}`))}</div>${grid(g)}</div>`).join("")}</div></div>`;
+}
+PAGES.insights = async (view, parts, q) => {
+  $("#ttl").textContent = L2("Insights", "التحليلات"); $("#crumb").textContent = L2("What moved the figures, and where the month is heading", "ما الذي حرّك الأرقام، وإلى أين يتجه الشهر");
+  let d;
+  try { d = await api("GET", "/api/insights?" + new URLSearchParams(Object.entries(q).filter(([, v]) => v))); }
+  catch (e) { view.innerHTML = `<div class="card"><div class="empty">${esc(L2("Insights need access to at least one of: reports, sales, purchasing, deals, business units, rentals, equipment or payroll.", "تتطلب التحليلات صلاحية على واحد على الأقل من: التقارير أو المبيعات أو المشتريات أو الصفقات أو وحدات الأعمال أو الإيجار أو المعدات أو الرواتب."))}</div></div>`; return; }
+  const set = (k, v) => { const n = { ...q, [k]: v }; if (!v) delete n[k]; location.hash = "#/insights?" + new URLSearchParams(n); };
+  Object.assign(S.H, { insdim: el => set("dim", el.value), insmonth: el => set("month", el.value) });
+  const months = Array.from({ length: 13 }, (_, i) => { const dt0 = new Date(+d.today.slice(0, 4), +d.today.slice(5, 7) - 1 - i, 1); return dt0.toISOString().slice(0, 7); });
+  const ms = d.measures.filter(x => !x.empty);
+  view.innerHTML = `<div class="toolbar ins-tabs">${d.modules.map(m => `<a class="btn ${m.key === d.module ? "pri" : ""}" href="#/insights?m=${m.key}">${esc(L2(m.en, m.ar))}</a>`).join("")}
+      ${ms.length ? `<span class="spacer"></span><label class="small">${esc(L2("Explain", "شرح"))} <select data-change="insmonth">${months.map(m => `<option value="${m}" ${m === d.month ? "selected" : ""}>${esc(monthL(m))}</option>`).join("")}</select></label>` : ""}</div>
+    ${ms.length ? `<div class="ins-kpis">${ms.map(x => insKpi(x.kpi, x.measure)).join("")}</div>` : ""}
+    ${d.measures.filter(x => x.empty).map(x => `<div class="muted small" style="margin:4px 0">${esc(L2(`${x.label[0]}: nothing recorded yet.`, `${x.label[1]}: لا شيء مسجل بعد.`))}</div>`).join("")}
+    ${ms.map(x => insBridge(x, d)).join("")}
+    ${d.profit ? `<div class="card"><h3 style="margin-top:0">${esc(L2("Net profit by business unit", "صافي الربح حسب وحدة الأعمال"))} · ${esc(monthL(d.vs))} → ${esc(monthL(d.month))}</h3>
+      <div class="tbl stack"><table><thead><tr><th>${esc(L2("Business unit", "وحدة الأعمال"))}</th><th class="num">${esc(monthL(d.vs))}</th><th class="num">${esc(monthL(d.month))}</th><th class="num">${esc(L2("Change", "التغير"))}</th>
+        <th class="num">${esc(L2("From revenue", "من الإيرادات"))}</th><th class="num">${esc(L2("From costs", "من التكاليف"))}</th></tr></thead><tbody>
+        ${d.profit.rows.map(r => `<tr><td>${esc(grpL(r.group, "unit"))}</td><td class="num ${r.before < 0 ? "neg" : ""}">${money(r.before)}</td><td class="num ${r.after < 0 ? "neg" : ""}"><b>${money(r.after)}</b></td>
+          <td class="num ${goodWay(r.change)}">${signed(r.change)}</td><td class="num">${signed(r.revenue_change)}</td><td class="num">${signed(r.cost_change)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    ${d.funnel ? insFunnel(d.funnel) : ""}${d.capacity ? insCapacity(d.capacity) : ""}`;
+};
+
 // ------------------------------------------------------------ Help & FAQ: questions by category, problems already solved, search
 // Shared solved issues carry only a title and how it was resolved (written by the team, nothing about who reported it).
 const helpT = (x, k) => S.lang === "ar" && x[k + "_ar"] ? x[k + "_ar"] : x[k];

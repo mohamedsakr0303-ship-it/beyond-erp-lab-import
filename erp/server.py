@@ -4646,6 +4646,17 @@ def bulk_action(ctx):
 
 
 # =============================================================== dashboard
+@route("GET", "/api/insights")
+def insights_page(ctx):
+    """What moved the figures, the month's pace, targets, the deal funnel and capacity — for one part of the app
+    (?m=business|sales|purchasing|crm|units|rentals|equipment|people), only what this person may see."""
+    from . import insights
+    mod = ctx.q.get("m") or next((k for k in insights.MODULES if insights.allowed(ctx.can, k)), None)
+    if not mod:
+        raise PermissionError()
+    return ok(insights.page(ctx.db, mod, ctx.can, ctx.q))
+
+
 @route("GET", "/api/dashboard/view")
 def dashboard_view(ctx):
     """The signed-in person's dashboard (their group's), with each widget's figures. Super administrators may pass

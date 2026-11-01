@@ -487,6 +487,56 @@ def w_design(c, o):
     return {}   # text, headings and buttons: all in the card's design
 
 
+# ------------------------------------------------------------------ insights cards (erp/insights.py)
+def _measure(c, o, default="revenue"):
+    from . import insights
+    m = o.get("measure") if o.get("measure") in insights.MEASURES else default
+    if not any(c.can(p) for p in insights.MEASURES[m][6]):
+        raise PermissionError()
+    return insights, m
+
+
+def w_kpi_target(c, o):
+    insights, m = _measure(c, o)
+    return insights.kpi(c.db, m, o.get("target") or None, c.q.get("bu_id") or None)
+
+
+def w_month_pace(c, o):
+    insights, m = _measure(c, o)
+    return insights.pace(c.db, m, o.get("target") or None, None, c.q.get("bu_id") or None)
+
+
+def w_why_changed(c, o):
+    insights, m = _measure(c, o)
+    dims = [d for d in insights.MEASURES[m][5]]
+    dim = o.get("split") if o.get("split") in dims else dims[0]
+    b_m = insights._month_add(acc.today()[:7], -1)
+    a_m = insights._month_add(b_m, -1)
+    r = insights.bridge(c.db, m, dim, (a_m + "-01", insights._month_end(a_m)), (b_m + "-01", insights._month_end(b_m)),
+                        c.q.get("bu_id") or None, top=5)
+    return {**r, "label": [insights.MEASURES[m][0], insights.MEASURES[m][1]], "dim_label": list(insights.DIMS[dim])}
+
+
+def w_deal_funnel(c, o):
+    from . import insights
+    return insights.funnel(c.db)
+
+
+def w_capacity(c, o):
+    from . import insights
+    kind = o.get("kind") if o.get("kind") in ("rentals", "equipment", "people") else "rentals"
+    need = {"rentals": "rentals", "equipment": "equipment", "people": "payroll"}[kind]
+    if not c.can(need):
+        raise PermissionError()
+    return getattr(insights, "capacity_" + kind)(c.db)
+
+
+_MEASURE_CHOICE = [["revenue", "Revenue", "الإيرادات"], ["costs", "Costs", "التكاليف"], ["collections", "Collected from customers", "المحصّل من العملاء"],
+                   ["payroll", "Payroll cost", "تكلفة الرواتب"]]
+_SPLIT_CHOICE = [["party", "Customer / supplier", "العميل / المورد"], ["unit", "Business unit", "وحدة الأعمال"],
+                 ["source", "Where it comes from", "المصدر"], ["account", "Account", "الحساب"]]
+
+
 def w_account_balance(c, o):
     """The balance of one account (or a range by its first digits) as at the dashboard's end date, on its normal side."""
     code = text(o.get("account"))
@@ -549,12 +599,22 @@ _W = [
     ("quick_links", "Quick links", "روابط سريعة", "general", (), 2, w_quick_links, {}),
     ("account_balance", "Account balance", "رصيد حساب", "overview", ("reports", "accounting.ledger"), 1, w_account_balance,
      {"account": ("Account code (or its first digits)", "كود الحساب (أو أول أرقامه)", "text")}),
+    ("kpi_target", "Measure against target", "المؤشر مقابل المستهدف", "overview", ("reports", "sales", "purchasing", "payroll"), 1, w_kpi_target,
+     {"measure": ("Measure", "المؤشر", "choice", _MEASURE_CHOICE), "target": ("Monthly target (blank: the budget)", "المستهدف الشهري (فارغ: الموازنة)", "number")}),
+    ("month_pace", "This month's pace", "وتيرة هذا الشهر", "overview", ("reports", "sales", "purchasing", "payroll"), 2, w_month_pace,
+     {"measure": ("Measure", "المؤشر", "choice", _MEASURE_CHOICE), "target": ("Monthly target (blank: the budget)", "المستهدف الشهري (فارغ: الموازنة)", "number")}),
+    ("why_changed", "Why it changed (last month)", "لماذا تغيّر (الشهر الماضي)", "overview", ("reports", "sales", "purchasing", "payroll"), 2, w_why_changed,
+     {"measure": ("Measure", "المؤشر", "choice", _MEASURE_CHOICE), "split": ("Split by", "التقسيم حسب", "choice", _SPLIT_CHOICE)}),
+    ("deal_funnel", "Deal funnel", "مسار الصفقات", "sales", ("crm",), 2, w_deal_funnel, {}),
+    ("capacity", "Capacity in use", "الطاقة المستغلة", "projects", ("rentals", "equipment", "payroll"), 2, w_capacity,
+     {"kind": ("What", "ماذا", "choice", [["rentals", "Rental items out", "أصناف الإيجار الخارجة"], ["equipment", "Equipment used this month", "المعدات المستخدمة هذا الشهر"],
+                                         ["people", "People at work today", "الموظفون في العمل اليوم"]])}),
     # building blocks: what they show is set in the card's design (any number of each)
     ("text", "Text / note", "نص / ملاحظة", "design", (), 2, w_design, {}),
     ("heading", "Section heading", "عنوان قسم", "design", (), 4, w_design, {}),
     ("links", "Buttons / links", "أزرار وروابط", "design", (), 2, w_design, {}),
 ]
-MULTI = {"text", "heading", "links", "account_balance"}     # may appear more than once on a dashboard
+MULTI = {"text", "heading", "links", "account_balance", "kpi_target", "month_pace", "why_changed", "capacity"}     # may appear more than once on a dashboard
 WIDGETS = {w[0]: {"id": w[0], "en": w[1], "ar": w[2], "cat": w[3], "perm": w[4], "size": w[5], "fn": w[6], "opts": w[7]} for w in _W}
 
 
