@@ -100,7 +100,8 @@ def guard(db, sc, method, path, q, body):
                 q["bu_id"] = str(sc.first())
             else:
                 raise ValidationError("Choose one of your permitted projects for this report.")
-    if path == "/api/dashboard" and not q.get("bu_id") and sc.ids:
+    # the dashboard, its cards and insights: figures of their project only
+    if path in ("/api/dashboard", "/api/dashboard/view", "/api/insights") and not q.get("bu_id") and sc.ids:
         q["bu_id"] = str(sc.first())
     m = ONE_ENTRY.match(path)
     if m:

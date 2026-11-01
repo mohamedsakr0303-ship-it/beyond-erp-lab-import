@@ -86,7 +86,7 @@ def pack(wheel_names):
                                   f"window.BEYOND_PACK_FILES = {json.dumps(files)};\n", encoding="utf-8")
 
 
-PWA_FILES = ("og-image.jpg", "og-image-ar.jpg", "manifest.webmanifest", "manifest-beyond.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "favicon.png")
+PWA_FILES = ("favicon.ico", "favicon-48.png", "og-image.jpg", "og-image-ar.jpg", "manifest.webmanifest", "manifest-beyond.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "favicon.png")
 
 
 COPYRIGHT = "BeyondERP — © {year} BEYONDERP. All rights reserved. Proprietary and confidential: copying, modifying, " \
@@ -131,11 +131,40 @@ def arabic_page(html, site):
         html = html.replace(f'<link rel="canonical" href="{site}">', f'<link rel="canonical" href="{site}ar.html">')
         html = html.replace(f'<meta property="og:url" content="{site}">', f'<meta property="og:url" content="{site}ar.html">')
     html = re.sub(r"<noscript>.*?</noscript>", "<noscript><h1>BeyondERP</h1><p>أدِر أعمالك، لا أوراقها. نظام سحابي واحد للحسابات والمبيعات "
-                  "والمشتريات والمخزون والمشروعات والموارد البشرية والرواتب، بالعربية والإنجليزية. فعّل JavaScript لاستخدام التطبيق.</p></noscript>",
+                  "والمشتريات والمخزون والمشروعات والموارد البشرية والرواتب، بالعربية والإنجليزية. فعّل JavaScript لاستخدام التطبيق.</p>"
+                  "<h2>ماذا يقدم BeyondERP</h2><ul><li>الحسابات والأستاذ العام والتقارير المالية: قائمة الدخل والميزانية والتدفقات النقدية والموازنات</li>"
+                  "<li>المبيعات وعروض الأسعار والفواتير والتحصيل وأرصدة العملاء</li><li>المشتريات وفواتير الموردين والمخزون والمستودعات</li>"
+                  "<li>المشروعات والعقود والمستخلصات وربحية وحدات الأعمال</li><li>الموارد البشرية والحضور والرواتب</li><li>المعدات وتأجير المعدات</li>"
+                  "<li>العملاء والصفقات</li><li>الفاتورة الإلكترونية والإقرارات الضريبية</li>"
+                  "<li>التحليلات: لماذا تغيّرت الإيرادات والتكاليف، ووتيرة الشهر مقابل المستهدف، ومسار الصفقات، والطاقة المستغلة</li></ul>"
+                  "<p>يعمل في المتصفح، وكتطبيق مثبت على الهاتف والكمبيوتر، وكنسخة لسطح المكتب. ابدأ بتجربة مجانية.</p></noscript>",
                   html, flags=re.S)
     # a first-time visitor of the Arabic page gets the app in Arabic (a language chosen before is kept)
     return html.replace('<script>(function(){try{var l="";', '<script>try{if(!localStorage.getItem("berp.lang")&&!localStorage.getItem("berp.look"))'
                         'localStorage.setItem("berp.lang",\'"ar"\');}catch(e){}</script>\n<script>(function(){try{var l="";', 1)
+
+
+def structured_data(site):
+    """What search engines read about BeyondERP: the website (its name, so results say "BeyondERP" rather than the
+    address), the organization behind it (name and logo), and the software itself."""
+    org = {"@type": "Organization", "name": "BeyondERP", "alternateName": "BEYONDERP",
+           "description": "The company behind BeyondERP, a cloud ERP in English and Arabic."}
+    app = {"@type": "SoftwareApplication", "name": "BeyondERP", "applicationCategory": "BusinessApplication",
+           "operatingSystem": "Web, Windows, macOS, Android, iOS", "inLanguage": ["en", "ar"], "slogan": "Run the business, not the paperwork.",
+           "description": "One cloud ERP for accounting, sales, purchasing, inventory, projects, HR and payroll, with live reports, "
+                          "business insights and e-invoicing, in English and Arabic.",
+           "featureList": ["Accounting and financial reports", "Sales, invoicing and collections", "Purchasing and inventory",
+                           "Projects, contracts and business units", "HR, attendance and payroll", "Equipment rental",
+                           "Customers and deals (CRM)", "E-invoicing", "Insights: why figures changed, monthly pace and targets"],
+           "offers": {"@type": "Offer", "category": "Subscription", "description": "Free trial, then a monthly or yearly plan per company."}}
+    web = {"@type": "WebSite", "name": "BeyondERP", "alternateName": ["Beyond ERP", "BEYONDERP"], "inLanguage": ["en", "ar"]}
+    if site:
+        org |= {"@id": site + "#organization", "url": site, "logo": {"@type": "ImageObject", "url": site + "icon-512.png", "width": 512, "height": 512}}
+        app |= {"@id": site + "#software", "url": site, "image": site + "og-image.jpg", "publisher": {"@id": site + "#organization"}}
+        web |= {"@id": site + "#website", "url": site, "publisher": {"@id": site + "#organization"}}
+    else:
+        app["publisher"] = {"@type": "Organization", "name": "BeyondERP"}
+    return json.dumps({"@context": "https://schema.org", "@graph": [web, org, app]}, ensure_ascii=False, separators=(",", ":"))
 
 
 def search_files():
@@ -148,12 +177,15 @@ def search_files():
     if site and not site.endswith("/"):
         site += "/"
     page = OUT / "index.html"
-    html = page.read_text(encoding="utf-8")
+    html = page.read_text(encoding="utf-8").replace("__LD__", structured_data(site))
     if site:
         html = html.replace("__SITE__", site)
+        # search engines take the first icon and want a file (a multiple of 48 px), not one written into the page; the
+        # offline download keeps the built-in one (it has no separate icon files)
+        html = re.sub(r'<link rel="icon" id="appicon" type="image/png" sizes="64x64" href="data:[^"]*">',
+                      '<link rel="icon" href="favicon.ico" sizes="48x48">\n<link rel="icon" id="appicon" type="image/png" sizes="48x48" href="favicon-48.png">', html)
     else:
-        html = "\n".join(x for x in html.split("\n") if "__SITE__" not in x or "ld+json" in x)
-        html = html.replace('"url":"__SITE__",', "")
+        html = "\n".join(x for x in html.split("\n") if "__SITE__" not in x)
     page.write_text(html, encoding="utf-8")
     (OUT / "ar.html").write_text(arabic_page(html, site), encoding="utf-8")
     robots = "User-agent: *\nAllow: /\n"           # scripts and styles stay open: search engines render the page with them

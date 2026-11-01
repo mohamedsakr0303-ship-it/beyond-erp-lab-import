@@ -760,8 +760,11 @@ function insLink(here) {
   if (!mod || parseHash().parts[0] === "insights" || !insCan(mod)) return;
   box.insertAdjacentHTML("beforeend", `<a id="inslink" class="ins-link" href="#/insights?m=${mod}" title="${esc(L2("Insights for this part", "تحليلات هذا القسم"))}">📈 ${esc(L2("Insights", "التحليلات"))}</a>`);
 }
-const INS_PERM = { business: ["reports"], sales: ["sales", "reports"], purchasing: ["purchasing", "reports"], crm: ["crm"], units: ["business_units", "projects", "reports"],
-  rentals: ["rentals"], equipment: ["equipment"], people: ["payroll"] };
+// the same screens erp/insights.py asks for (a section counts as granted when any one of its screens is, so: screens)
+const INS_PERM = { business: ["reports.income_statement"], sales: ["sales.invoices|sales.receivables|sales.receipts|shop.orders|reports.income_statement"],
+  purchasing: ["purchasing.costs|purchasing.expenses|purchasing.payables|purchasing.bills|reports.income_statement"], crm: ["crm.deals"],
+  units: ["business_units.profitability|reports.income_statement"], rentals: ["rentals.contracts"], equipment: ["equipment.register|equipment.usage"],
+  people: ["payroll.runs|payroll.attendance|payroll.employees"] };
 const insCan = mod => (INS_PERM[mod] || []).some(p => can(p));
 // Phones show list tables (".tbl.stack") as one card per row: each cell carries its column heading.
 function stackify(root) {
@@ -2782,8 +2785,8 @@ const WIDGET_DRAW = {
       <div class="tgt-bar"><i style="width:${Math.min(100, p * 100).toFixed(1)}%"></i>${x.target ? `<em style="left:${Math.min(100, exp * 100).toFixed(1)}%" title="${esc(L2("Target to date", "المستهدف حتى تاريخه"))}"></em>` : ""}</div>
       <small class="muted">${esc(x.mine ? L2("Your sales", "مبيعاتك") : L2("Invoiced sales", "المبيعات المفوترة"))} ${esc(per)} · ${x.days_left} ${esc(L2("days remaining", "يوم متبقٍ"))}${x.target ? ` · ${esc(p >= exp ? L2("ahead of target", "متقدم عن المستهدف") : L2("behind target", "متأخر عن المستهدف"))}` : ""}</small></div>`; },
   kpi_target: (x, w) => { const lower = x.lower_is_better, ok = x.projected_pct == null ? "" : (x.projected_pct >= 1) !== !!lower ? "ok" : "bad";
-    return heroCard(lower ? "h-cost" : "h-rev", lower ? "out" : "in", `${L2(x.label[0], x.label[1])} · ${L2("projected", "المتوقع")}`, x.projected, x.series, lower ? "#ff5a5f" : "#34c77b",
-      x.target ? `<span class="chip ${ok} hero-chip" title="${esc(L2("Against the target", "مقابل المستهدف"))}">${pct(x.projected_pct)}</span>` : "",
+    return heroCard(lower ? "h-cost" : "h-rev", lower ? "out" : "in", `${L2(x.label[0], x.label[1])} · ${x.early ? L2("so far", "حتى الآن") : L2("projected", "المتوقع")}`, x.early ? x.so_far : x.projected, x.series, lower ? "#ff5a5f" : "#34c77b",
+      x.target && !x.early ? `<span class="chip ${ok} hero-chip" title="${esc(L2("Against the target", "مقابل المستهدف"))}">${pct(x.projected_pct)}</span>` : "",
       `<a class="hero-floor" href="#/insights"><small>${esc(L2(`${money(x.so_far)} so far · last month ${money(x.last_month)}`, `${money(x.so_far)} حتى الآن · الشهر الماضي ${money(x.last_month)}`))}${x.target ? ` · ${esc(L2("target", "المستهدف"))} ${money(x.target)}` : ""}</small></a>`); },
   month_pace: x => { const p = x.target ? x.so_far / x.target : 0, exp = x.day / x.days, lower = x.lower_is_better, ahead = lower ? p <= exp : p >= exp;
     return `<div class="tgt"><div class="tgt-nums"><b>${money(x.so_far)}</b><span>/ ${x.target ? money(x.target) : esc(L2("no target", "بلا مستهدف"))}</span>${x.target ? `<span class="chip ${ahead ? "ok" : "bad"}">${pct(p)}</span>` : ""}</div>
@@ -13828,6 +13831,7 @@ const num = v => (Number(v) || 0).toLocaleString("en-US", { maximumFractionDigit
 const grpL = (g, dim) => g !== "—" ? g : dim === "unit" ? L2("No business unit (company-wide)", "بدون وحدة أعمال (على مستوى الشركة)")
   : dim === "party" ? L2("No customer / supplier named", "بدون عميل / مورد محدد") : L2("Other", "أخرى");
 const short = v => { const a = Math.abs(v), f = a >= 1e6 ? (a / 1e6).toFixed(a >= 1e7 ? 1 : 2) + "M" : a >= 1e3 ? (a / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "K" : String(Math.round(a)); return (v < 0 ? "−" : "") + f; };
+const INS_NAME = { revenue: ["revenue", "الإيرادات"], costs: ["costs", "التكاليف"], collections: ["collections", "التحصيلات"], payroll: ["payroll & labour cost", "تكلفة الرواتب والعمالة"] };
 const goodWay = (v, lower) => v === 0 ? "" : (v > 0) !== !!lower ? "ok" : "bad";
 // a trend in plain words
 const trendSay = tr => !tr || tr.direction === "short" ? L2("Not enough months yet to show a direction.", "لا توجد أشهر كافية بعد لإظهار اتجاه.")
@@ -13853,17 +13857,19 @@ function waterfall(br, labels) {
 }
 function insKpi(k, m) {
   const lower = k.lower_is_better, pctT = k.projected_pct, ok = pctT == null ? "" : (pctT >= 1) !== !!lower ? "ok" : "bad";
-  return `<div class="card ins-kpi"><div class="ins-k-top"><div><div class="muted small">${esc(L2(k.label[0], k.label[1]))} · ${esc(L2("this month, projected", "هذا الشهر، المتوقع"))}</div>
-      <div class="ins-k-v">${money(k.projected)}</div>
-      <div class="small">${esc(L2(`${money(k.so_far)} in ${k.day} of ${k.days} days`, `${money(k.so_far)} خلال ${k.day} من ${k.days} يوماً`))}
-        ${k.last_month ? ` · <span class="${goodWay(k.vs_last, lower)}">${k.vs_last >= 0 ? "▲" : "▼"} ${k.vs_last_pct != null ? pct(Math.abs(k.vs_last_pct)) : ""}</span> ${esc(L2("vs last month", "عن الشهر الماضي"))}` : ""}</div></div>
-      ${k.target ? `<span class="chip ${ok}" title="${esc(L2("Projected against the target", "المتوقع مقابل المستهدف"))}">${pct(pctT)}</span>` : ""}</div>
+  const met = k.target && !lower && k.so_far >= k.target, over = k.target && lower && k.so_far > k.target;
+  return `<div class="card ins-kpi"><div class="ins-k-top"><div><div class="muted small">${esc(L2(k.label[0], k.label[1]))} · ${esc(k.early ? L2("this month so far", "هذا الشهر حتى الآن") : L2("this month, projected", "هذا الشهر، المتوقع"))}</div>
+      <div class="ins-k-v">${money(k.early ? k.so_far : k.projected)}</div>
+      <div class="small">${esc(k.early ? L2(`Day ${k.day} of ${k.days} — too early to project`, `اليوم ${k.day} من ${k.days} — مبكر للتوقع`) : L2(`${money(k.so_far)} in ${k.day} of ${k.days} days`, `${money(k.so_far)} خلال ${k.day} من ${k.days} يوماً`))}
+        ${k.last_month && !k.early ? ` · <span class="${goodWay(k.vs_last, lower)}">${k.vs_last >= 0 ? "▲" : "▼"} ${k.vs_last_pct != null ? pct(Math.abs(k.vs_last_pct)) : ""}</span> ${esc(L2("vs last month", "عن الشهر الماضي"))}` : ""}</div></div>
+      ${k.target && !k.early ? `<span class="chip ${ok}" title="${esc(L2("Projected against the target", "المتوقع مقابل المستهدف"))}">${pct(pctT)}</span>` : ""}</div>
     ${spark(k.series, lower ? "#ff8a65" : "#34c77b", "ik" + m)}
     <div class="small">${k.target ? esc(L2(`Target ${money(k.target)} (${k.target_source === "budget" ? "budget" : "set"}).`, `المستهدف ${money(k.target)} (${k.target_source === "budget" ? "الموازنة" : "محدد"}).`)) + " " +
-      (k.need_per_day != null ? esc(lower ? L2(`To stay within it: at most ${money(Math.max(0, k.need_per_day))} a day for the ${k.days_left} days left (now ${money(k.pace_per_day)} a day).`, `للبقاء ضمنه: ${money(Math.max(0, k.need_per_day))} يومياً كحد أقصى للأيام الـ${k.days_left} المتبقية (حالياً ${money(k.pace_per_day)} يومياً).`)
+      (met ? esc(L2("Target reached.", "تم بلوغ المستهدف.")) : over ? esc(L2(`Already over it by ${money(k.so_far - k.target)}.`, `تجاوزه بالفعل بمقدار ${money(k.so_far - k.target)}.`))
+        : k.need_per_day != null ? esc(lower ? L2(`To stay within it: at most ${money(Math.max(0, k.need_per_day))} a day for the ${k.days_left} days left (now ${money(k.pace_per_day)} a day).`, `للبقاء ضمنه: ${money(Math.max(0, k.need_per_day))} يومياً كحد أقصى للأيام الـ${k.days_left} المتبقية (حالياً ${money(k.pace_per_day)} يومياً).`)
         : L2(`To reach it: ${money(Math.max(0, k.need_per_day))} a day for the ${k.days_left} days left (now ${money(k.pace_per_day)} a day).`, `لبلوغه: ${money(Math.max(0, k.need_per_day))} يومياً للأيام الـ${k.days_left} المتبقية (حالياً ${money(k.pace_per_day)} يومياً).`)) : "")
       : esc(L2("No target: set a budget (Budgets) or a target on a dashboard card.", "لا مستهدف: ضع موازنة (الموازنات) أو مستهدفاً في بطاقة لوحة المعلومات."))}
-      ${k.early ? `<div class="muted">${esc(L2("Early in the month: the projection is rough.", "بداية الشهر: التوقع تقريبي."))}</div>` : ""}<div class="muted">${esc(trendSay(k.trend))}</div></div></div>`;
+<div class="muted">${esc(trendSay(k.trend))}</div></div></div>`;
 }
 function insBridge(x, data) {
   const br = x.bridge, labels = [monthL(br.a[0].slice(0, 7)), monthL(br.b[0].slice(0, 7))], lower = br.lower_is_better, ch = br.change;
@@ -13871,9 +13877,10 @@ function insBridge(x, data) {
     : !ch ? L2(`${x.label[0]} did not change from ${labels[0]} to ${labels[1]} (${money(br.after)}).`, `لم تتغير ${x.label[1]} من ${labels[0]} إلى ${labels[1]} (${money(br.after)}).`)
     : L2(`${x.label[0]} ${ch >= 0 ? "rose" : "fell"} ${money(Math.abs(ch))}${br.before ? ` (${pct(Math.abs(ch / br.before))})` : ""} from ${labels[0]} to ${labels[1]}: ${signed(br.volume_effect)} from how many documents, ${signed(br.value_effect)} from the value of each.`,
          `${x.label[1]} ${ch >= 0 ? "ارتفعت" : "انخفضت"} ${money(Math.abs(ch))}${br.before ? ` (${pct(Math.abs(ch / br.before))})` : ""} من ${labels[0]} إلى ${labels[1]}: ${signed(br.volume_effect)} من عدد المستندات، و${signed(br.value_effect)} من قيمة كل مستند.`)
-      + (br.lift ? " " + L2(`Biggest lift: ${grpL(br.lift, x.dim)}.`, `أكبر دفعة: ${grpL(br.lift, x.dim)}.`) : "") + (br.drag ? " " + L2(`Biggest drag: ${grpL(br.drag, x.dim)}.`, `أكبر عائق: ${grpL(br.drag, x.dim)}.`) : "");
+      + (br.lift ? " " + (lower ? L2(`Biggest saving: ${grpL(br.lift, x.dim)}.`, `أكبر توفير: ${grpL(br.lift, x.dim)}.`) : L2(`Biggest lift: ${grpL(br.lift, x.dim)}.`, `أكبر دفعة: ${grpL(br.lift, x.dim)}.`)) : "")
+      + (br.drag ? " " + (lower ? L2(`Biggest rise: ${grpL(br.drag, x.dim)}.`, `أكبر زيادة: ${grpL(br.drag, x.dim)}.`) : L2(`Biggest drag: ${grpL(br.drag, x.dim)}.`, `أكبر عائق: ${grpL(br.drag, x.dim)}.`)) : "");
   const dims = x.dims.map(d => `<option value="${d}" ${d === x.dim ? "selected" : ""}>${esc(L2(...data.dims[d]))}</option>`).join("");
-  return `<div class="card"><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><h3 style="margin:0">${esc(L2(`Why ${x.label[0].toLowerCase()} changed`, `لماذا تغيّرت ${x.label[1]}`))} · ${esc(labels[0])} → ${esc(labels[1])}</h3>
+  return `<div class="card"><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><h3 style="margin:0">${esc(L2(`Why ${(INS_NAME[x.measure] || x.label)[0]} changed`, `لماذا تغيّرت ${(INS_NAME[x.measure] || x.label)[1]}`))} · ${esc(labels[0])} → ${esc(labels[1])}</h3>
       <span class="spacer"></span><label class="small">${esc(L2("Split by", "التقسيم حسب"))} <select data-change="insdim">${dims}</select></label></div>
     <div class="banner ${goodWay(ch, lower) === "bad" ? "warn" : "info"}" style="margin:10px 0">${esc(say)}</div>
     ${br.rows.length ? waterfall(br, labels) : ""}
@@ -13885,11 +13892,11 @@ function insBridge(x, data) {
         <td class="num">${signed(br.volume_effect)}</td><td class="num">${signed(br.value_effect)}</td><td></td></tr></tbody></table></div>
     <details class="ins-hist"><summary>${esc(L2("Month by month: what changed and why", "شهراً بشهر: ما الذي تغيّر ولماذا"))}</summary>
       <div class="tbl stack"><table><thead><tr><th>${esc(L2("Month", "الشهر"))}</th><th class="num">${esc(x.label[S.lang === "ar" ? 1 : 0])}</th><th class="num">${esc(L2("Change", "التغير"))}</th>
-        <th class="num">${esc(L2("From how many", "من العدد"))}</th><th class="num">${esc(L2("From value of each", "من قيمة كل منها"))}</th><th>${esc(L2("Biggest lift", "أكبر دفعة"))}</th><th>${esc(L2("Biggest drag", "أكبر عائق"))}</th></tr></thead><tbody>
+        <th class="num">${esc(L2("From how many", "من العدد"))}</th><th class="num">${esc(L2("From value of each", "من قيمة كل منها"))}</th><th>${esc(lower ? L2("Biggest saving", "أكبر توفير") : L2("Biggest lift", "أكبر دفعة"))}</th><th>${esc(lower ? L2("Biggest rise", "أكبر زيادة") : L2("Biggest drag", "أكبر عائق"))}</th></tr></thead><tbody>
         ${x.history.slice().reverse().map(h => `<tr><td>${esc(monthL(h.month))}</td><td class="num"><b>${money(h.value)}</b></td><td class="num ${goodWay(h.change, lower)}">${signed(h.change)}${h.pct != null ? ` <small>(${pct(h.pct)})</small>` : ""}</td>
           <td class="num">${signed(h.volume_effect)}</td><td class="num">${signed(h.value_effect)}</td>
-          <td>${(lower ? h.drag : h.lift) ? `${esc(grpL((lower ? h.drag : h.lift).group, x.dim))} <small class="ok">${signed((lower ? h.drag : h.lift).change)}</small>` : "—"}</td>
-          <td>${(lower ? h.lift : h.drag) ? `${esc(grpL((lower ? h.lift : h.drag).group, x.dim))} <small class="bad">${signed((lower ? h.lift : h.drag).change)}</small>` : "—"}</td></tr>`).join("")}</tbody></table></div>
+          <td>${h.lift ? `${esc(grpL(h.lift.group, x.dim))} <small class="ok">${signed(h.lift.change)}</small>` : "—"}</td>
+          <td>${h.drag ? `${esc(grpL(h.drag.group, x.dim))} <small class="bad">${signed(h.drag.change)}</small>` : "—"}</td></tr>`).join("")}</tbody></table></div>
       <p class="muted small">${esc(L2("Each change splits into how many documents (invoices, bills, receipts) there were and the value of each; the two add up to the change.", "يُقسم كل تغير إلى عدد المستندات (فواتير، فواتير موردين، إيصالات) وقيمة كل منها؛ ومجموعهما يساوي التغير."))}</p></details></div>`;
 }
 function insFunnel(f) {

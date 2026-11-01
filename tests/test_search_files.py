@@ -36,8 +36,13 @@ class SearchFiles(unittest.TestCase):
         self.assertIn('<meta name="description"', html)
         self.assertEqual(len(re.findall(r"<h1[ >]", html)), 2)              # the page's one heading (and its no-script copy)
         self.assertIn("© 2026 BEYONDERP", html)
-        data = json.loads(re.search(r'ld\+json">(.*?)</script>', html).group(1))
-        self.assertEqual((data["@type"], data["url"]), ("SoftwareApplication", "https://erp.example.com/"))
+        data = {x["@type"]: x for x in json.loads(re.search(r'ld\+json">(.*?)</script>', html).group(1))["@graph"]}
+        self.assertEqual(data["SoftwareApplication"]["url"], "https://erp.example.com/")
+        self.assertEqual(data["WebSite"]["name"], "BeyondERP")                      # results name the site, not its address
+        self.assertEqual(data["Organization"]["logo"]["url"], "https://erp.example.com/icon-512.png")
+        # the first icon is a real file of 48 px (search engines show it next to the result)
+        self.assertRegex(html, r'<link rel="icon" href="favicon.ico" sizes="48x48">')
+        self.assertNotIn('href="data:image', html)
         self.assertIn("Sitemap: https://erp.example.com/sitemap.xml", (self.out / "robots.txt").read_text())
         self.assertIn("<loc>https://erp.example.com/</loc>", (self.out / "sitemap.xml").read_text())
         self.assertIn('hreflang="ar" href="https://erp.example.com/ar.html"', html)
@@ -54,7 +59,9 @@ class SearchFiles(unittest.TestCase):
         html = self.page()
         self.assertNotIn("__SITE__", html)
         self.assertNotIn("canonical", html)
-        self.assertNotIn("url", json.loads(re.search(r'ld\+json">(.*?)</script>', html).group(1)))
+        graph = json.loads(re.search(r'ld\+json">(.*?)</script>', html).group(1))["@graph"]
+        self.assertTrue(all("url" not in x for x in graph))
+        self.assertIn('href="data:image', html)                                     # the offline copy keeps its built-in icon
         self.assertFalse((self.out / "sitemap.xml").exists())
         self.assertIn("Allow: /", (self.out / "robots.txt").read_text())
 
@@ -63,6 +70,8 @@ class SearchFiles(unittest.TestCase):
             data = (ROOT / "web-src" / f).read_bytes()
             self.assertEqual(data[:3], b"\xff\xd8\xff", f)                         # JPEG: no transparency to turn white
             self.assertLess(len(data), 300_000, f)                                    # small enough for WhatsApp
+            self.assertIn(f, build_web.PWA_FILES)
+        for f in ("favicon.ico", "favicon-48.png"):
             self.assertIn(f, build_web.PWA_FILES)
 
     def test_private_pages_stay_out_of_search(self):

@@ -14,6 +14,13 @@ from erp.db import Database  # noqa: E402
 ALL = lambda m, lvl="view": True  # noqa: E731
 
 
+def screens(*granted):
+    """can() as the server has it: 'a|b' is either; a section counts as granted when any of its screens is."""
+    def can(key, lvl="view"):
+        return any(k in granted or (("." not in k) and any(g.startswith(k + ".") for g in granted)) for k in key.split("|"))
+    return can
+
+
 class Insights(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -49,6 +56,12 @@ class Insights(unittest.TestCase):
         self.assertTrue(rows)
         for m in insights.monthly(self.db, "collections", 12):
             self.assertGreaterEqual(m["value"], 0, m)                            # a cheque received is collected when it clears
+        f, to = "2026-01-01", acc.today()
+        kinds = {r["kind"] for r in self.db.q("""SELECT DISTINCT e.kind FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+            JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND """ + insights.MEASURES["collections"][2])}
+        self.assertIn("E-Receipt", kinds)                                           # cash sales at the counter
+        self.assertTrue(kinds.isdisjoint({"Cheque Received", "Rental Deposit", "Loan Received", "Capital Contribution", "Partner Loan",
+                                           "Direct Cost", "Payment Voucher"}), kinds)   # a supplier paid with a saving booked as revenue is not one
 
     def test_pace_and_target(self):
         p = insights.pace(self.db, "revenue", today="2026-10-10")
@@ -95,14 +108,24 @@ class Insights(unittest.TestCase):
         self.assertEqual(p["total"], self.db.one("SELECT COUNT(*) n FROM employees WHERE status='active'")["n"])
 
     def test_each_part_shows_only_what_the_person_may_see(self):
-        sales_only = lambda m, lvl="view": m in ("sales",)  # noqa: E731
+        sales_only = screens("sales.invoices")
         pg = insights.page(self.db, "sales", sales_only)
         self.assertEqual([m["key"] for m in pg["modules"]], ["sales"])
-        self.assertEqual({m["measure"] for m in pg["measures"]}, {"revenue", "collections"})
+        self.assertEqual({m["measure"] for m in pg["measures"]}, {"revenue"})       # collections need receipts or receivables
+        self.assertEqual({m["measure"] for m in insights.page(self.db, "sales", screens("sales.invoices", "sales.receipts"))["measures"]},
+                         {"revenue", "collections"})
         with self.assertRaises(PermissionError):
             insights.page(self.db, "business", sales_only)
         with self.assertRaises(PermissionError):
             insights.page(self.db, "purchasing", sales_only)
+        quotes_only = screens("sales.offers")                 # the "sales" section counts as granted, but not invoices
+        with self.assertRaises(PermissionError):
+            insights.page(self.db, "sales", quotes_only)
+        self.assertNotIn("sales", [m for m in insights.MODULES if insights.allowed(quotes_only, m)])
+        rentals_only = screens("rentals.contracts")
+        self.assertEqual({m["measure"] for m in insights.page(self.db, "rentals", rentals_only)["measures"]}, {"revenue"})
+        with self.assertRaises(PermissionError):
+            insights.page(self.db, "business", rentals_only)
         full = insights.page(self.db, "business", ALL)
         self.assertIn("profit", full)
         rentals = insights.page(self.db, "rentals", ALL)
@@ -127,9 +150,84 @@ class InsightCards(unittest.TestCase):
             D.WIDGETS[w]["fn"](c, {})
         r = D.WIDGETS["why_changed"]["fn"](c, {"measure": "costs", "split": "account"})
         self.assertEqual((r["measure"], r["dim"], r["lower_is_better"]), ("costs", "account", True))
-        no = D.Ctx(db, {"username": "x"}, {}, lambda m, lvl="view": m == "crm")
+        no = D.Ctx(db, {"username": "x"}, {}, screens("crm.deals", "sales.offers"))
         with self.assertRaises(PermissionError):
             D.WIDGETS["kpi_target"]["fn"](no, {"measure": "revenue"})
+
+
+class PeopleCost(unittest.TestCase):
+    def test_payroll_and_daily_labour_not_other_costs(self):
+        db = Database(":memory:")
+        demo.load(db, "admin")
+        y = ("2026-01-01", "2026-12-31")
+        run = acc.to_major(db.one("""SELECT SUM(l.debit-l.credit) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
+            WHERE e.status='posted' AND e.kind='Payroll Accrual' AND a.type IN ('COGS','Expense')""")["n"])
+        labour = acc.to_major(db.one("""SELECT SUM(l.debit-l.credit) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+            WHERE e.status='posted' AND e.kind<>'Payroll Accrual' AND l.account='5030'""")["n"])        # daily labour by voucher
+        self.assertGreater(labour, 0)
+        self.assertEqual(insights.totals(db, "payroll", *y)[""][0], round(run + labour, 2))
+        # a non-staff cost booked to an account the payroll also uses (project indirect costs) is not people cost
+        before = insights.totals(db, "payroll", *y)[""][0]
+        acc._insert_entry(db, date="2026-10-15", kind="Operating Expense", memo="Site toilets hire", lines=[
+            {"account": "6070", "debit": 500}, {"account": "1020", "credit": 500}])
+        self.assertEqual(insights.totals(db, "payroll", *y)[""][0], before)
+
+
+class OtherBusinesses(unittest.TestCase):
+    def test_a_clinic(self):
+        db = Database(":memory:")
+        demo.load(db, "admin", industry="healthcare")
+        kinds = {r["kind"] for r in db.q("""SELECT DISTINCT e.kind FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+            JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND """ + insights.MEASURES["collections"][2])}
+        self.assertTrue({"Medical Invoice", "Insurance Claim"} <= kinds, kinds)    # paid at the visit; insurers settling claims
+        f, to = "2026-01-01", acc.today()
+        self.assertEqual(insights.totals(db, "revenue", f, to)[""][0], acc.income_statement(db, f, to)["net_sales"])
+        db.set_setting("hidden_modules", json.dumps(["rentals", "equipment"]))
+        tabs = [m["key"] for m in insights.page(db, "business", ALL)["modules"]]
+        self.assertNotIn("rentals", tabs)
+        self.assertNotIn("equipment", tabs)
+        with self.assertRaises(PermissionError):
+            insights.page(db, "rentals", ALL)
+
+
+class CorrectionsAndEdges(unittest.TestCase):
+    def setUp(self):
+        self.db = Database(":memory:")
+        demo.load(self.db, "admin")
+
+    def test_a_reversal_is_not_another_document(self):
+        e = self.db.one("""SELECT e.id, e.date FROM journal_entries e JOIN journal_lines l ON l.entry_id=e.id JOIN accounts a ON a.code=l.account
+                           WHERE e.status='posted' AND a.type='Revenue' AND e.reversal_of IS NULL AND e.reversed_by IS NULL ORDER BY e.date DESC LIMIT 1""")
+        m = e["date"][:7]
+        f, t = m + "-01", insights._month_end(m)
+        before = insights.totals(self.db, "revenue", f, t)[""]
+        acc.reverse_entry(self.db, e["id"], date=e["date"])
+        after = insights.totals(self.db, "revenue", f, t)[""]
+        self.assertEqual(after[1], before[1])                                       # same number of documents
+        self.assertLess(after[0], before[0])                                        # the amount is corrected
+
+    def test_lift_and_drag_follow_lower_is_better(self):
+        br = insights.bridge(self.db, "costs", "unit", ("2026-09-01", "2026-09-30"), ("2026-10-01", "2026-10-31"))
+        rows = {r["group"]: r["change"] for r in br["rows"]}
+        if br["lift"]:
+            self.assertLess(rows[br["lift"]], 0)                                    # for a cost, a lift is a fall
+        if br["drag"]:
+            self.assertGreater(rows[br["drag"]], 0)
+        for h in insights.months_table(self.db, "costs", "unit", 4, "2026-10"):
+            if h["lift"]:
+                self.assertLess(h["lift"]["change"], 0)
+
+    def test_bad_values_in_the_address_are_refused_or_ignored(self):
+        pg = insights.page(self.db, "business", ALL, {"month": "x'; drop", "vs": "2026-13"})
+        self.assertRegex(pg["month"], r"^\d{4}-\d{2}$")
+        with self.assertRaises(acc.ValidationError):
+            insights.page(self.db, "business", ALL, {"bu_id": "1 or 1=1"})
+
+    def test_equipment_out_on_a_site_is_in_use(self):
+        self.db.x("UPDATE equipment SET status='available'")
+        self.db.x("UPDATE equipment SET status='in_use' WHERE id=(SELECT MIN(id) FROM equipment)")
+        c = insights.capacity_equipment(self.db, "2026-12-15")                    # a month with no hours booked
+        self.assertEqual(c["used"], 1)
 
 
 if __name__ == "__main__":

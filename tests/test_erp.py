@@ -5772,6 +5772,16 @@ class ImprovementsPack(unittest.TestCase):
         self.assertEqual(self.call("site", "GET", "/api/reports/aging")[0], 403)
         self.assertEqual(self.call("site", "GET", f"/api/reports/income_statement?bu_id={db.one('SELECT id FROM business_units WHERE code=?', (other,))['id']}")[0], 403)
         self.assertEqual(self.call("site", "GET", "/api/cash-accounts")[0], 403)
+        # insights and the dashboard's cards: their project's figures only; company-wide views left out
+        st, ins = self.call("site", "GET", "/api/insights?m=business")
+        self.assertEqual((st, ins.get("bu_id")), (200, mine_id), ins)
+        self.assertNotIn("profit", ins)
+        rev = next(m for m in ins["measures"] if m["measure"] == "revenue")
+        if not rev.get("empty"):
+            self.assertTrue(all(r["group"].startswith(mine) for r in rev["bridge"]["rows"] if r["group"] not in ("…",)) or rev["dim"] != "unit")
+        other_id = db.one("SELECT id FROM business_units WHERE code=?", (other,))["id"]
+        self.assertEqual(self.call("site", "GET", f"/api/insights?m=business&bu_id={other_id}")[0], 403)
+        self.assertEqual(self.call("site", "GET", f"/api/dashboard/view?bu_id={other_id}")[0], 403)
         exp = {"description": "Site water", "amount": 120, "date": a.today(), "account": "6045"}
         self.assertEqual(self.call("site", "POST", "/api/docs/expense", exp)[0], 400)                      # no project = company overhead
         self.assertEqual(self.call("site", "POST", "/api/docs/expense", {**exp, "bu_code": other})[0], 403)

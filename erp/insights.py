@@ -3,8 +3,9 @@ funnel and how much of what the business has is in use. Read from the books only
 
 Every measure comes from the posted journal, so the figures match the reports: revenue is net sales (as in the
 income statement: operating revenue less discounts, other income apart), costs what COGS and Expense accounts took,
-collections the cash that came in from customers (receipts and cleared cheques, less bounced ones: a cheque received
-is collected when it clears). A measure has a value (money) and a volume (how many
+collections the cash that came in against what customers owe or buy (receipts, cash sales, cleared cheques, insurers
+settling claims; less refunds and bounced cheques; a cheque received is collected when it clears; loans, capital,
+deposits and supplier payments, even those that book a saving as revenue, are not collections). A measure has a value (money) and a volume (how many
 documents made it), so a change between two periods splits exactly into
 
     volume effect = (documents now − documents before) × value per document before
@@ -22,18 +23,30 @@ from .db import to_major
 
 LIVE = acc.LIVE
 
-# measure: (en, ar, account filter SQL, sign, lower is better, dimensions it can be split by, permission (any of))
+# people cost: everything the payroll runs post; staff-cost accounts; and cost-of-sales accounts the payroll also posts
+# to (direct labour), so daily labour paid by voucher counts with the payroll. A mixed expense account the payroll
+# happens to use (e.g. project indirect costs) counts only what the payroll put there.
+PEOPLE_ACCOUNTS = ("(e.kind='Payroll Accrual' OR a.subtype='employee' OR (a.type='COGS' AND a.code IN (SELECT DISTINCT l3.account "
+                   "FROM journal_lines l3 JOIN journal_entries e3 ON e3.id=l3.entry_id WHERE e3.kind='Payroll Accrual' AND l3.debit>0)))")
+# measure: (en, ar, account filter SQL, sign, lower is better, dimensions it can be split by, permission (any of)).
+# Permissions name screens: a whole section counts as granted when any one of its screens is (auth.level_of), and
+# someone who may only open quotations must not see revenue by customer.
 MEASURES = {
     "revenue": ("Revenue", "الإيرادات", "a.type='Revenue' AND a.subtype<>'other_income'", "l.credit-l.debit", False, ("party", "unit", "source", "account"),
-                ("reports", "sales")),
+                ("sales.invoices|sales.receivables|shop.orders|reports.income_statement",)),
     "costs": ("Costs", "التكاليف", "a.type IN ('COGS','Expense')", "l.debit-l.credit", True, ("party", "unit", "account", "source"),
-              ("reports", "purchasing")),
+              ("purchasing.costs|purchasing.expenses|purchasing.payables|purchasing.bills|reports.income_statement",)),
     "collections": ("Collected from customers", "المحصّل من العملاء",
-                    "a.subtype='cash' AND e.kind IN ('Receipt Voucher','Cheque Cleared','Cheque Bounced')", "l.debit-l.credit", False,
-                    ("party", "unit"), ("reports", "sales")),
-    "payroll": ("Payroll cost", "تكلفة الرواتب", "a.type IN ('COGS','Expense') AND e.kind='Payroll Accrual'", "l.debit-l.credit", True,
-                ("unit", "account"), ("reports", "payroll")),
+                    "a.subtype='cash' AND (EXISTS (SELECT 1 FROM journal_lines l2 JOIN accounts a2 ON a2.code=l2.account WHERE l2.entry_id=e.id "
+                    "AND a2.subtype IN ('receivable','deferred_revenue')) OR (EXISTS (SELECT 1 FROM journal_lines l2 JOIN accounts a2 ON a2.code=l2.account "
+                    "WHERE l2.entry_id=e.id AND a2.subtype='operating_revenue') AND NOT EXISTS (SELECT 1 FROM journal_lines l2 JOIN accounts a2 "
+                    "ON a2.code=l2.account WHERE l2.entry_id=e.id AND (a2.type IN ('COGS','Expense') OR a2.subtype='payable'))))", "l.debit-l.credit", False,
+                    ("party", "unit"), ("sales.receipts|sales.receivables|reports.cash_flow|reports.income_statement",)),
+    "payroll": ("Payroll & labour cost", "تكلفة الرواتب والعمالة", f"a.type IN ('COGS','Expense') AND {PEOPLE_ACCOUNTS}", "l.debit-l.credit", True,
+                ("unit", "account"), ("payroll.runs|payroll.entries|reports.income_statement",)),
 }
+# documents behind a figure: entries, not counting reversals (a correction is not another invoice or bill; its amount still counts)
+DOCS = "COUNT(DISTINCT CASE WHEN e.reversal_of IS NULL THEN e.id END)"
 DIMS = {"party": ("Customer / supplier", "العميل / المورد"), "unit": ("Business unit", "وحدة الأعمال"),
         "source": ("Where it comes from", "المصدر"), "account": ("Account", "الحساب")}
 DIM_SQL = {"party": "COALESCE(NULLIF(l.party,''), NULLIF(e.party,''), '—')",
@@ -42,21 +55,21 @@ DIM_SQL = {"party": "COALESCE(NULLIF(l.party,''), NULLIF(e.party,''), '—')",
 
 # what each part of the app looks at: the measures, the split that suits it, and the extra views
 MODULES = {
-    "business": {"en": "Whole business", "ar": "الشركة كلها", "perm": ("reports",), "measures": ["revenue", "costs", "collections", "payroll"],
+    "business": {"en": "Whole business", "ar": "الشركة كلها", "perm": ("reports.income_statement",), "measures": ["revenue", "costs", "collections", "payroll"],
                  "profit": True, "split": "unit", "extras": []},
-    "sales": {"en": "Sales & collections", "ar": "المبيعات والتحصيل", "perm": ("sales", "reports"), "measures": ["revenue", "collections"],
+    "sales": {"en": "Sales & collections", "ar": "المبيعات والتحصيل", "perm": ("sales.invoices|sales.receivables|sales.receipts|shop.orders|reports.income_statement",), "measures": ["revenue", "collections"],
               "split": "party", "extras": []},
-    "purchasing": {"en": "Purchasing & costs", "ar": "المشتريات والتكاليف", "perm": ("purchasing", "reports"), "measures": ["costs"],
+    "purchasing": {"en": "Purchasing & costs", "ar": "المشتريات والتكاليف", "perm": ("purchasing.costs|purchasing.expenses|purchasing.payables|purchasing.bills|reports.income_statement",), "measures": ["costs"],
                    "split": "party", "extras": []},
-    "crm": {"en": "Customers & deals", "ar": "العملاء والصفقات", "perm": ("crm",), "measures": [], "split": None, "extras": ["funnel"]},
-    "units": {"en": "Business units & projects", "ar": "وحدات الأعمال والمشروعات", "perm": ("business_units", "projects", "reports"),
+    "crm": {"en": "Customers & deals", "ar": "العملاء والصفقات", "perm": ("crm.deals",), "measures": [], "split": None, "extras": ["funnel"]},
+    "units": {"en": "Business units & projects", "ar": "وحدات الأعمال والمشروعات", "perm": ("business_units.profitability|reports.income_statement",),
               "measures": ["revenue", "costs"], "profit": True, "split": "unit", "extras": []},
-    "rentals": {"en": "Equipment rental", "ar": "تأجير المعدات", "perm": ("rentals",), "measures": ["revenue"], "split": "party",
+    "rentals": {"en": "Equipment rental", "ar": "تأجير المعدات", "perm": ("rentals.contracts",), "measures": ["revenue"], "split": "party",
                 "scope": "e.id IN (SELECT x.entry_id FROM extracts x JOIN rental_invoices ri ON ri.extract_id=x.id)",
                 "extras": ["capacity_rentals"]},
-    "equipment": {"en": "Plant & equipment", "ar": "المعدات", "perm": ("equipment",), "measures": [], "split": None,
+    "equipment": {"en": "Plant & equipment", "ar": "المعدات", "perm": ("equipment.register|equipment.usage",), "measures": [], "split": None,
                   "extras": ["capacity_equipment"]},
-    "people": {"en": "People & payroll", "ar": "الموظفون والرواتب", "perm": ("payroll",), "measures": ["payroll"], "split": "unit",
+    "people": {"en": "People & payroll", "ar": "الموظفون والرواتب", "perm": ("payroll.runs|payroll.attendance|payroll.employees",), "measures": ["payroll"], "split": "unit",
                "extras": ["capacity_people"]},
 }
 
@@ -90,7 +103,7 @@ def totals(db, measure, date_from, date_to, dim=None, bu_id=None, scope=None):
     """{group: (value, documents)} for one period (group '' when not split)."""
     w, p = _filters(measure, bu_id, scope)
     g = DIM_SQL[dim] if dim else "''"
-    rows = db.q(f"""SELECT {g} AS g, SUM({MEASURES[measure][3]}) AS v, COUNT(DISTINCT e.id) AS n
+    rows = db.q(f"""SELECT {g} AS g, SUM({MEASURES[measure][3]}) AS v, {DOCS} AS n
                     FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
                     WHERE {' AND '.join(w)} AND e.date>=? AND e.date<=? GROUP BY g""", (*p, date_from, date_to))
     return {r["g"]: (to_major(r["v"] or 0), int(r["n"] or 0)) for r in rows if (r["v"] or 0) != 0 or r["n"]}
@@ -101,7 +114,7 @@ def monthly(db, measure, months=12, upto=None, bu_id=None, scope=None):
     last = upto or acc.today()[:7]
     first = _month_add(last, -(months - 1))
     w, p = _filters(measure, bu_id, scope)
-    rows = {r["m"]: r for r in db.q(f"""SELECT substr(e.date,1,7) AS m, SUM({MEASURES[measure][3]}) AS v, COUNT(DISTINCT e.id) AS n
+    rows = {r["m"]: r for r in db.q(f"""SELECT substr(e.date,1,7) AS m, SUM({MEASURES[measure][3]}) AS v, {DOCS} AS n
                     FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
                     WHERE {' AND '.join(w)} AND e.date>=? AND e.date<=? GROUP BY m""", (*p, first + "-01", _month_end(last)))}
     out, m = [], first
@@ -193,7 +206,9 @@ def _budget(db, measure, ym, bu_id=None):
     if measure not in ("revenue", "costs", "payroll"):
         return None
     y, m = int(ym[:4]), int(ym[5:7])
-    cond = {"revenue": "a.type='Revenue'", "costs": "a.type IN ('COGS','Expense')", "payroll": "a.subtype='employee'"}[measure]
+    cond = {"revenue": "a.type='Revenue' AND a.subtype<>'other_income'", "costs": "a.type IN ('COGS','Expense')",
+            "payroll": "a.type IN ('COGS','Expense') AND (a.subtype='employee' OR a.code IN (SELECT DISTINCT l3.account FROM journal_lines l3 "
+                       "JOIN journal_entries e3 ON e3.id=l3.entry_id WHERE e3.kind='Payroll Accrual' AND l3.debit>0))"}[measure]   # budgets are by account
     rows = db.q(f"SELECT b.months, b.bu_id FROM budgets b JOIN accounts a ON a.code=b.account WHERE b.year=? AND {cond}", (y,))
     tot, any_ = 0, False
     for r in rows:      # the whole business: every budget line (company-wide and per unit); one unit: its own
@@ -330,14 +345,15 @@ def capacity_rentals(db):
 
 
 def capacity_equipment(db, today=None):
-    """Plant and equipment: units used this month (hours booked) against all units in service."""
+    """Plant and equipment: units in use this month (hours booked, or out on a site) against all units in service."""
     t = (today or acc.today())
     ym = t[:7]
     rows = db.q("""SELECT e.code, e.name, e.category, e.status,
                    COALESCE((SELECT SUM(hours) FROM equipment_usage u WHERE u.equipment_id=e.id AND u.date>=? AND u.date<=?),0) AS hours
                    FROM equipment e ORDER BY e.category, e.code""", (ym + "-01", t))
+    used = lambda r: 1 if (r["hours"] or 0) > 0 or r["status"] == "in_use" else 0       # hours booked, or out on a site
     items = [{"code": r["code"], "name": r["name"], "group": r["category"] or "", "status": r["status"], "hours": float(r["hours"] or 0),
-              "total": 1, "used": 1 if (r["hours"] or 0) > 0 else 0, "share": 1.0 if (r["hours"] or 0) > 0 else 0.0}
+              "total": 1, "used": used(r), "share": float(used(r))}
              for r in rows if (r["status"] or "").lower() not in ("sold", "disposed", "retired")]
     return _cap("equipment", items)
 
@@ -368,14 +384,27 @@ def _cap(kind, items):
 
 
 # ------------------------------------------------------------------ one module's page
-def allowed(can, mod):
+# the sections of the app each part stands for: a company that switched them off (Settings → Menus, or its industry
+# template) does not see that part
+SECTIONS = {"sales": ("sales", "shop"), "purchasing": ("purchasing",), "crm": ("crm",), "units": ("business_units", "projects"),
+            "rentals": ("rentals",), "equipment": ("equipment",), "people": ("payroll",)}
+
+
+def allowed(can, mod, db=None):
+    if db is not None and mod in SECTIONS:
+        try:
+            hidden = set(json.loads(db.setting("hidden_modules") or "[]"))
+        except (ValueError, TypeError):
+            hidden = set()
+        if all(x in hidden for x in SECTIONS[mod]):
+            return False
     return any(can(p) for p in MODULES[mod]["perm"])
 
 
 def page(db, mod, can, q=None):
     """Everything the Insights page shows for one part of the app (only what the person may see)."""
     q = q or {}
-    if mod not in MODULES or not allowed(can, mod):
+    if mod not in MODULES or not allowed(can, mod, db):
         raise PermissionError()
     cfg = MODULES[mod]
     sl = cfg.get("scope")
@@ -383,14 +412,17 @@ def page(db, mod, can, q=None):
     today = acc.today()
     this_m = today[:7]
     # periods compared: the last complete month against the one before (or what was asked for)
-    b_m = q.get("month") or _month_add(this_m, -1)
-    a_m = q.get("vs") or _month_add(b_m, -1)
+    ym = lambda v: v if isinstance(v, str) and len(v) == 7 and v[:4].isdigit() and v[4] == "-" and v[5:].isdigit() and 1 <= int(v[5:]) <= 12 else None
+    if q.get("bu_id") not in (None, "") and not str(q["bu_id"]).isdigit():
+        raise acc.ValidationError("Unknown business unit")
+    b_m = ym(q.get("month")) or _month_add(this_m, -1)
+    a_m = ym(q.get("vs")) or _month_add(b_m, -1)
     a, b = (a_m + "-01", _month_end(a_m)), (b_m + "-01", _month_end(b_m))
-    out = {"module": mod, "modules": [{"key": k, "en": v["en"], "ar": v["ar"]} for k, v in MODULES.items() if allowed(can, k)],
+    out = {"module": mod, "modules": [{"key": k, "en": v["en"], "ar": v["ar"]} for k, v in MODULES.items() if allowed(can, k, db)],
            "month": b_m, "vs": a_m, "today": today, "measures": [], "dims": {k: list(v) for k, v in DIMS.items()}}
     split = q.get("dim") if q.get("dim") in DIMS else cfg.get("split")
     for m in cfg["measures"]:
-        if not any(can(p) for p in MEASURES[m][6]):
+        if not (sl or any(can(p) for p in MEASURES[m][6])):      # a scoped part's own figures follow its own screens
             continue
         dims = [d for d in MEASURES[m][5] if d in DIMS]
         d = split if split in dims else dims[0]
@@ -401,7 +433,10 @@ def page(db, mod, can, q=None):
         out["measures"].append({"measure": m, "label": card["label"], "kpi": card, "dims": dims, "dim": d,
                                 "bridge": bridge(db, m, d, a, b, bu, sl),
                                 "history": months_table(db, m, d, 12, b_m, bu, sl)})
-    if cfg.get("profit") and can("reports"):
+    out["bu_id"] = int(bu) if bu else None
+    if bu:            # one project's figures (a person limited to their projects): the company-wide views are left out
+        return out
+    if cfg.get("profit") and can("reports.income_statement|business_units.profitability"):
         out["profit"] = profit_by_unit(db, a, b)
     for x in cfg["extras"]:
         if x == "funnel":

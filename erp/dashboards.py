@@ -492,7 +492,7 @@ def _measure(c, o, default="revenue"):
     from . import insights
     m = o.get("measure") if o.get("measure") in insights.MEASURES else default
     if not any(c.can(p) for p in insights.MEASURES[m][6]):
-        raise PermissionError()
+        raise PermissionError("Your permissions do not include this figure.")
     return insights, m
 
 
@@ -519,20 +519,22 @@ def w_why_changed(c, o):
 
 def w_deal_funnel(c, o):
     from . import insights
+    if not c.can("crm.deals"):
+        raise PermissionError("Your permissions do not include deals.")
     return insights.funnel(c.db)
 
 
 def w_capacity(c, o):
     from . import insights
     kind = o.get("kind") if o.get("kind") in ("rentals", "equipment", "people") else "rentals"
-    need = {"rentals": "rentals", "equipment": "equipment", "people": "payroll"}[kind]
+    need = {"rentals": "rentals.contracts|rentals.fleet", "equipment": "equipment.register|equipment.usage", "people": "payroll.attendance|payroll.employees"}[kind]
     if not c.can(need):
-        raise PermissionError()
+        raise PermissionError("Your permissions do not include this part.")
     return getattr(insights, "capacity_" + kind)(c.db)
 
 
 _MEASURE_CHOICE = [["revenue", "Revenue", "الإيرادات"], ["costs", "Costs", "التكاليف"], ["collections", "Collected from customers", "المحصّل من العملاء"],
-                   ["payroll", "Payroll cost", "تكلفة الرواتب"]]
+                   ["payroll", "Payroll & labour cost", "تكلفة الرواتب والعمالة"]]
 _SPLIT_CHOICE = [["party", "Customer / supplier", "العميل / المورد"], ["unit", "Business unit", "وحدة الأعمال"],
                  ["source", "Where it comes from", "المصدر"], ["account", "Account", "الحساب"]]
 
@@ -599,14 +601,14 @@ _W = [
     ("quick_links", "Quick links", "روابط سريعة", "general", (), 2, w_quick_links, {}),
     ("account_balance", "Account balance", "رصيد حساب", "overview", ("reports", "accounting.ledger"), 1, w_account_balance,
      {"account": ("Account code (or its first digits)", "كود الحساب (أو أول أرقامه)", "text")}),
-    ("kpi_target", "Measure against target", "المؤشر مقابل المستهدف", "overview", ("reports", "sales", "purchasing", "payroll"), 1, w_kpi_target,
+    ("kpi_target", "Measure against target", "المؤشر مقابل المستهدف", "overview", ("reports.income_statement", "sales.invoices", "sales.receivables", "purchasing.costs", "purchasing.expenses", "payroll.runs"), 1, w_kpi_target,
      {"measure": ("Measure", "المؤشر", "choice", _MEASURE_CHOICE), "target": ("Monthly target (blank: the budget)", "المستهدف الشهري (فارغ: الموازنة)", "number")}),
-    ("month_pace", "This month's pace", "وتيرة هذا الشهر", "overview", ("reports", "sales", "purchasing", "payroll"), 2, w_month_pace,
+    ("month_pace", "This month's pace", "وتيرة هذا الشهر", "overview", ("reports.income_statement", "sales.invoices", "sales.receivables", "purchasing.costs", "purchasing.expenses", "payroll.runs"), 2, w_month_pace,
      {"measure": ("Measure", "المؤشر", "choice", _MEASURE_CHOICE), "target": ("Monthly target (blank: the budget)", "المستهدف الشهري (فارغ: الموازنة)", "number")}),
-    ("why_changed", "Why it changed (last month)", "لماذا تغيّر (الشهر الماضي)", "overview", ("reports", "sales", "purchasing", "payroll"), 2, w_why_changed,
+    ("why_changed", "Why it changed (last month)", "لماذا تغيّر (الشهر الماضي)", "overview", ("reports.income_statement", "sales.invoices", "sales.receivables", "purchasing.costs", "purchasing.expenses", "payroll.runs"), 2, w_why_changed,
      {"measure": ("Measure", "المؤشر", "choice", _MEASURE_CHOICE), "split": ("Split by", "التقسيم حسب", "choice", _SPLIT_CHOICE)}),
-    ("deal_funnel", "Deal funnel", "مسار الصفقات", "sales", ("crm",), 2, w_deal_funnel, {}),
-    ("capacity", "Capacity in use", "الطاقة المستغلة", "projects", ("rentals", "equipment", "payroll"), 2, w_capacity,
+    ("deal_funnel", "Deal funnel", "مسار الصفقات", "sales", ("crm.deals",), 2, w_deal_funnel, {}),
+    ("capacity", "Capacity in use", "الطاقة المستغلة", "projects", ("rentals.contracts", "rentals.fleet", "equipment.register", "equipment.usage", "payroll.attendance"), 2, w_capacity,
      {"kind": ("What", "ماذا", "choice", [["rentals", "Rental items out", "أصناف الإيجار الخارجة"], ["equipment", "Equipment used this month", "المعدات المستخدمة هذا الشهر"],
                                          ["people", "People at work today", "الموظفون في العمل اليوم"]])}),
     # building blocks: what they show is set in the card's design (any number of each)

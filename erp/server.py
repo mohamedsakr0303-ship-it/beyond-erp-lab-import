@@ -4651,7 +4651,7 @@ def insights_page(ctx):
     """What moved the figures, the month's pace, targets, the deal funnel and capacity — for one part of the app
     (?m=business|sales|purchasing|crm|units|rentals|equipment|people), only what this person may see."""
     from . import insights
-    mod = ctx.q.get("m") or next((k for k in insights.MODULES if insights.allowed(ctx.can, k)), None)
+    mod = ctx.q.get("m") or next((k for k in insights.MODULES if insights.allowed(ctx.can, k, ctx.db)), None)
     if not mod:
         raise PermissionError()
     return ok(insights.page(ctx.db, mod, ctx.can, ctx.q))
