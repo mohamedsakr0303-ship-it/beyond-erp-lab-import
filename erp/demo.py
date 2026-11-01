@@ -473,7 +473,7 @@ def sheets(industry=None):
         {"number": "R-D000002", "date": d(5, 4), "time": "12:40", "kind": "sale", "buyer_type": "P", "buyer_name": "Peter Hall", "payment_method": "V",
          "description": "Wall paint 18L", "code": "EG-999888777-PN18", "unit": "EA", "qty": 1, "price": 1650, "discount": 50, "vat_code": "VAT14",
          "issue": "Yes"},
-        {"number": "R-D000003", "date": d(5, 5), "time": "09:05", "kind": "return", "ref_number": "R-D000001", "buyer_type": "P",
+        {"number": "R-D000003", "date": d(5, 5), "time": "15:05", "kind": "return", "ref_number": "R-D000001", "buyer_type": "P",
          "payment_method": "C", "description": "Grout 5 kg", "code": "EG-999888777-GR05", "unit": "EA", "qty": 1, "price": 95, "vat_code": "VAT14",
          "issue": "Yes"}]
     if industry in PROFILES:

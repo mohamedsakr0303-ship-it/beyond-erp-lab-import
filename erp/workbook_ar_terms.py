@@ -105,7 +105,7 @@ MORE_AR = {
     "Maintenance, warranty / insurance, software support and add-on plans you sell by the month / quarter / year": "خطط الصيانة والضمان والدعم والإضافات",
     "Each customer's contract": "عقد كل عميل", "One row per order line; rows with the same order code form one order": "صف لكل بند؛ الصفوف بنفس الكود تكوّن أمراً واحداً",
     "Monthly budget per income / cost / expense account (blank business unit = company level)": "الموازنة الشهرية لكل حساب (وحدة العمل فارغة = مستوى الشركة)",
-    "Every section is shown. Sections switched off in the app (Settings → Menus) are hidden from this file.": "كل الأقسام ظاهرة. الأقسام المُغلقة في البرنامج (الإعدادات ← القوائم) تُخفى من هذا الملف.",
+    "Every module is shown. Modules switched off in the app (Settings → Menus) are hidden from this file.": "كل الأقسام ظاهرة. الأقسام المُغلقة في البرنامج (الإعدادات ← القوائم) تُخفى من هذا الملف.",
     "Billed = invoiced to the client (or settled). Work in progress = work done but not invoiced yet: its revenue and profit are held back until the invoice is issued, so a project in progress shows no billed profit. A project heading for a loss shows that loss at once. Collected = cash actually received.":
         "المفوتر = ما صدرت به فاتورة للعميل (أو تمت تسويته). تحت التنفيذ = أعمال تمت ولم تُفوتر بعد: يُحجز إيرادها وربحها حتى إصدار الفاتورة، فلا يظهر للمشروع الجاري ربح مفوتر. والمشروع المتجه لخسارة تظهر خسارته فوراً. المحصل = النقدية المستلمة فعلاً.",
     "Earned basis counts revenue when the work is done and costs when incurred. Cash basis counts only money that moved in the same entry (collections and payments).":

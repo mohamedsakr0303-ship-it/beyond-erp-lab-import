@@ -150,7 +150,7 @@ MESSAGES = {
     'The AI assistant is not enabled for you.': 'المساعد الذكي غير مفعّل لك.',
     'The AI assistant cannot use this part of the ERP': 'المساعد الذكي لا يمكنه استخدام هذا الجزء من النظام',
     "The AI assistant is read-only (super administrator's setting)": 'المساعد الذكي للقراءة فقط (إعداد المدير الأعلى)',
-    "The AI assistant may not use this section (super administrator's setting)": 'المساعد الذكي لا يمكنه استخدام هذا القسم (إعداد المدير الأعلى)',
+    "The AI assistant may not use this module (super administrator's setting)": 'المساعد الذكي لا يمكنه استخدام هذا القسم (إعداد المدير الأعلى)',
     "The assistant's change was not validated and reviewed. It was not saved.": 'لم يُفحص تعديل المساعد ولم يُراجع، ولم يُحفظ.',
     'This change differs from the one reviewed. It was not saved.': 'يختلف هذا التعديل عن التعديل الذي تمت مراجعته، ولم يُحفظ.',
     'Reviewed changes must be saved in order. It was not saved.': 'يجب حفظ التعديلات المراجَعة بالترتيب، ولم يُحفظ.',

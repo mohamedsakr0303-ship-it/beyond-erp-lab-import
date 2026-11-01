@@ -4435,6 +4435,7 @@ class BillsAndAlerts(unittest.TestCase):
         st, r = self.call("boss", "POST", "/api/my-alerts", {"name": "Attendance", "trigger": "attendance_missing", "settings": {"at": "09:30"}})
         self.assertEqual(st, 200, r)
         day = a.today()
+        self.db.x("DELETE FROM attendance WHERE date=?", (day,))          # the demo's last days are clamped to today (e.g. on the 1st)
         st, early = self.call("boss", "POST", "/api/automations/run", {"local": day + "T08:00"})
         self.assertEqual(early["done"], [])
         st, late = self.call("boss", "POST", "/api/automations/run", {"local": day + "T09:45"})

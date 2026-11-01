@@ -2147,9 +2147,9 @@ def _cover(wb, cover, company, tagline, template, currency, audit_ref, hidden, F
                 "(الإعدادات ← القوائم) ثم حمّل الملف مرة أخرى، أو أظهر الورقة من إكسل.") if hidden else \
             "كل الأقسام ظاهرة. الأقسام المُغلقة في البرنامج (الإعدادات ← القوائم) تُخفى من هذا الملف."
     else:
-        note = ("Sheets for sections this company does not use are hidden (" + ", ".join(hidden) + "). Show a section in the app "
+        note = ("Sheets for modules this company does not use are hidden (" + ", ".join(hidden) + "). Show a module in the app "
                 "(Settings → Menus) and download again, or unhide the sheet in Excel.") if hidden else \
-            "Every section is shown. Sections switched off in the app (Settings → Menus) are hidden from this file."
+            "Every module is shown. Modules switched off in the app (Settings → Menus) are hidden from this file."
     cover.cell(r, 2, note).font = F(italic=True, size=8, color="777777")
     cover.merge_cells(start_row=r, start_column=2, end_row=r + 1, end_column=3)
     cover.cell(r, 2).alignment = Alignment(wrap_text=True, vertical="top")

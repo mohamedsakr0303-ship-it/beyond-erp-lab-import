@@ -240,7 +240,7 @@ def _t_project_over_cost(db, p):
 TRIGGERS = {
     "receivable_overdue": (_t_receivable_overdue, "Customers owing money older than N days", {"days": 30, "min_amount": 0},
                            "حين يتأخر عميل في السداد أكثر من N يوماً"),
-    "followup_overdue": (_t_followup_overdue, "A CRM follow-up is N days overdue", {"days": 2}, "حين تتأخر متابعة N يوماً"),
+    "followup_overdue": (_t_followup_overdue, "A customer follow-up is N days overdue", {"days": 2}, "حين تتأخر متابعة N يوماً"),
     "stock_low": (_t_stock_low, "A stock item falls to its reorder level", {}, "حين يصل صنف إلى حد إعادة الطلب"),
     "visit_tomorrow": (_t_visit_tomorrow, "Healthcare visits booked N days ahead (reminders)", {"days_before": 1}, "زيارات طبية محجوزة بعد N يوم (تذكير)"),
     "contract_expiring": (_t_contract_expiring, "A contract ends within N days", {"days": 30}, "حين ينتهي عقد خلال N يوماً"),

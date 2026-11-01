@@ -599,7 +599,7 @@ function applyLook() {
 }
 // Settings → Menus presets: the sections a kind of business usually does not use (ticks only; nothing is saved until Save)
 const HIDE_PRESETS = {
-  all: { en: "Everything (show all sections)", ar: "كل الأقسام", hide: [] },
+  all: { en: "Everything (show all modules)", ar: "كل الأقسام", hide: [] },
   interior: { en: "Interior design & contracting", ar: "تصميم داخلي ومقاولات",
     hide: ["rentals", "shop", "stock", "assets", "accounting.loans", "accounting.bankrec", "accounting.recurring", "accounting.budgets", "purchasing.orders"] },
   rental: { en: "Equipment & scaffolding rental", ar: "تأجير المعدات والسقالات", hide: ["shop", "estimating"] },
@@ -712,7 +712,7 @@ async function route() {
     renderNav(parts.join("/"));
     const ai = here[2] === "chat.ai", off = String(here[2]).split("|").every(denied);
     $("#view").innerHTML = `<div class="page"><div class="card" style="max-width:640px"><h2>${esc(t(here[0]))}</h2>
-      <p>${esc(off ? L2("This screen is switched off for this company. Your data in it is kept.", "هذه الشاشة متوقفة لهذه الشركة. بياناتك فيها محفوظة.") : ai ? L2("The AI assistant is not included in this company's plan.", "المساعد الذكي غير مشمول في باقة هذه الشركة.") : L2("This section is not included in this company's plan. Your data in it is kept.", "هذا القسم غير مشمول في باقة هذه الشركة. بياناتك فيه محفوظة."))}</p>
+      <p>${esc(off ? L2("This screen is switched off for this company. Your data in it is kept.", "هذه الشاشة متوقفة لهذه الشركة. بياناتك فيها محفوظة.") : ai ? L2("The AI assistant is not included in this company's plan.", "المساعد الذكي غير مشمول في باقة هذه الشركة.") : L2("This module is not included in this company's plan. Your data in it is kept.", "هذا القسم غير مشمول في باقة هذه الشركة. بياناتك فيه محفوظة."))}</p>
       ${S.billing && S.billing.is_admin ? `<a class="btn pri" href="#/subscription">${esc(L2("Add it to the subscription", "إضافته إلى الاشتراك"))}</a>` : `<p class="muted">${esc(L2("Ask your company administrator to add it.", "اطلب من مسؤول الشركة إضافته."))}</p>`}</div></div>`;
     return;
   }
@@ -3749,7 +3749,7 @@ PAGES.journal = async (view, parts, q) => {
     `<div class="card">${drafts ? approvalRows(ad.rows) : voucherRows(d.rows) + pager(d.total, lq)}</div>`;
   if (!drafts) bulkify($("table.vtbl", view), BULKS.entries("accounting.journal"));
 };
-// ============================================================== customers & deals (CRM)
+// ============================================================== customers & deals
 const CRM_KIND = () => ({ call: ["📞", L2("Call", "مكالمة")], meeting: ["🤝", L2("Meeting", "اجتماع")], email: ["✉", L2("Email", "بريد")], whatsapp: ["💬", "WhatsApp"],
   visit: ["📍", L2("Site visit", "زيارة موقع")], note: ["📝", L2("Note", "ملاحظة")], followup: ["⏰", L2("Follow-up", "متابعة")], offer: ["📄", L2("Offer", "عرض سعر")],
   invoice: ["🧾", L2("Invoice", "فاتورة")], payment: ["💰", L2("Payment", "دفعة")], entry: ["📒", L2("Entry", "قيد")], sale: ["🛒", L2("Sale", "بيع")] });
@@ -9277,13 +9277,13 @@ function entryOptionCards() {
   const subs = S.boot.enums.submodules;
   const secs = S.boot.enums.modules.filter(m => !["settings", "users", "dashboard"].includes(m));
   const hideCard = `<div class="banner info">${L2("Right-click (long-press on phones) a menu item to rename, move, duplicate or hide it; a form field to rename, hide, set a default or add fields; a row for its actions; or a column heading to hide or sort it.", "انقر بزر الفأرة الأيمن (أو اضغط مطولاً على الهاتف) على عنصر في القائمة لإعادة تسميته أو نقله أو تكراره أو إخفائه، وعلى حقل في نموذج لإعادة تسميته أو إخفائه أو تعيين قيمة افتراضية أو إضافة حقول، وعلى سطر لإجراءاته، وعلى عنوان عمود لإخفائه أو ترتيبه.")}</div>
-    <div class="card"><h2>${L2("Show or hide sections and screens", "إظهار أو إخفاء الأقسام والشاشات")}</h2><p class="muted">${t("hidden_note")}</p><div class="grid g4">
+    <div class="card"><h2>${L2("Show or hide modules and screens", "إظهار أو إخفاء الأقسام والشاشات")}</h2><p class="muted">${t("hidden_note")}</p><div class="grid g4">
     ${secs.map(m => `<div><label class="f chk"><input type="checkbox" class="hidmod" value="${m}" ${hid.includes(m) ? "" : "checked"} ${ed ? "" : "disabled"}><b>${t("mod_" + m)}</b></label>
       ${(subs[m] || []).map(sc => `<label class="f chk" style="margin-inline-start:22px"><input type="checkbox" class="hidmod" value="${m}.${sc}" ${hid.includes(m + "." + sc) ? "" : "checked"} ${ed ? "" : "disabled"}>${esc(t(window.SUBPERM[m + "." + sc] || sc))}</label>`).join("")}</div>`).join("")}</div>
     ${ed ? `<div class="row" style="margin-top:10px"><select id="hidpreset" class="in" style="max-width:280px"><option value="">${L2("Apply a business type template", "تطبيق قالب نوع النشاط")}</option>
       ${Object.keys(HIDE_PRESETS).map(k => `<option value="${k}">${esc(L2(HIDE_PRESETS[k].en, HIDE_PRESETS[k].ar))}</option>`).join("")}</select>
       <button class="btn" data-a="hidsave">${t("save")}</button></div>
-      <p class="muted" style="margin-top:6px">${L2("The Excel workbook and import template follow these settings; sheets for hidden sections are hidden.", "يتبع مصنف Excel وقالب الاستيراد هذه الإعدادات، وتُخفى أوراق الأقسام المخفية.")}</p>` : ""}</div>`;
+      <p class="muted" style="margin-top:6px">${L2("The Excel workbook and import template follow these settings; sheets for hidden modules are hidden.", "يتبع مصنف Excel وقالب الاستيراد هذه الإعدادات، وتُخفى أوراق الأقسام المخفية.")}</p>` : ""}</div>`;
   const items = newMenuItems();
   const menuCard = `<div class="card"><h2>${L2("“+ New” menu", "قائمة «+ جديد»")}</h2><p class="muted">${L2("Select the items shown under “+ New” and set their order. Custom entry types can be added. Users see only what their permissions allow.", "اختر العناصر التي تظهر تحت «+ جديد» ورتّبها. يمكن إضافة أنواع القيود المخصصة. لا يرى المستخدم إلا ما تسمح به صلاحياته.")}</p>
     <div class="tbl"><table id="nmtab"><tbody>${items.map(i => `<tr data-key="${esc(i.key)}"><td style="width:36px"><input type="checkbox" class="nm-show" ${i.show ? "checked" : ""} ${ed ? "" : "disabled"}></td><td>${esc(i.label)}${i.entry ? ` <span class="chip">${L2("Entry type", "نوع قيد")}</span>` : ""}</td>
@@ -9615,11 +9615,11 @@ PAGES.industry = async (view) => {
     catch (e) { fail(e); el.disabled = false; } };
   const ed = can("settings.menus", "edit");
   S.H.indapply = async el => { const k = el.dataset.k, ty = d.types.find(x => x.key === k);
-    if (!await uiConfirm(L2(`Apply the “${ty.name}” template? Missing accounts are added, unused sections are hidden (restorable in Settings → Menus) and payroll departments and pay items are set. Nothing is deleted.`, `هل تريد تطبيق قالب «${ty.name_ar}»؟ تُضاف الحسابات الناقصة، وتُخفى الأقسام غير المستخدمة (ويمكن استعادتها من الإعدادات ← القوائم)، وتُضبط أقسام الرواتب وبنود الأجر. لا يُحذف شيء.`))) return;
+    if (!await uiConfirm(L2(`Apply the “${ty.name}” template? Missing accounts are added, unused modules are hidden (restorable in Settings → Menus) and payroll departments and pay items are set. Nothing is deleted.`, `هل تريد تطبيق قالب «${ty.name_ar}»؟ تُضاف الحسابات الناقصة، وتُخفى الأقسام غير المستخدمة (ويمكن استعادتها من الإعدادات ← القوائم)، وتُضبط أقسام الرواتب وبنود الأجر. لا يُحذف شيء.`))) return;
     try { const r = await api("POST", "/api/industries/apply", { type: k }); toast(L2(`Applied: ${r.accounts_added.length} account(s) added.`, `تم التطبيق: أُضيف ${r.accounts_added.length} حساب.`)); await refreshBoot(); route();
       if (platformOn()) window.dispatchEvent(new Event("beyond-billing"));     // the platform learns the new industry
     } catch (e) { fail(e); } };
-  view.innerHTML = `<div class="banner info">${L2("Choose the company's business type. Each template enables the relevant sections, adds required accounts and sets payroll departments, job titles, pay items and crew work items. A ready Excel workbook is available for each type.", "اختر نوع نشاط الشركة. يفعّل كل قالب الأقسام المناسبة، ويضيف الحسابات اللازمة، ويضبط أقسام الرواتب والمسميات الوظيفية وبنود الأجر وبنود أعمال الأطقم. يتوفر مصنف Excel جاهز لكل نوع.")}</div>
+  view.innerHTML = `<div class="banner info">${L2("Choose the company's business type. Each template enables the relevant modules, adds required accounts and sets payroll departments, job titles, pay items and crew work items. A ready Excel workbook is available for each type.", "اختر نوع نشاط الشركة. يفعّل كل قالب الأقسام المناسبة، ويضيف الحسابات اللازمة، ويضبط أقسام الرواتب والمسميات الوظيفية وبنود الأجر وبنود أعمال الأطقم. يتوفر مصنف Excel جاهز لكل نوع.")}</div>
     <div class="grid g2">${d.types.map(ty => `<div class="card"><h2>${esc(S.lang === "ar" ? ty.name_ar : ty.name)} ${d.current === ty.key ? `<span class="chip ok">${L2("Current", "الحالي")}</span>` : ""}</h2>
       <ul>${(S.lang === "ar" && ty.guide_ar && ty.guide_ar.length ? ty.guide_ar : ty.guide).map(g => `<li>${esc(g)}</li>`).join("")}</ul>
       <p class="muted">${L2("Business units:", "وحدات الأعمال:")}: ${esc(S.lang === "ar" && ty.bu_ar ? ty.bu_ar : ty.bu)} · ${L2("Hidden", "مخفي")}: ${esc(ty.hide.map(m => t("mod_" + m)).join("، "))}${ty.accounts.length ? `<br>${L2("Adds", "يضيف")}: ${ty.accounts.map(a => esc(a.code + " " + (S.lang === "ar" ? a.name_ar : a.name))).join(" · ")}` : ""}<br>${L2("Crew work items", "بنود أعمال الأطقم")}: ${ty.work_items.map(w => esc(S.lang === "ar" ? `${w.item_ar || w.item} (${w.unit_ar || w.unit})` : `${w.item} (${w.unit})`)).join(" · ")}</p>
@@ -11191,7 +11191,7 @@ async function aiSettingsTab(view, head) {
       { k: "instructions", l: L2("Standing instructions", "التعليمات الدائمة"), type: "textarea", v: p.instructions, span: "span2",
         ph: L2("e.g. Always answer in Arabic. Ask for the invoice number before recording any payment above 50,000.", "مثال: أجب دائماً بالعربية. اطلب رقم الفاتورة قبل تسجيل أي دفعة تتجاوز 50,000.") }])}
       <div id="aiusers" ${p.access === "list" ? "" : "hidden"}><h3>${esc(L2("Permitted users", "المستخدمون المسموح لهم"))}</h3><div class="chkgrid">${ppl.filter(x => x.active).map(x => `<label class="f chk"><input type="checkbox" class="aiu" value="${esc(x.username)}" ${p.users.includes(x.username) ? "checked" : ""}>${avatar(x, 22)} ${esc(x.name)}</label>`).join("")}</div></div>
-      <h3>${esc(L2("Excluded sections", "الأقسام المستبعدة"))}</h3><div class="chkgrid">${mods.map(m => `<label class="f chk"><input type="checkbox" class="aib" value="${m}" ${p.blocked.includes(m) ? "checked" : ""}>${esc(modName(m))}</label>`).join("")}</div>
+      <h3>${esc(L2("Excluded modules", "الأقسام المستبعدة"))}</h3><div class="chkgrid">${mods.map(m => `<label class="f chk"><input type="checkbox" class="aib" value="${m}" ${p.blocked.includes(m) ? "checked" : ""}>${esc(modName(m))}</label>`).join("")}</div>
       <h3>${esc(L2("Provider key", "مفتاح المزوّد"))}</h3>
       <div class="row"><span class="chip ${hasKey || (p.provider !== "anthropic" && /localhost|127\.0\.0\.1/.test(p.base_url || "")) ? "ok" : "bad"}">${esc(hasKey ? L2("Installed", "مثبت") : p.provider !== "anthropic" && /localhost|127\.0\.0\.1/.test(p.base_url || "") ? L2("Not needed (local model)", "غير مطلوب (نموذج محلي)") : L2("Not installed", "غير مثبّت"))}</span>
         <input class="in" type="password" name="key" autocomplete="off" placeholder="${esc(L2("Provider API key (leave blank to keep the current key)", "مفتاح API للمزوّد (اتركه فارغاً للإبقاء على الحالي)"))}" style="max-width:420px" data-skip="1" id="aikey">
@@ -12158,7 +12158,7 @@ function renderLanding(opt = {}) {
     L2("Inventory Management", "إدارة المخزون"), L2("Procurement", "المشتريات"), L2("Project Costing", "تكاليف المشروعات"), L2("Contracts & Progress Billing", "العقود والمستخلصات"),
     L2("Payroll and HR", "الرواتب والموارد البشرية"), L2("Fixed Assets", "الأصول الثابتة"), L2("Treasury and Banking", "الخزينة والبنوك"), L2("Budgeting", "الموازنات"),
     L2("Tax and E-Invoicing", "الضرائب والفاتورة الإلكترونية"), L2("Sales and Instalments", "المبيعات والتقسيط"), L2("Equipment Rental", "تأجير المعدات"),
-    L2("Partners and Equity", "الشركاء وحقوق الملكية"), L2("Financial Reports", "التقارير المالية"), L2("Customers and Deals (CRM)", "العملاء والصفقات (CRM)"), L2("Team Chat", "محادثات الفريق"), L2("AI Assistant", "المساعد الذكي")];
+    L2("Partners and Equity", "الشركاء وحقوق الملكية"), L2("Financial Reports", "التقارير المالية"), L2("Customers and Deals", "العملاء والصفقات"), L2("Team Chat", "محادثات الفريق"), L2("AI Assistant", "المساعد الذكي")];
   const tiles = [["scale", L2("General ledger", "الأستاذ العام")], ["box", L2("Inventory", "المخزون")], ["users", L2("Payroll", "الرواتب")],
     ["receipt", L2("Tax and e-invoicing", "الضرائب والفاتورة الإلكترونية")], ["file", L2("Quotations and BOQs", "العروض والمقايسات")], ["brief", L2("Projects", "المشروعات")]];
   const go = inApp ? L2("Back to BeyondERP", "العودة إلى BeyondERP") : L2(setup ? "Get started" : "Sign in", setup ? "ابدأ الآن" : "تسجيل الدخول");
@@ -13430,7 +13430,7 @@ PAGES.referrals = async view => {
     <div class="grid g2"><div class="card"><h2>${esc(L2("How it works", "كيف يعمل"))}</h2>
       ${step(1, L2("Share your link", "شارك رابطك"), L2("Send it on WhatsApp, email or anywhere. It is yours alone.", "أرسله عبر واتساب أو البريد أو أي مكان. الرابط خاص بك."))}
       ${step(2, L2("They sign up and subscribe", "يسجّلون ويشتركون"), L2(`New customers only. They get ${m.friend_pct}% off their first subscription.`, `للعملاء الجدد فقط. يحصلون على خصم ${m.friend_pct}% على اشتراكهم الأول.`))}
-      ${step(3, L2("You get your reward", "تحصل على مكافأتك"), L2(`As soon as their payment is confirmed: ${m.first_pct}% off your first subscription, or ${m.upgrade_pct}% off an upgrade (a bigger plan or more sections).`, `فور تأكيد دفعتهم: خصم ${m.first_pct}% على اشتراكك الأول، أو ${m.upgrade_pct}% على ترقية (باقة أكبر أو أقسام إضافية).`))}
+      ${step(3, L2("You get your reward", "تحصل على مكافأتك"), L2(`As soon as their payment is confirmed: ${m.first_pct}% off your first subscription, or ${m.upgrade_pct}% off an upgrade (a bigger plan or more modules).`, `فور تأكيد دفعتهم: خصم ${m.first_pct}% على اشتراكك الأول، أو ${m.upgrade_pct}% على ترقية (باقة أكبر أو أقسام إضافية).`))}
       <p class="muted" style="font-size:.85em;margin-bottom:0">${esc(L2("One reward per payment: rewards do not add up, and the bigger of your discounts applies. Rewards wait for your next first subscription or upgrade; renewals keep them for later.", "مكافأة واحدة لكل دفعة: لا تُجمع المكافآت، ويُطبق الخصم الأكبر. تنتظر المكافآت اشتراكك الأول أو ترقيتك التالية؛ ولا تُستخدم في التجديد."))}</p></div>
       <div class="card"><h2>${esc(L2("Your rewards", "مكافآتك"))}</h2>${m.rewards.length ? `<div class="list">${m.rewards.map(r => `<div class="li"><span class="chip ${RW[r.status][1]}">${esc(RW[r.status][0])}</span>
           <span style="flex:1">${esc(L2(`From ${r.from || "—"}`, `من ${r.from || "—"}`))}<div class="lines">${esc(L2("Earned", "تاريخ الاستحقاق"))} ${fd(String(r.earned_at).slice(0, 10))}${r.used_at ? ` · ${esc(L2("used", "استُخدمت"))} ${fd(String(r.used_at).slice(0, 10))} (${r.pct}%${r.order_ref ? " · " + esc(r.order_ref) : ""})` : ""}</div></span></div>`).join("")}</div>`
@@ -13552,8 +13552,8 @@ PAGES.subscription = async (view, parts, q) => {
         ${p.badge || p.badge_ar ? `<span class="plan-badge">${esc(ar && p.badge_ar ? p.badge_ar : p.badge)}</span>` : ""}<h3>${esc(ar && p.name_ar ? p.name_ar : p.name)}</h3>
         ${p.tagline || p.tagline_ar ? `<div class="muted" style="font-size:.88em">${esc(ar && p.tagline_ar ? p.tagline_ar : p.tagline)}</div>` : ""}
         <div class="price">${p.contact ? L2("Contact us for pricing", "تواصل معنا لمعرفة السعر") : `${money((+p.price || 0) * (st.months === 12 ? (+pub.yearly_months || 10) : 1))} <small>${esc(cur)} / ${st.months === 12 ? L2("Year", "سنة") : L2("Month", "شهر")} · ${L2("per company", "لكل شركة")}</small>`}</div>
-        <div class="muted">${p.contact && !p.users ? L2("Users, companies and sections as agreed", "المستخدمون والشركات والأقسام حسب الاتفاق") : L2(`${p.users} users per company`, `${p.users} مستخدمين لكل شركة`)}</div><ul>${feats.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
-        <div class="plan-inc">${inc ? `<span title="${esc(inc.map(secL).join(" · "))}">${esc(L2(`${inc.length} sections`, `${inc.length} قسماً`))}</span>` : `<span>${esc(L2("Every section", "كل الأقسام"))}</span>`}
+        <div class="muted">${p.contact && !p.users ? L2("Users, companies and modules as agreed", "المستخدمون والشركات والأقسام حسب الاتفاق") : L2(`${p.users} users per company`, `${p.users} مستخدمين لكل شركة`)}</div><ul>${feats.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+        <div class="plan-inc">${inc ? `<span title="${esc(inc.map(secL).join(" · "))}">${esc(L2(`${inc.length} modules`, `${inc.length} قسماً`))}</span>` : `<span>${esc(L2("Every module", "كل الأقسام"))}</span>`}
           ${pub.ai_mode === "off" ? "" : `<span class="${pub.ai_mode === "free" || p.ai ? "" : "off"}">✦ ${esc(L2("AI assistant", "المساعد الذكي"))}</span>`}
           <span class="${pub.support_mode === "free" || p.support !== false ? "" : "off"}">? ${esc(L2("Online support", "الدعم الإلكتروني"))}</span></div></button>`; }).join("")}</div>
       <p class="muted" style="font-size:.85em">${L2(`Extra user: ${money(pub.extra_user)} ${cur} a month, for the company it is added to.`, `المستخدم الإضافي: ${money(pub.extra_user)} ${cur} شهرياً، للشركة المضاف إليها.`)}</p></div>
@@ -13572,7 +13572,7 @@ PAGES.subscription = async (view, parts, q) => {
         <div class="grid g2"><label class="f">${L2("Users needed", "عدد المستخدمين")}<input name="eu" type="number" min="1" inputmode="numeric" value="${Math.max(b.users || 1, 1)}"></label>
           <label class="f">${L2("Companies", "عدد الشركات")}<input name="ec" type="number" min="1" inputmode="numeric" value="${Math.max(mine.length, 1)}"></label>
           <label class="f">${L2("Phone", "الهاتف")}<input name="ep" dir="ltr" inputmode="tel"></label>
-          <label class="f">${L2("Sections you need (optional)", "الأقسام المطلوبة (اختياري)")}<input name="es"></label>
+          <label class="f">${L2("Modules you need (optional)", "الأقسام المطلوبة (اختياري)")}<input name="es"></label>
           <label class="f" style="grid-column:1/-1">${L2("Anything else (optional)", "أي تفاصيل أخرى (اختياري)")}<textarea name="en" rows="3"></textarea></label></div>
         <button class="btn pri" data-a="subent">${L2("Send the request", "إرسال الطلب")}</button>`;
       S.H.subent = async el => { const v = k => $(`[name=${k}]`, box).value.trim();
@@ -13613,7 +13613,7 @@ PAGES.subscription = async (view, parts, q) => {
     const sold = Object.keys(pub.module_prices || {}), price = p => +(plans.find(x => x.code === p) || {}).price || 0;
     view.innerHTML = `${orderCard(open)}${modeSwitch()}
       <div class="card"><h2>${L2("1. What to add", "١. ما تريد إضافته")}</h2>
-        <p class="muted" style="margin-top:0">${L2("Choose a bigger plan, more sections, the assistant, support or users. It starts as soon as the payment is confirmed, and you pay only the difference for the days left in the current period.", "اختر باقة أكبر أو أقساماً إضافية أو المساعد أو الدعم أو مستخدمين. تبدأ فور تأكيد الدفع، وتدفع الفرق فقط عن الأيام المتبقية من الفترة الحالية.")}</p>
+        <p class="muted" style="margin-top:0">${L2("Choose a bigger plan, more modules, the assistant, support or users. It starts as soon as the payment is confirmed, and you pay only the difference for the days left in the current period.", "اختر باقة أكبر أو أقساماً إضافية أو المساعد أو الدعم أو مستخدمين. تبدأ فور تأكيد الدفع، وتدفع الفرق فقط عن الأيام المتبقية من الفترة الحالية.")}</p>
         ${activeCos().map(c => { const s = statusOf(c.id), u = up(c.id), pl = plans.find(x => x.code === u.plan) || {}, inc = planMods(pl), owned = (s.addons || {}).modules || [];
           return `<div class="up-co ${u.on ? "on" : ""}"><label class="chk" style="font-weight:700"><input type="checkbox" data-change="upsel" data-id="${c.id}" ${u.on ? "checked" : ""}> ${esc(c.name)}</label>
             <span class="muted" style="font-size:.85em">${esc(s.plan_name || "")} · ${L2("paid until", "مدفوع حتى")} ${billDate(s.paid_until)}</span>

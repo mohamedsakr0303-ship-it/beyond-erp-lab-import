@@ -256,11 +256,12 @@ async function budget(page) {
 
   await go(page, `#/budget-report?year=${year}&bu_id=${bu}`);
   const fmt = v => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const one = v => String(+v.toFixed(1));                                 // percentages: one decimal, as the report rounds them
   // columns: budget to date (January to this month), actual to date, variance (+ = under budget for a cost), variance %,
   // used %, full-year budget
   const toDate = 2000 * (new Date().getMonth() + 1);
-  const want = [fmt(toDate), fmt(now), fmt(toDate - now), String(Math.round((toDate - now) / toDate * 100)),
-                String(Math.round(now / toDate * 100)), "24,000.00"];
+  const want = [fmt(toDate), fmt(now), fmt(toDate - now), one((toDate - now) / toDate * 100),
+                one(now / toDate * 100), "24,000.00"];
   const cells = (await page.locator(".main tr", { hasText: "5010" }).first().locator("td").allInnerTexts()).map(c => c.trim());
   expect(JSON.stringify(cells.slice(1, 7)) === JSON.stringify(want), `report row ${JSON.stringify(cells)}, expected ${JSON.stringify(want)}`);
 }

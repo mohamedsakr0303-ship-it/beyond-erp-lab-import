@@ -269,7 +269,7 @@ def guard(db, user, method, path, raw, headers, module):
     """Refuse an assistant call the policy does not allow, and any change that was not checked and reviewed."""
     check_call(db, user, method, path)
     if route_blocked(db, module):
-        raise PermissionError("The AI assistant may not use this section (super administrator's setting)")
+        raise PermissionError("The AI assistant may not use this module (super administrator's setting)")
     if method == "GET":
         return
     r = _REVIEWS.get(headers.get("x-ai-review") or "")
@@ -310,7 +310,7 @@ def preview_many(app, user, changes):
             raise AIError("Only POST, PUT or DELETE on an /api/ path")
         check_call(app.db, user, c["method"], c["path"].split("?")[0])
         if route_blocked(app.db, c.get("module")):
-            raise PermissionError("The AI assistant may not use this section (super administrator's setting)")
+            raise PermissionError("The AI assistant may not use this module (super administrator's setting)")
     db = app.db
     headers = {"x-requested-with": "BeyondERP", "content-type": "application/json"}
     out = {"checks": [], "figures": [], "entries": [], "tables": [], "items": []}
@@ -461,8 +461,8 @@ def context(db, user):
              f"Company: {db.setting('company_name') or '-'}; currency {db.setting('currency') or 'EGP'}.",
              f"Signed-in person: {user.get('full_name') or user['username']} (username {user['username']}; "
              f"{'super administrator' if user.get('is_super') else 'administrator' if user.get('is_admin') else 'user'}).",
-             "Their access by section (none/view/add/edit): " + ", ".join(f"{m}={v}" for m, v in perms.items()) + ".",
-             f"Sections the assistant must not use: {', '.join(policy(db)['blocked']) or 'none'}."]
+             "Their access by module (none/view/add/edit): " + ", ".join(f"{m}={v}" for m, v in perms.items()) + ".",
+             f"Modules the assistant must not use: {', '.join(policy(db)['blocked']) or 'none'}."]
     return "\n".join(lines)
 
 

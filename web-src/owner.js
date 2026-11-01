@@ -155,7 +155,7 @@ const NAV0 = () => [
     ["methods", "💳", L("Payment methods", "طرق الدفع"), "settings"]]],
   [L("Support", "الدعم"), [["support", "✉", L("Tickets", "البلاغات"), "support"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]]],
-  [L("Product", "المنتج"), [["plans", "◎", L("Plans", "الباقات"), "settings"], ["addons", "＋", L("Sections, AI & support", "الأقسام والذكاء الاصطناعي والدعم"), "settings"],
+  [L("Product", "المنتج"), [["plans", "◎", L("Plans", "الباقات"), "settings"], ["addons", "＋", L("Modules, AI & support", "الأقسام والذكاء الاصطناعي والدعم"), "settings"],
     ["menus", "☰", L("Menus by industry", "القوائم حسب النشاط"), "settings"], ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"]]],
   [L("Console", "اللوحة"), [["team", "☷", L("Team", "الفريق"), "_full"], ["look", "🎨", L("Look of this console", "مظهر اللوحة"), "settings"],
     ["log", "⌚", L("Activity", "السجل"), "_full"], ["deleted", "⌫", L("Deleted companies", "الشركات المحذوفة"), "customers"]]]];
@@ -416,7 +416,7 @@ const stChip = s => { const x = ST()[s] || [s || "—", ""]; return chip(x[0], x
 const SECTIONS = () => [["dashboard", L("Dashboard & calculators", "لوحة التحكم والحاسبات")], ["chat", L("Team chat", "محادثة الفريق")], ["team", L("Knowledge base & alerts", "قاعدة المعرفة والتنبيهات")],
   ["accounting", L("General accounting, loans", "المحاسبة العامة والقروض")], ["reports", L("Financial reports", "التقارير المالية")], ["tax", L("Taxation & e-invoicing", "الضرائب والفاتورة الإلكترونية")],
   ["sales", L("Sales & receivables", "المبيعات والمدينون")], ["purchasing", L("Procurement & payables", "المشتريات والدائنون")], ["stock", L("Inventory", "المخزون")],
-  ["crm", L("Customers & deals (CRM)", "العملاء والصفقات")], ["projects", L("Projects & tasks", "المشروعات والمهام")], ["contracts", L("Contracts, variations, certificates", "العقود والأوامر التغييرية والمستخلصات")],
+  ["crm", L("Customers & deals", "العملاء والصفقات")], ["projects", L("Projects & tasks", "المشروعات والمهام")], ["contracts", L("Contracts, variations, certificates", "العقود والأوامر التغييرية والمستخلصات")],
   ["estimating", L("Estimating & tendering", "التسعير والعطاءات")], ["business_units", L("Business units", "وحدات الأعمال")], ["shop", L("Showroom & unit sales", "المعرض ومبيعات الوحدات")],
   ["equipment", L("Plant & equipment", "المعدات والآلات")], ["rentals", L("Equipment rental", "تأجير المعدات")], ["payroll", L("Human resources & payroll", "الموارد البشرية والرواتب")],
   ["assets", L("Assets & treasury", "الأصول والخزينة")], ["partners", L("Owners' equity", "حقوق الملكية")], ["care", L("Healthcare", "الرعاية الصحية")],
@@ -440,7 +440,7 @@ function treeHtml(val, mode) {
     ? `<div class="tn l${lvl}"><span>${esc(n.l)}</span><select name="t:${n.k}" class="tsel ${val[n.k] || ""}" data-change="tsel">${[["", L("As its plan", "حسب الباقة")], ["off", L("Off", "متوقف")], ["on", L("On (given back)", "متاح (استثناء)")]].map(([v, l]) => `<option value="${v}" ${(val[n.k] || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`
     : `<label class="tn l${lvl} chk"><input type="checkbox" name="t:${n.k}" ${val[n.k] === "off" ? "checked" : ""}> ${esc(n.l)}</label>`;
   const open = s => [s, ...s.kids, ...s.kids.flatMap(c => c.kids)].some(n => val[n.k]);
-  return `<div class="tree"><input type="search" class="tfind" placeholder="${esc(L("Find a section, screen or tab…", "ابحث عن قسم أو شاشة أو تبويب…"))}">
+  return `<div class="tree"><input type="search" class="tfind" placeholder="${esc(L("Find a module, screen or tab…", "ابحث عن قسم أو شاشة أو تبويب…"))}">
     ${TREE().map(sct => `<div class="tsec" data-find="${esc([sct.l, ...sct.kids.map(c => c.l), ...sct.kids.flatMap(c => c.kids.map(t => t.l))].join(" ").toLowerCase())}">${node(sct, 1)}
       ${sct.kids.length ? `<details ${open(sct) ? "open" : ""}><summary>${esc(L(`${sct.kids.length} screens`, `${sct.kids.length} شاشات`))}</summary>${sct.kids.map(c => node(c, 2) + c.kids.map(t => node(t, 3)).join("")).join("")}</details>` : ""}</div>`).join("")}</div>`;
 }
@@ -746,7 +746,7 @@ PAGES.company = async (view, parts) => {
     access: () => accessPanel(x, cfg, setCo),
     menus: () => menusPanel(x, cfg, setCo),
     industry: () => { const inds = industriesOf(cfg);
-      panel(L("Industry", "النشاط"), `<p class="muted small">${esc(L("Its industry's starter sections are included in every plan. The app sets this when an industry template is applied; you can change it here.", "الأقسام المبدئية لنشاطها مشمولة في كل باقة. يضبطه النظام عند تطبيق قالب النشاط، ويمكنك تغييره هنا."))}</p>
+      panel(L("Industry", "النشاط"), `<p class="muted small">${esc(L("Its industry's starter modules are included in every plan. The app sets this when an industry template is applied; you can change it here.", "الأقسام المبدئية لنشاطها مشمولة في كل باقة. يضبطه النظام عند تطبيق قالب النشاط، ويمكنك تغييره هنا."))}</p>
         ${form([{ k: "industry", l: L("Industry", "النشاط"), type: "select", v: b.industry || "", span: 1, opts: [["", L("Not known", "غير معروف")], ...inds.map(([k, d]) => [k, S.lang === "ar" && d.name_ar ? d.name_ar : d.name || k])] }], 1)}`,
         v => setCo({ industry: v.industry })); },
     deal: () => dealPanel(x, cfg, setCo),
@@ -768,7 +768,7 @@ PAGES.company = async (view, parts) => {
         async v => { await rpc("console_company_edit", { p_company: id, p: { owner: v.owner } }); toast(L("Saved.", "تم الحفظ.")); }); },
     member: el => memberPanel(x, x.people.find(p => p.email === el.dataset.e)),
   });
-  const ent = st.modules === null || st.modules === undefined ? L("Every section", "كل الأقسام") : st.modules.map(secName).join(" · ");
+  const ent = st.modules === null || st.modules === undefined ? L("Every module", "كل الأقسام") : st.modules.map(secName).join(" · ");
   view.innerHTML = `<div class="card"><div class="row">${avatar(x.name)}<div><h1 style="margin:0">${esc(x.name)}</h1><span class="muted small" dir="ltr">${esc(x.created_by || "")}</span> · <span class="muted small">${esc(L("since", "منذ"))} ${esc(day(x.created_at))}</span></div>
       ${stChip(st.status)}${free ? chip(L("Free of charge", "مجانية"), "info") : ""}${+b.discount_pct ? chip(L(`Discount ${b.discount_pct}%`, `خصم ${b.discount_pct}%`), "ok") : ""}<span class="sp"></span>
       <a class="btn" href="#/customers">← ${esc(L("Customers", "العملاء"))}</a></div>
@@ -818,7 +818,7 @@ function payPanel(x, cfg) {
     { k: "extra_users", l: L("Extra users", "مستخدمون إضافيون"), type: "number", v: x.state.extra_users || 0, min: 0 },
     { k: "amount", l: L("Amount received (blank: list price; 0 for free)", "المبلغ المستلم (فارغ: سعر القائمة؛ 0 للمجاني)"), type: "number", min: 0 },
     { k: "reference", l: L("Reference (transfer number)", "المرجع (رقم التحويل)") }, { k: "note", l: L("Note", "ملاحظة") },
-    ...(sold.length ? [{ type: "html", span: 1, html: `<b class="small">${esc(L("Sections added on top of the plan", "أقسام مضافة على الباقة"))}</b><div class="checks">${sold.map(k => `<label class="chk"><input type="checkbox" name="m_${k}" ${((x.state.addons || {}).modules || []).includes(k) ? "checked" : ""}> ${esc(secName(k))}</label>`).join("")}</div>` }] : []),
+    ...(sold.length ? [{ type: "html", span: 1, html: `<b class="small">${esc(L("Modules added on top of the plan", "أقسام مضافة على الباقة"))}</b><div class="checks">${sold.map(k => `<label class="chk"><input type="checkbox" name="m_${k}" ${((x.state.addons || {}).modules || []).includes(k) ? "checked" : ""}> ${esc(secName(k))}</label>`).join("")}</div>` }] : []),
     { k: "ai", l: L("AI assistant add-on", "إضافة المساعد الذكي"), type: "check", v: !!(x.state.addons || {}).ai },
     { k: "support", l: L("Online support add-on", "إضافة الدعم الإلكتروني"), type: "check", v: !!(x.state.addons || {}).support }]),
     async v => { await rpc("console_record_payment", { p: { company: x.id, plan: v.plan, months: +v.months, extra_users: +v.extra_users || 0, amount: v.amount === "" ? "" : +v.amount,
@@ -828,7 +828,7 @@ function accessPanel(x, cfg, setCo) {
   const ov = (x.billing || {}).overrides || {}, list = Array.isArray(ov.modules) ? ov.modules : [];
   const tri = (k, l) => ({ k, l, type: "select", v: ov[k] === true ? "on" : ov[k] === false ? "off" : "", opts: [["", L("As its plan", "حسب الباقة")], ["on", L("Always on", "متاح دائماً")], ["off", L("Off", "غير متاح")]] });
   panel(L("What this company can use", "ما يمكن لهذه الشركة استخدامه"), `<p class="muted small">${esc(L("Overrides beat the plan, the trial and the add-ons. Leave “As its plan” to follow them.", "الاستثناءات تتقدم على الباقة والتجربة والإضافات. اترك «حسب الباقة» لاتباعها."))}</p>
-    ${form([{ k: "mods", l: L("Sections", "الأقسام"), type: "select", v: ov.modules === "all" ? "all" : list.length ? "list" : "", opts: [["", L("As its plan", "حسب الباقة")], ["all", L("Every section", "كل الأقسام")], ["list", L("The plan's, plus these:", "أقسام الباقة، بالإضافة إلى:")]] },
+    ${form([{ k: "mods", l: L("Modules", "الأقسام"), type: "select", v: ov.modules === "all" ? "all" : list.length ? "list" : "", opts: [["", L("As its plan", "حسب الباقة")], ["all", L("Every module", "كل الأقسام")], ["list", L("The plan's, plus these:", "أقسام الباقة، بالإضافة إلى:")]] },
       { k: "users", l: L("Users allowed (blank: as its plan)", "المستخدمون المسموح بهم (فارغ: حسب الباقة)"), type: "number", v: ov.users ?? "", min: 1 },
       tri("ai", L("AI assistant", "المساعد الذكي")), tri("support", L("Online support", "الدعم الإلكتروني")),
       { type: "html", span: 1, html: `<div class="checks">${SECTIONS().map(([k, l]) => `<label class="chk"><input type="checkbox" name="s_${k}" ${list.includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div>` }])}`,
@@ -840,7 +840,7 @@ function menusPanel(x, cfg, setCo) {
   const ov = (x.billing || {}).overrides || {}, val = {};
   (ov.deny || []).forEach(k => { val[k] = "off"; }); (ov.allow || []).forEach(k => { val[k] = "on"; });
   const plan = (cfg.plans || []).find(p => p.code === x.state.plan) || {};
-  panel(`${x.name} — ${L("Menus, screens & tabs", "القوائم والشاشات والتبويبات")}`, `<p class="muted small">${esc(L("Only for this company — other companies of the same people are set on their own pages. “Off” hides it from everyone in this company (even when it is free or billing is off). “On” gives back what its plan switches off. Sections its plan does not include are added in “What it can use”.", "لهذه الشركة فقط — شركات نفس الأشخاص الأخرى تُضبط من صفحاتها. «متوقف» يخفيه عن الجميع في هذه الشركة (حتى لو كانت مجانية أو الاشتراكات متوقفة). «متاح» يعيد ما توقفه الباقة. الأقسام غير المشمولة في الباقة تُضاف من «ما يمكنها استخدامه»."))}</p>
+  panel(`${x.name} — ${L("Menus, screens & tabs", "القوائم والشاشات والتبويبات")}`, `<p class="muted small">${esc(L("Only for this company — other companies of the same people are set on their own pages. “Off” hides it from everyone in this company (even when it is free or billing is off). “On” gives back what its plan switches off. Modules its plan does not include are added in “What it can use”.", "لهذه الشركة فقط — شركات نفس الأشخاص الأخرى تُضبط من صفحاتها. «متوقف» يخفيه عن الجميع في هذه الشركة (حتى لو كانت مجانية أو الاشتراكات متوقفة). «متاح» يعيد ما توقفه الباقة. الأقسام غير المشمولة في الباقة تُضاف من «ما يمكنها استخدامه»."))}</p>
     ${(plan.deny || []).length ? `<div class="banner warn small">${esc(L("Its plan switches off: ", "توقف الباقة: "))}${plan.deny.map(k => esc(keyName(k))).join(" · ")}</div>` : ""}
     ${treeHtml(val, "tri")}`,
     v => setCo({ overrides: { ...ov, deny: treeRead(v, "off"), allow: treeRead(v, "on") } }), { wide: true, onOpen: treeWire });
@@ -853,7 +853,7 @@ function dealPanel(x, cfg, setCo) {
     ${form([{ k: "plan", l: L("Plan", "الباقة"), type: "select", v: ent.some(p => p.code === st.plan) ? st.plan : ent[0].code, opts: ent.map(p => [p.code, p.name]) },
       { k: "users", l: L("Users agreed (this company)", "المستخدمون المتفق عليهم (هذه الشركة)"), type: "number", v: ov.users ?? Math.max(st.users || 1, 1), min: 1, req: 1 },
       { k: "companies", l: L(`Companies ${x.created_by || "the owner"} may own (blank: the general rule)`, `الشركات التي يملكها ${x.created_by || "المالك"} (فارغ: القاعدة العامة)`), type: "number", min: 0, v: "" },
-      { k: "mods", l: L("Sections", "الأقسام"), type: "select", v: ov.modules === "all" || !ov.modules ? "all" : "plan", opts: [["all", L("Every section", "كل الأقسام")], ["plan", L("As the plan", "حسب الباقة")]] },
+      { k: "mods", l: L("Modules", "الأقسام"), type: "select", v: ov.modules === "all" || !ov.modules ? "all" : "plan", opts: [["all", L("Every module", "كل الأقسام")], ["plan", L("As the plan", "حسب الباقة")]] },
       { k: "ai", l: L("AI assistant", "المساعد الذكي"), type: "check", v: ov.ai !== false }, { k: "support", l: L("Online support", "الدعم الإلكتروني"), type: "check", v: ov.support !== false },
       { k: "months", l: L("Months paid for", "الأشهر المدفوعة"), type: "number", v: 12, min: 1, max: 120, req: 1 },
       { k: "amount", l: L(`Agreed amount for the period (${cfg.currency || ""})`, `المبلغ المتفق عليه للفترة (${cfg.currency || ""})`), type: "number", min: 0, req: 1 },
@@ -1173,7 +1173,7 @@ const planCard = (p, cfg, tools = "") => {
     <h3 style="margin:0">${esc(ar && p.name_ar ? p.name_ar : p.name)} ${p.hidden ? chip(L("Hidden", "مخفية")) : ""}${p.code === cfg.trial_plan ? chip(L("Trial plan", "باقة التجربة"), "info") : ""}</h3>
     ${p.tagline || p.tagline_ar ? `<div class="muted small">${esc(ar && p.tagline_ar ? p.tagline_ar : p.tagline)}</div>` : ""}
     <div class="price">${p.contact ? esc(L("Contact us", "تواصل معنا")) : `${money(p.price)} <small>${esc(cfg.currency)} / ${esc(L("month · per company", "شهر · لكل شركة"))}</small>`}</div>
-    <div class="small">${esc(p.users ? L(`${p.users} users`, `${p.users} مستخدمين`) : L("users as agreed", "المستخدمون حسب الاتفاق"))}${(p.deny || []).length ? ` · ${esc(L(`${p.deny.length} screen(s) off`, `${p.deny.length} شاشة متوقفة`))}` : ""} · ${esc(p.modules && p.modules !== "all" ? L(`${p.modules.length} sections + core`, `${p.modules.length} أقسام + الأساسية`) : L("every section", "كل الأقسام"))}
+    <div class="small">${esc(p.users ? L(`${p.users} users`, `${p.users} مستخدمين`) : L("users as agreed", "المستخدمون حسب الاتفاق"))}${(p.deny || []).length ? ` · ${esc(L(`${p.deny.length} screen(s) off`, `${p.deny.length} شاشة متوقفة`))}` : ""} · ${esc(p.modules && p.modules !== "all" ? L(`${p.modules.length} modules + core`, `${p.modules.length} أقسام + الأساسية`) : L("every module", "كل الأقسام"))}
       · ${esc(cfg.ai_mode === "free" ? L("AI free for all", "الذكاء الاصطناعي مجاني للجميع") : cfg.ai_mode === "off" ? L("AI off", "الذكاء الاصطناعي متوقف") : p.ai ? L("AI included", "يشمل الذكاء الاصطناعي") : L("no AI", "بدون ذكاء اصطناعي"))}
       · ${esc(cfg.support_mode === "free" || p.support !== false ? L("online support", "دعم إلكتروني") : L("no online support", "بدون دعم إلكتروني"))}</div>
     <ul>${feats.map(f => `<li>${esc(f)}</li>`).join("")}</ul>${tools ? `<div class="tools">${tools}</div>` : ""}</div>`;
@@ -1196,9 +1196,9 @@ PAGES.plans = async view => {
       { k: "contact", l: L("Price on request: customers contact you (Enterprise); it cannot be ordered in the app", "السعر عند الطلب: يتواصل العميل معك (المؤسسات)؛ لا يمكن طلبها من التطبيق"), type: "check", v: p.contact, span: 1 },
       { k: "highlight", l: L("Stand out (outlined)", "مميزة (بإطار)"), type: "check", v: p.highlight }, { k: "hidden", l: L("Hidden: not offered, you can still give it", "مخفية: لا تُعرض، ويمكنك منحها"), type: "check", v: p.hidden },
       { k: "ai", l: L("Includes the AI assistant", "تشمل المساعد الذكي"), type: "check", v: p.ai }, { k: "support", l: L("Includes online support", "تشمل الدعم الإلكتروني"), type: "check", v: p.support !== false },
-      { k: "mods", l: L("Sections", "الأقسام"), type: "select", v: p.modules === "all" || !p.modules ? "all" : "list", opts: [["all", L("Every section", "كل الأقسام")], ["list", L("Core sections plus these:", "الأقسام الأساسية بالإضافة إلى:")]], span: 1 },
+      { k: "mods", l: L("Modules", "الأقسام"), type: "select", v: p.modules === "all" || !p.modules ? "all" : "list", opts: [["all", L("Every module", "كل الأقسام")], ["list", L("Core modules plus these:", "الأقسام الأساسية بالإضافة إلى:")]], span: 1 },
       { type: "html", span: 1, html: `<div class="checks">${SECTIONS().filter(([k]) => !(cfg.core_modules || []).includes(k)).map(([k, l]) => `<label class="chk"><input type="checkbox" name="s_${k}" ${mods.includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div>
-        <p class="muted small">${esc(L("Core sections and each industry's starter sections are always included (Menus by industry).", "الأقسام الأساسية والأقسام المبدئية لكل نشاط مشمولة دائماً (القوائم حسب النشاط)."))}</p>` },
+        <p class="muted small">${esc(L("Core modules and each industry's starter modules are always included (Menus by industry).", "الأقسام الأساسية والأقسام المبدئية لكل نشاط مشمولة دائماً (القوائم حسب النشاط)."))}</p>` },
       { type: "html", span: 1, html: `<b class="small">${esc(L("Switch off screens or tabs on this plan (tick to switch off)", "إيقاف شاشات أو تبويبات في هذه الباقة (حدد للإيقاف)"))}</b>${treeHtml(Object.fromEntries((p.deny || []).map(k => [k, "off"])), "off")}` }])}</div>
       <div><b class="small muted">${esc(L("Preview", "معاينة"))}</b><div class="preview" id="pprev"></div></div></div>`,
       async v => { const np = { ...p, code: (i == null ? v.code : p.code).trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""), name: v.name.trim(), name_ar: v.name_ar.trim(), tagline: v.tagline.trim(), tagline_ar: v.tagline_ar.trim(),
@@ -1234,9 +1234,9 @@ PAGES.addons = async view => {
     await rpc("billing_set_config", { p: { core_modules: core2, module_prices: mp, extra_user: +v.extra_user, extra_company_pct: +v.extra_company_pct,
       ai_mode: v.ai_mode, ai_addon: !!v.ai_addon, ai_price: +v.ai_price || 0, support_mode: v.support_mode, support_addon: !!v.support_addon, support_price: +v.support_price || 0 } });
     toast(L("Saved.", "تم الحفظ.")); route(); };
-  view.innerHTML = `<form id="af" onsubmit="return false"><div class="card"><h2>${esc(L("Sections of the ERP", "أقسام النظام"))}</h2>
+  view.innerHTML = `<form id="af" onsubmit="return false"><div class="card"><h2>${esc(L("Modules of the ERP", "أقسام النظام"))}</h2>
     <p class="muted small">${esc(L("Core: every plan includes it. Sold on its own: a customer can add it to a plan that does not include it, for this monthly price per company (0 = free to add). Neither: only plans that include it.", "أساسي: تشمله كل الباقات. يُباع منفصلاً: يمكن للعميل إضافته لباقة لا تشمله بهذا السعر الشهري لكل شركة (0 = إضافة مجانية). غير ذلك: فقط الباقات التي تشمله."))}</p>
-    <div class="tbl"><table><thead><tr><th>${esc(L("Section", "القسم"))}</th><th>${esc(L("Core", "أساسي"))}</th><th>${esc(L("Sold on its own", "يُباع منفصلاً"))}</th><th>${esc(L(`Price / month (${cfg.currency})`, `السعر / شهر (${cfg.currency})`))}</th></tr></thead><tbody>
+    <div class="tbl"><table><thead><tr><th>${esc(L("Module", "القسم"))}</th><th>${esc(L("Core", "أساسي"))}</th><th>${esc(L("Sold on its own", "يُباع منفصلاً"))}</th><th>${esc(L(`Price / month (${cfg.currency})`, `السعر / شهر (${cfg.currency})`))}</th></tr></thead><tbody>
       ${SECTIONS().map(([k, l]) => `<tr><td>${esc(l)}</td><td><input type="checkbox" name="c_${k}" ${core.includes(k) ? "checked" : ""}></td><td><input type="checkbox" name="sell_${k}" ${k in prices ? "checked" : ""}></td>
         <td><input type="number" name="p_${k}" min="0" step="any" value="${esc(prices[k] ?? "")}" style="max-width:140px"></td></tr>`).join("")}</tbody></table></div></div>
     <div class="grid g2"><div class="card"><h2>${esc(L("AI assistant", "المساعد الذكي"))}</h2>${form([
@@ -1270,14 +1270,14 @@ PAGES.menus = async view => {
       panel(L("Industry", "النشاط"), form([{ k: "name", l: L("Name", "الاسم"), v: d.name || "", req: 1 }, { k: "name_ar", l: L("Name (Arabic)", "الاسم (عربي)"), v: d.name_ar || "" }]),
         v => save({ core_by_industry: { ...cfg.core_by_industry, [k]: { ...d, name: v.name.trim(), name_ar: v.name_ar.trim() } } }), {
           extra: `<button type="button" class="btn danger" data-a="mdel" data-k="${esc(k)}">${esc(L("Delete", "حذف"))}</button>` }); },
-    mdel: async el => { const k = el.dataset.k; if (!await confirmIt(L("Delete this industry? Companies set to it keep only the core sections and their plan's.", "حذف هذا النشاط؟ الشركات المرتبطة به تحتفظ بالأقسام الأساسية وأقسام باقتها فقط."), { danger: true })) return;
+    mdel: async el => { const k = el.dataset.k; if (!await confirmIt(L("Delete this industry? Companies set to it keep only the core modules and their plan's.", "حذف هذا النشاط؟ الشركات المرتبطة به تحتفظ بالأقسام الأساسية وأقسام باقتها فقط."), { danger: true })) return;
       const next = { ...cfg.core_by_industry }; delete next[k]; closePanel(); save({ core_by_industry: next }); },
     mall: el => { const k = el.dataset.k, boxes = $$(`input[name^="i_${k}_"]`, $("#mf")), on = boxes.some(b => !b.checked); boxes.forEach(b => { b.checked = on; }); },
   });
-  view.innerHTML = `<form id="mf" onsubmit="return false"><div class="card"><div class="row"><h2 style="margin:0">${esc(L("Starter sections by industry", "الأقسام المبدئية حسب النشاط"))}</h2><span class="sp"></span>
+  view.innerHTML = `<form id="mf" onsubmit="return false"><div class="card"><div class="row"><h2 style="margin:0">${esc(L("Starter modules by industry", "الأقسام المبدئية حسب النشاط"))}</h2><span class="sp"></span>
       <button class="btn sm" data-a="mnew">+ ${esc(L("Industry", "نشاط"))}</button></div>
-    <p class="muted small">${esc(L("Every plan includes the core sections and the starter sections of the company's industry, so each business has what it needs from day one. Plans add more; one company can get more on its own page (What it can use), and any screen or tab can be switched off per plan or per company. The trial and free companies see every section.", "تشمل كل باقة الأقسام الأساسية والأقسام المبدئية لنشاط الشركة، ليجد كل نشاط ما يحتاجه من اليوم الأول. تضيف الباقات المزيد، ويمكن منح شركة واحدة المزيد من صفحتها (ما يمكنها استخدامه)، ويمكن إيقاف أي شاشة أو تبويب لكل باقة أو لكل شركة. التجربة والشركات المجانية ترى كل الأقسام."))}</p>
-    <div class="tbl matrix"><table><thead><tr><th>${esc(L("Section", "القسم"))}</th><th class="center">${esc(L("Core (all)", "أساسي (للكل)"))}</th>
+    <p class="muted small">${esc(L("Every plan includes the core modules and the starter modules of the company's industry, so each business has what it needs from day one. Plans add more; one company can get more on its own page (What it can use), and any screen or tab can be switched off per plan or per company. The trial and free companies see every module.", "تشمل كل باقة الأقسام الأساسية والأقسام المبدئية لنشاط الشركة، ليجد كل نشاط ما يحتاجه من اليوم الأول. تضيف الباقات المزيد، ويمكن منح شركة واحدة المزيد من صفحتها (ما يمكنها استخدامه)، ويمكن إيقاف أي شاشة أو تبويب لكل باقة أو لكل شركة. التجربة والشركات المجانية ترى كل الأقسام."))}</p>
+    <div class="tbl matrix"><table><thead><tr><th>${esc(L("Module", "القسم"))}</th><th class="center">${esc(L("Core (all)", "أساسي (للكل)"))}</th>
       ${inds.map(([k, d]) => `<th class="center"><button type="button" class="linkb" data-a="mren" data-k="${esc(k)}" title="${esc(L("Rename or delete", "إعادة التسمية أو الحذف"))}">${esc(iname(k, d))}</button><br><button type="button" class="linkb small" data-a="mall" data-k="${esc(k)}">${esc(L("all / none", "الكل / لا شيء"))}</button></th>`).join("")}</tr></thead>
       <tbody>${secs.map(([m, l]) => `<tr><td>${esc(l)}</td><td class="center"><input type="checkbox" name="c_${m}" ${core.includes(m) ? "checked" : ""}></td>
         ${inds.map(([k, d]) => `<td class="center"><input type="checkbox" name="i_${k}_${m}" ${(d.modules || []).includes(m) ? "checked" : ""} title="${esc(iname(k, d) + " · " + l)}"></td>`).join("")}</tr>`).join("")}</tbody></table></div>
@@ -1310,7 +1310,7 @@ PAGES.settings = async view => {
     <div class="grid g2"><div class="card"><h2>${esc(L("Trial and periods", "التجربة والفترات"))}</h2>${form([
       { k: "trial_days", l: L("Free trial (days) — a person's first company", "التجربة المجانية (أيام) — الشركة الأولى لكل شخص"), type: "number", v: c.trial_days, min: 0, max: 365 },
       { k: "trial_plan", l: L("Plan during the trial", "الباقة أثناء التجربة"), type: "select", v: c.trial_plan, opts: c.plans.map(p => [p.code, p.name]) },
-      { k: "trial_full", l: L("The trial shows every section and the assistant", "التجربة تعرض كل الأقسام والمساعد"), type: "check", v: c.trial_full !== false, span: 1 },
+      { k: "trial_full", l: L("The trial shows every module and the assistant", "التجربة تعرض كل الأقسام والمساعد"), type: "check", v: c.trial_full !== false, span: 1 },
       { k: "grace_days", l: L("Grace days after a paid period", "أيام السماح بعد الفترة المدفوعة"), type: "number", v: c.grace_days, min: 0, max: 60 },
       { k: "yearly_months", l: L("A year costs (months)", "السنة تكلف (أشهر)"), type: "number", v: c.yearly_months, min: 1, max: 12 },
       { k: "currency", l: L("Currency", "العملة"), v: c.currency }, { k: "max_companies", l: L("Companies one person may own (0 = no limit)", "الشركات التي يملكها الشخص (0 = بلا حد)"), type: "number", v: c.max_companies || 0, min: 0 }])}</div>

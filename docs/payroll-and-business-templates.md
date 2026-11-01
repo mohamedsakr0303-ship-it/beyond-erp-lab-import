@@ -70,7 +70,7 @@ Settings → Business type & templates offers seven types:
 Applying a type never deletes anything. It:
 
 - adds the accounts that kind of business needs (for example development WIP, investment income, or crew and repair costs for scaffolding);
-- hides the sections it does not use (hidden, not deleted);
+- hides the modules it does not use (hidden, not deleted);
 - sets payroll departments, job titles and pay items;
 - sets the crew calculator's work items.
 
