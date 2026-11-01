@@ -120,7 +120,7 @@ The console is **a page of its own**: `owner.html` on the same site (for example
 
 ## Referral program and upgrades
 
-Every signed-in user of the online workspace has a personal share link (`https://beyonderp.org/?ref=CODE`) on **🎁 Referral program** in the user menu. The share button uses the same link.
+Every signed-in user of the online workspace has a personal share link (`https://mybeyonderp.com/?ref=CODE`) on **🎁 Referral program** in the user menu. The share button uses the same link.
 
 **The rules (set in the console under Referrals; defaults shown):**
 

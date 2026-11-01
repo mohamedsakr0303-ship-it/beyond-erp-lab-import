@@ -13,9 +13,9 @@ from erp.appwindow import open_window
 def site_url():
     here = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     try:
-        return (here / "site_url.txt").read_text().strip() or "https://beyonderp.org/"
+        return (here / "site_url.txt").read_text().strip() or "https://mybeyonderp.com/"
     except OSError:
-        return "https://beyonderp.org/"
+        return "https://mybeyonderp.com/"
 
 
 if __name__ == "__main__":

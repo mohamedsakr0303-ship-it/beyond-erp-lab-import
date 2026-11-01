@@ -13388,7 +13388,7 @@ async function recordScreen(btn) {
 const copyBtn = v => `<button type="button" class="btn sm" data-a="copyval" data-v="${esc(v)}" title="${esc(L2("Copy", "نسخ"))}">⧉</button>`;
 // Share BeyondERP: the device's own share sheet where there is one (phones, the app), else the link with the usual
 // places to send it. Each share gets its own small tag on the link, so chat apps show the current preview card.
-const PUBLIC_SITE = "https://beyonderp.org/";
+const PUBLIC_SITE = "https://mybeyonderp.com/";
 S.GLOBAL_H.shareapp = async () => {
   const ar = S.lang === "ar"; let code = S.referral && S.referral.on !== false && S.referral.code;
   if (!code && platformOn()) try { S.referral = await PLAT("referral_my"); code = S.referral.on !== false && S.referral.code; } catch { /* plain link */ }

@@ -22,7 +22,7 @@ Cloudflare or GitHub Pages; everything shared lives in Supabase.
    person clicks a link from Supabase once after creating their account.
 4. **Account (top-right) → Access Tokens**: create a token for GitHub.
 5. **Authentication → URL Configuration** (after step 3, once you know the app's address):
-   set **Site URL** to your app's address, e.g. `https://beyonderp.org`, and add the same address under
+   set **Site URL** to your app's address, e.g. `https://mybeyonderp.com`, and add the same address under
    **Redirect URLs**. This is where the "confirm your email" and "reset password" links bring people back to —
    without it they are sent to `localhost`. (Add the address of every other copy you use, e.g. a static.app site.)
 
@@ -58,7 +58,7 @@ installed on the device itself.
 3. In GitHub add secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (shown on the Cloudflare dashboard's right
    side) and, if you chose another name, variable `CLOUDFLARE_PAGES_PROJECT`.
 4. Every push now publishes to the Pages project (`https://beyond-erp.pages.dev`). The public address is the custom domain
-   **https://beyonderp.org** (Pages project → Custom domains; `www` redirects to it with a Cloudflare redirect rule). The
+   **https://mybeyonderp.com** (Pages project → Custom domains; `www.mybeyonderp.com` and the earlier address `beyonderp.org` redirect to it with Cloudflare redirect rules that keep the path and query, so old share links still work). The
    deploy uses it for search engines (canonical links, sitemap); set the repository variable `SITE_URL` to change it.
 
 **GitHub Pages — free for public repositories**
@@ -109,7 +109,7 @@ The app shows a **Sign in with Google** button as soon as Google is switched on 
    choose **Publish app** — with only these basic scopes Google does not require a review. (While it stays in
    *Testing*, only the Google accounts you list as test users can sign in.)
 3. **APIs & Services → Credentials → Create credentials → OAuth client ID** → *Web application*:
-   * **Authorized JavaScript origins**: `https://beyonderp.org` (and `https://beyond-erp.pages.dev`, still reachable)
+   * **Authorized JavaScript origins**: `https://mybeyonderp.com` (and `https://beyond-erp.pages.dev`, still reachable)
    * **Authorized redirect URIs**: `https://<ref>.supabase.co/auth/v1/callback` — Supabase shows this exact address
      on its Google provider page (next step); copy it from there.
    Create, then copy the **Client ID** and **Client secret**.
