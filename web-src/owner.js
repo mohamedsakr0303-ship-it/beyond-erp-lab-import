@@ -11,6 +11,9 @@ const LS = (k, d) => { try { const v = localStorage.getItem(k); return v == null
 const LSset = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
 const S = { lang: LS("berp.console.lang", null) || LS("berp.lang", "en") || "en", me: null, look: null, H: {}, alerts: [], seen: new Set(), cache: {} };
 const L = (en, ar) => S.lang === "ar" ? ar : en;
+// the same page code serves the support desk (support.html): its own menu and name, the team's support pages only
+const DESK = window.BEYOND_CONSOLE === "support";
+const CNAME = () => DESK ? L("Support desk", "مكتب الدعم") : L("Owner console", "لوحة المالك");
 const num = n => (Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
 const money = n => (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const day = x => x ? String(x).slice(0, 10) : "—";
@@ -153,13 +156,17 @@ const NAV0 = () => [
     ["people", "☺", L("People", "الأشخاص"), "customers"], ["referrals", "🎁", L("Referrals", "الإحالات"), "customers"], ["cancellations", "✗", L("Cancellations & churn", "الإلغاءات والمغادرة"), "customers"]]],
   [L("Money", "المال"), [["payments", "⧗", L("Payments to verify", "مدفوعات للتحقق"), "billing"], ["ledger", "≣", L("All payments", "كل المدفوعات"), "billing"],
     ["methods", "💳", L("Payment methods", "طرق الدفع"), "settings"]]],
-  [L("Support", "الدعم"), [["support", "✉", L("Tickets", "البلاغات"), "support"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"],
+  [L("Support", "الدعم"), [["queue", "☰", L("Support queue", "قائمة الدعم"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "support"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]]],
   [L("Product", "المنتج"), [["plans", "◎", L("Plans", "الباقات"), "settings"], ["addons", "＋", L("Modules, AI & support", "الأقسام والذكاء الاصطناعي والدعم"), "settings"],
     ["menus", "☰", L("Menus by industry", "القوائم حسب النشاط"), "settings"], ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"]]],
   [L("Console", "اللوحة"), [["team", "☷", L("Team", "الفريق"), "_full"], ["look", "🎨", L("Look of this console", "مظهر اللوحة"), "settings"],
     ["log", "⌚", L("Activity", "السجل"), "_full"], ["deleted", "⌫", L("Deleted companies", "الشركات المحذوفة"), "customers"]]]];
 const navOk = a => a === "*" || can(a);
+const DESK_NAV = () => [[L("Support", "الدعم"), [["queue", "☰", L("Queue", "قائمة الانتظار"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"],
+    ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "support"]], "support"],
+  [L("Customers", "العملاء"), [["customers", "▦", L("Customers", "العملاء"), "customers"], ["people", "☺", L("People", "الأشخاص"), "customers"]], "business"],
+  [L("Me", "أنا"), [["alerts", "🔔", L("Notifications", "الإشعارات"), "*"]], "console"]];
 
 // ================================================================== arranging the console: right-click, drag and drop, lock
 // The team's arrangement (shared setting "console_layout") applies to everyone; a team member who cannot change the
@@ -178,6 +185,7 @@ const editLay = fn => { const y = JSON.parse(JSON.stringify(lay())); fn(y); retu
 const locked = () => !!lay().locked;
 // the menu as arranged: [label, items, group id]; every page stays reachable (hidden ones too, by link)
 const NAV = () => {
+  if (DESK) return DESK_NAV();
   const base = NAV0(), nv = lay().nav || {}, names = (nv.names || {})[S.lang] || {}, gn = (nv.gnames || {})[S.lang] || {};
   const all = base.flatMap(([, it], gi) => it.map(i => [i, GIDS[gi]])), used = new Set();
   const out = (Array.isArray(nv.order) && nv.order.length ? nv.order : base.map(([, it], gi) => [GIDS[gi], it.map(i => i[0])]))
@@ -209,6 +217,7 @@ const closeCtx = () => { const m = $("#ctx"); if (m) m.remove(); };
 const lockItem = () => ({ l: locked() ? L("Unlock the arrangement", "فك قفل الترتيب") : L("Lock everything in place", "قفل كل شيء في مكانه"), ic: locked() ? "🔓" : "🔒",
   a: () => editLay(y => { y.locked = !y.locked; }) });
 function navCtx(e, key) {
+  if (DESK) return;
   if (locked()) return ctxMenu(e, [{ l: L("Open", "فتح"), ic: "↗", a: () => { location.hash = "#/" + key; } }, "-", lockItem()]);
   const nav = NAV(), gi = nav.findIndex(([, it]) => it.some(i => i[0] === key)), items = nav[gi][1], ii = items.findIndex(i => i[0] === key), it = items[ii];
   ctxMenu(e, [{ l: L("Open", "فتح"), ic: "↗", a: () => { location.hash = "#/" + key; } },
@@ -221,6 +230,7 @@ function navCtx(e, key) {
     "-", ...arrangeItems()]);
 }
 function groupCtx(e, g) {
+  if (DESK) return;
   if (locked()) return ctxMenu(e, [lockItem()]);
   const nav = NAV(), gi = nav.findIndex(x => x[2] === g);
   ctxMenu(e, [{ l: L("Rename group…", "إعادة تسمية المجموعة…"), ic: "✎", a: async () => { const v = await ask(L("Group name (blank: the original)", "اسم المجموعة (فارغ: الأصلي)"), nav[gi][0]); if (v === null) return;
@@ -260,12 +270,12 @@ document.addEventListener("drop", e => {
 // ================================================================== the frame
 function shell() {
   const lk = { ...LOOK0, ...(S.look || {}) }, b = S.me.badges || {};
-  const badge = k => { const n = k === "payments" ? b.orders : k === "support" ? b.tickets : k === "visits" ? b.visits : k === "alerts" ? unreadCount() : 0; return n ? `<span class="cnt">${n}</span>` : ""; };
+  const badge = k => { const n = k === "payments" ? b.orders : k === "queue" ? b.tickets : k === "visits" ? b.visits : k === "alerts" ? unreadCount() : 0; return n ? `<span class="cnt">${n}</span>` : ""; };
   document.body.innerHTML = `<div class="app" id="app">
-    <aside class="side"><div class="brand">${lk.logo ? `<img src="${esc(lk.logo)}" alt="">` : `<span class="mark">${esc(initials(lk.name))}</span>`}<div><b>${esc(lk.name)}</b><small>${esc(lk.sub || L("Owner console", "لوحة المالك"))}</small></div></div>
-      ${NAV().map(([h, items, g]) => { const ok = items.filter(i => navOk(i[3]) && !navHidden().includes(i[0])), dr = locked() ? "" : 'draggable="true"';
+    <aside class="side"><div class="brand">${lk.logo ? `<img src="${esc(lk.logo)}" alt="">` : `<span class="mark">${esc(initials(lk.name))}</span>`}<div><b>${esc(lk.name)}</b><small>${esc(DESK ? CNAME() : lk.sub || CNAME())}</small></div></div>
+      ${NAV().map(([h, items, g]) => { const ok = items.filter(i => navOk(i[3]) && (DESK || !navHidden().includes(i[0]))), dr = locked() || DESK ? "" : 'draggable="true"';
         return ok.length ? `<div class="nav-h" data-g="${g}" ${dr}>${esc(h)}</div><nav class="nav">${ok.map(([k, ic, l]) => `<a href="#/${k}" data-nav="${k}" ${dr}><span class="ic">${ic}</span>${esc(l)}<span class="cnt-slot" data-badge="${k}">${badge(k)}</span></a>`).join("")}</nav>` : ""; }).join("")}
-      <div class="foot">${locked() ? `<button type="button" class="lockb" data-a="unlock" title="${esc(L("Unlock the arrangement", "فك قفل الترتيب"))}">🔒 ${esc(L("Arrangement locked", "الترتيب مقفل"))}</button><br>` : `<span class="hint">${esc(L("Right-click or drag to arrange", "انقر بالزر الأيمن أو اسحب للترتيب"))}</span><br>`}
+      <div class="foot">${DESK ? (S.me.full ? `<a href="owner.html" style="color:inherit">⚙ ${esc(L("Owner console", "لوحة المالك"))}</a><br>` : "") : `<a href="support.html" style="color:inherit">🎧 ${esc(L("Support desk", "مكتب الدعم"))} ↗</a><br>`}${DESK ? "" : locked() ? `<button type="button" class="lockb" data-a="unlock" title="${esc(L("Unlock the arrangement", "فك قفل الترتيب"))}">🔒 ${esc(L("Arrangement locked", "الترتيب مقفل"))}</button><br>` : `<span class="hint">${esc(L("Right-click or drag to arrange", "انقر بالزر الأيمن أو اسحب للترتيب"))}</span><br>`}
         <a href="index.html" style="color:inherit">← ${esc(L("Open the ERP", "فتح النظام"))}</a><br>${esc(S.me.email)}</div></aside>
     <div class="main"><header class="top"><button class="btn icon ghost menu-btn" data-a="menu" aria-label="Menu">${ICON.menu}</button>
       <div style="min-width:0"><div class="ttl" id="ttl"></div><div class="crumb" id="crumb"></div></div><span class="sp"></span>
@@ -280,7 +290,7 @@ const unreadCount = () => S.alerts.filter(a => !a.read).length;
 function drawBell() {
   const n = unreadCount(), c = $("#bellcnt"); if (c) c.innerHTML = n ? `<span class="cnt">${n > 99 ? "99+" : n}</span>` : "";
   const slot = $('[data-badge="alerts"]'); if (slot) slot.innerHTML = n ? `<span class="cnt">${n}</span>` : "";
-  document.title = (n ? `(${n}) ` : "") + `${({ ...LOOK0, ...(S.look || {}) }).name} · ${L("Owner console", "لوحة المالك")}`;
+  document.title = (n ? `(${n}) ` : "") + `${({ ...LOOK0, ...(S.look || {}) }).name} · ${CNAME()}`;
 }
 
 // ================================================================== notifications: worked out by the workspace, checked every minute
@@ -457,14 +467,16 @@ const VIS_ST = () => ({ requested: [L("Requested", "مطلوبة"), "warn"], quo
 const PAY_ST = () => ({ none: [L("Not paid", "غير مدفوعة"), ""], submitted: [L("Payment to check", "دفعة للتحقق"), "warn"], paid: [L("Paid", "مدفوعة"), "ok"], waived: [L("No charge", "بدون رسوم"), "info"] });
 const mapChip = (m, k) => { const x = m[k] || [k, ""]; return chip(x[0], x[1]); };
 const KIND_ICON = { instapay: "⚡", wallet: "📱", bank: "🏦", card: "💳", cash: "💵", other: "•" };
-const fileList = (bucket, files) => (files || []).length ? `<div class="files">${files.map(f => `<button type="button" class="file" data-a="file" data-b="${bucket}" data-p="${esc(f.path)}" data-t="${esc(f.type || "")}" title="${esc(f.name)}"><i class="prev"></i><span>${/^image\//.test(f.type) ? "🖼" : /^video\//.test(f.type) ? "🎬" : "📄"} ${esc(f.name || "file")}</span></button>`).join("")}</div>` : "";
+const fileList = (bucket, files) => (files || []).length ? `<div class="files">${files.map(f => `<button type="button" class="file" data-a="file" data-b="${bucket}" data-p="${esc(f.path)}" data-t="${esc(f.type || "")}" title="${esc(f.name)}"><i class="prev"></i><span>${/^image\//.test(f.type) ? "🖼" : /^video\//.test(f.type) ? "🎬" : /^audio\//.test(f.type) ? "🎤" : "📄"} ${esc(f.name || "file")}</span></button>`).join("")}</div>` : "";
 async function previews(view) {
-  for (const b of $$(".file[data-p]", view)) { const t = b.dataset.t || "", box = $(".prev", b); if (!box || box.dataset.done || !/^(image|video)\//.test(t)) continue; box.dataset.done = 1;
-    try { const u = await fileUrl(b.dataset.b, b.dataset.p); b.dataset.url = u; box.outerHTML = /^image/.test(t) ? `<img src="${u}" alt="">` : `<video src="${u}" muted preload="metadata"></video>`; } catch { /* listed only */ } }
+  for (const b of $$(".file[data-p]", view)) { const t = b.dataset.t || "", box = $(".prev", b); if (!box || box.dataset.done || !/^(image|video|audio)\//.test(t)) continue; box.dataset.done = 1;
+    try { const u = await fileUrl(b.dataset.b, b.dataset.p); b.dataset.url = u;
+      if (/^audio/.test(t)) { const au = document.createElement("audio"); au.controls = true; au.src = u; au.preload = "metadata"; au.className = "voice"; b.replaceWith(au); }
+      else box.outerHTML = /^image/.test(t) ? `<img src="${u}" alt="">` : `<video src="${u}" muted preload="metadata"></video>`; } catch { /* listed only */ } }
 }
 
 // ================================================================== routing
-const parse = () => { const [p, q] = location.hash.replace(/^#\/?/, "").split("?"); return { parts: (p || "overview").split("/").filter(Boolean), q: Object.fromEntries(new URLSearchParams(q || "")) }; };
+const parse = () => { const [p, q] = location.hash.replace(/^#\/?/, "").split("?"); return { parts: (p || (DESK ? "queue" : "overview")).split("/").filter(Boolean), q: Object.fromEntries(new URLSearchParams(q || "")) }; };
 const setQ = q => { const { parts } = parse(); const s = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== "" && v != null)).toString(); location.hash = "#/" + parts.join("/") + (s ? "?" + s : ""); };
 const PAGES = {};
 let routing = 0;
@@ -474,12 +486,13 @@ async function route() {
   const item = NAV().flatMap(([, it]) => it).find(i => i[0] === page);
   S.H = {};
   $("#app") && $("#app").classList.remove("menu");
-  $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.nav === page || (page === "company" && a.dataset.nav === "customers") || (page === "ticket" && a.dataset.nav === "support") || (page === "visit" && a.dataset.nav === "visits")));
+  $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.nav === page || (page === "company" && a.dataset.nav === "customers") || (page === "ticket" && a.dataset.nav === "queue") || (page === "visit" && a.dataset.nav === "visits")));
   const view = $("#view"), mine = ++routing;
   if (item && !navOk(item[3])) { view.innerHTML = `<div class="banner err">${esc(L("Your team account does not have access to this.", "لا يملك حساب فريقك صلاحية الوصول إلى هذا."))}</div>`; return; }
   $("#ttl").textContent = item ? item[2] : ""; $("#crumb").textContent = "";
   view.innerHTML = `<div class="empty"><div class="boot-ring" style="margin:0 auto"></div></div>`;
-  const fn = PAGES[page] || PAGES.overview;
+  clearInterval(S.live);
+  const fn = PAGES[page] || (DESK ? PAGES.queue : PAGES.overview);
   try { const box = document.createElement("div"); await fn(box, parts, q); if (mine === routing) { view.replaceChildren(...box.childNodes); previews(view); afterDraw(view); } }
   catch (e) { if (mine === routing) view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
 }
@@ -542,7 +555,7 @@ const GLOBAL = {
 
 // ================================================================== signing in
 function signIn(msg) {
-  document.body.innerHTML = `<div class="signin"><form class="card" id="sf"><div class="brand" style="padding:0 0 14px"><span class="mark">B</span><div><b>${esc(({ ...LOOK0, ...(S.look || {}) }).name)}</b><small class="muted">${esc(L("Owner console", "لوحة المالك"))}</small></div></div>
+  document.body.innerHTML = `<div class="signin"><form class="card" id="sf"><div class="brand" style="padding:0 0 14px"><span class="mark">B</span><div><b>${esc(({ ...LOOK0, ...(S.look || {}) }).name)}</b><small class="muted">${esc(CNAME())}</small></div></div>
     ${msg ? `<div class="banner ${msg.ok ? "ok" : "err"}">${esc(msg.text || msg)}</div>` : ""}
     <div class="grid" style="gap:10px"><label class="f">${esc(L("Email", "البريد الإلكتروني"))}<input name="email" type="email" required autocomplete="username" dir="ltr"></label>
     <label class="f">${esc(L("Password", "كلمة المرور"))}<input name="password" type="password" required autocomplete="current-password"></label>
@@ -571,7 +584,7 @@ function signIn(msg) {
 // ================================================================== start
 async function start() {
   applyLook();
-  if (!cfg()) { document.body.innerHTML = `<div class="signin"><div class="card"><h1>${esc(L("Owner console", "لوحة المالك"))}</h1><p>${esc(L("This copy is not connected to a workspace. Open the ERP, connect it (Settings → Workspace), then come back.", "هذه النسخة غير متصلة بمساحة عمل. افتح النظام واربطه (الإعدادات ← مساحة العمل) ثم عُد."))}</p><a class="btn pri" href="index.html">${esc(L("Open the ERP", "فتح النظام"))}</a></div></div>`; return; }
+  if (!cfg()) { document.body.innerHTML = `<div class="signin"><div class="card"><h1>${esc(CNAME())}</h1><p>${esc(L("This copy is not connected to a workspace. Open the ERP, connect it (Settings → Workspace), then come back.", "هذه النسخة غير متصلة بمساحة عمل. افتح النظام واربطه (الإعدادات ← مساحة العمل) ثم عُد."))}</p><a class="btn pri" href="index.html">${esc(L("Open the ERP", "فتح النظام"))}</a></div></div>`; return; }
   if (!getSes()) return signIn();
   try { S.me = await rpc("console_me"); }
   catch (e) {
@@ -584,7 +597,7 @@ async function start() {
   route();
   clearInterval(S.poll);
   S.poll = setInterval(async () => { if (document.hidden && !("Notification" in window && Notification.permission === "granted")) return;
-    await loadAlerts(false); try { const me = await rpc("console_me"); S.me.badges = me.badges; for (const [k, n] of [["payments", me.badges.orders], ["support", me.badges.tickets], ["visits", me.badges.visits]]) { const s = $(`[data-badge="${k}"]`); if (s) s.innerHTML = n ? `<span class="cnt">${n}</span>` : ""; } } catch { /* next time */ } }, 60000);
+    await loadAlerts(false); try { const me = await rpc("console_me"); S.me.badges = me.badges; for (const [k, n] of [["payments", me.badges.orders], ["queue", me.badges.tickets], ["visits", me.badges.visits]]) { const s = $(`[data-badge="${k}"]`); if (s) s.innerHTML = n ? `<span class="cnt">${n}</span>` : ""; } } catch { /* next time */ } }, 60000);
 }
 
 // ================================================================== overview
@@ -1037,32 +1050,134 @@ PAGES.support = async view => {
       { k: "unread", l: L("Unread", "غير مقروءة"), type: "select", opts: [["1", L("Unread only", "غير المقروءة فقط")]], test: t => t.unread },
       { k: "from", l: L("Opened from", "فُتح من"), type: "from", col: "created_at" }, { k: "to", l: L("Opened to", "فُتح حتى"), type: "to", col: "created_at" }] }));
 };
+// the queue: tickets waiting for the team first, then the plan's support priority, then whoever waited longest
+const CHAT = () => ({ none: [L("No chat yet", "لا محادثة بعد"), ""], live: [L("Live chat", "محادثة مباشرة"), "ok"], ended: [L("Chat ended", "انتهت المحادثة"), ""] });
+const rankChip = r => r.rank > 0 ? chip(`${"★".repeat(Math.min(r.rank, 5))} ${r.plan_name || r.plan || ""}`, r.rank >= 2 ? "bad" : "warn") : chip(r.plan_name || r.plan || L("Trial / none", "تجربة / بدون"), "");
+PAGES.queue = async view => {
+  const d = await rpc("console_queue"), rows = d.rows.map((r, i) => ({ ...r, qi: i + 1 })), now = Date.now();
+  S.replies = d.replies; S.team = d.team;
+  const team = rows.filter(r => r.turn === "team"), late = rows.filter(r => r.due_at && new Date(r.due_at) < now && !r.first_reply_at);
+  if (!DT.queue) DT.queue = { f: { view: "team" }, q: "" };
+  view.innerHTML = `<div class="kpis">${kpi(L("Waiting for us", "بانتظارنا"), num(team.length), team.length ? "warn" : "ok")}${kpi(L("Live chats", "محادثات مباشرة"), num(rows.filter(r => r.chat === "live").length))}
+      ${kpi(L("Past the reply target", "تجاوزت موعد الرد"), num(late.length), late.length ? "bad" : "")}${kpi(L("Nobody assigned", "بلا مسؤول"), num(rows.filter(r => !r.assignee).length))}</div>
+    <div class="card"><div id="qtbl"></div><p class="muted small">${esc(L("Order: tickets waiting for the team first, then the plan's support priority (Plans), then the longest wait. It refreshes every 20 seconds.",
+      "الترتيب: البلاغات التي تنتظر الفريق أولاً، ثم أولوية الدعم في الباقة (الباقات)، ثم الأطول انتظاراً. يتحدّث كل 20 ثانية."))}</p></div>`;
+  afterHooks.push(v => table($("#qtbl", v), "queue", rows, { sort: "qi", dir: "asc", search: ["ref", "subject", "email", "company_name", "app_user", "assignee", "plan_name"],
+    onRow: t => { location.hash = "#/ticket/" + t.id; }, rowCls: t => (t.unread ? "unread " : "") + (t.due_at && new Date(t.due_at) < now && !t.first_reply_at ? "neg" : ""),
+    cols: [{ k: "qi", l: "#", num: true, h: t => `<b>${t.qi}</b>` },
+      { k: "rank", l: L("Priority", "الأولوية"), num: true, h: t => rankChip(t) },
+      { k: "ref", l: L("Ticket", "البلاغ"), h: t => `<b>${esc(t.ref)}</b> ${esc(t.subject)}${t.unread ? " " + chip(L("New", "جديد"), "info") : ""}<span class="sub">${esc(t.company_name || "")} · <span dir="ltr">${esc(t.app_user || t.email)}</span></span>` },
+      { k: "waiting_since", l: L("Waiting", "ينتظر"), date: true, h: t => t.turn === "team" ? `<b>${esc(ago(t.waiting_since || t.updated_at))}</b>` : `<span class="muted">${esc(L("Customer's turn", "دور العميل"))}</span>` },
+      { k: "due_at", l: L("Reply due", "موعد الرد"), date: true, h: t => t.first_reply_at ? `<span class="muted">${esc(L("Answered", "تم الرد"))}</span>` : t.due_at ? esc(dt(t.due_at)) : "—" },
+      { k: "chat", l: L("Chat", "المحادثة"), h: t => mapChip(CHAT(), t.chat) }, { k: "st", l: L("Status", "الحالة"), v: t => t.status, h: t => mapChip(TK_ST(), t.status) },
+      { k: "assignee", l: L("Assigned", "المسؤول"), h: t => t.assignee ? esc(t.assignee.split("@")[0]) : `<span class="muted">—</span>` }],
+    filters: [{ k: "view", l: L("Show", "عرض"), type: "select", opts: [["team", L("Waiting for us", "بانتظارنا")], ["live", L("Live chats", "المحادثات المباشرة")], ["mine", L("Assigned to me", "المسندة إليّ")], ["none", L("Nobody assigned", "بلا مسؤول")], ["late", L("Past the reply target", "تجاوزت موعد الرد")]],
+        test: (t, v) => v === "team" ? t.turn === "team" : v === "live" ? t.chat === "live" : v === "mine" ? (t.assignee || "").toLowerCase() === myEmail() : v === "none" ? !t.assignee : v === "late" ? !!(t.due_at && new Date(t.due_at) < now && !t.first_reply_at) : true },
+      { k: "plan", l: L("Plan", "الباقة"), type: "select", opts: [...new Map(rows.map(r => [r.plan || "", r.plan_name || r.plan || L("Trial / none", "تجربة / بدون")])).entries()], test: (t, v) => (t.plan || "") === v }] }));
+  S.live = setInterval(() => { if (!document.hidden && parse().parts[0] === "queue" && !$("#panel")) route(); }, 20000);
+};
+
+// a voice note from the microphone: the first click starts, the second sends it to `done(file)` (3 minutes at most)
+async function recordVoice(btn, done) {
+  if (btn._rec) { btn._rec.stop(); return; }
+  let stream; try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { return toast(L("The microphone is not available.", "الميكروفون غير متاح."), true); }
+  const type = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+  const rec = btn._rec = new MediaRecorder(stream, type ? { mimeType: type } : {}), parts = [], label = btn.innerHTML; let left = 180;
+  rec.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
+  const tick = setInterval(() => { left--; btn.innerHTML = `■ ${esc(L("Stop and send", "إيقاف وإرسال"))} ${180 - left}s`; if (left <= 0) rec.stop(); }, 1000);
+  rec.onstop = () => { clearInterval(tick); stream.getTracks().forEach(t => t.stop()); btn._rec = null; btn.innerHTML = label; btn.classList.remove("danger");
+    const mime = (rec.mimeType || "audio/webm").split(";")[0], ext = mime.includes("mp4") ? "m4a" : "webm";
+    if (parts.length) done(new File(parts, `voice-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.${ext}`, { type: mime })); };
+  rec.start(1000); btn.classList.add("danger"); btn.innerHTML = `■ ${esc(L("Stop and send", "إيقاف وإرسال"))} 0s`;
+}
+
 PAGES.ticket = async (view, parts) => {
-  const id = +parts[1], tk = await rpc("support_get", { p_ticket: id });
-  $("#ttl").textContent = `${tk.ref} — ${tk.subject}`; $("#crumb").textContent = L("Tickets", "البلاغات");
+  const id = +parts[1];
+  let tk = await rpc("support_get", { p_ticket: id });
+  const [cust, q] = await Promise.all([rpc("console_ticket_customer", { p_ticket: id }).catch(() => null), S.replies ? null : rpc("console_queue").catch(() => null)]);
+  if (q) S.replies = q.replies;
+  $("#ttl").textContent = `${tk.ref} — ${tk.subject}`; $("#crumb").textContent = L("Support queue", "قائمة الدعم");
+  const first = String(tk.app_user || tk.email || "").split(/[@\s]/)[0];
+  const send = async (body, files, internal) => {
+    const up = []; for (const f of files) { if (f.size > 50 * 1048576) throw new Error(L(`${f.name} is larger than 50 MB.`, `${f.name} أكبر من 50 ميجابايت.`)); up.push(await upload("support-files", f)); }
+    tk = await rpc("support_reply", { p_ticket: id, p_body: body, p_files: up, p_internal: internal });
+    if (!internal) push("ticket", id, { text: (body || L("Sent a file", "أرسل ملفاً")).slice(0, 140) });
+    draw(); };
   Object.assign(S.H, {
     reply: async el => { const body = $("#rbody").value, internal = $("#rint").checked, files = [...$("#rfiles").files];
       if (!body.trim() && !files.length) return toast(L("Write a reply or add a file.", "اكتب رداً أو أضف ملفاً."), true);
-      el.disabled = true; try { const up = []; for (const f of files) { if (f.size > 50 * 1048576) throw new Error(L(`${f.name} is larger than 50 MB.`, `${f.name} أكبر من 50 ميجابايت.`)); up.push(await upload("support-files", f)); }
-        await rpc("support_reply", { p_ticket: id, p_body: body, p_files: up, p_internal: internal }); if (!internal) push("ticket", id, { text: body.slice(0, 140) }); route(); } catch (e) { el.disabled = false; throw e; } },
-    tset: async el => { await rpc("console_ticket_set", { p_ticket: id, p: { [el.name]: el.value } }); toast(L("Saved.", "تم الحفظ.")); },
+      el.disabled = true; try { await send(body, files, internal); $("#rbody").value = ""; $("#rfiles").value = ""; } finally { el.disabled = false; } },
+    voice: el => recordVoice(el, f => send("", [f], $("#rint").checked).catch(fail)),
+    canned: el => { const r = (S.replies || [])[+el.value]; el.value = ""; if (!r) return; const t = $("#rbody"); t.value = (t.value ? t.value + "\n" : "") + String(r.body || "").replace(/\{name\}/g, first); t.focus(); },
+    tset: async el => { tk = await rpc("console_ticket_set", { p_ticket: id, p: { [el.name]: el.value } }); toast(L("Saved.", "تم الحفظ.")); draw(); },
+    mine: async () => { tk = await rpc("console_ticket_set", { p_ticket: id, p: { assignee: myEmail() } }); draw(); },
+    chatend: async () => {
+      const d = document.createElement("div"); d.className = "shade top";
+      d.innerHTML = `<div class="dlg"><h2>${esc(L("End the chat?", "إنهاء المحادثة؟"))}</h2><p>${esc(L("The chat closes on the customer's screen. Writing again later starts it again.", "تُغلق المحادثة على شاشة العميل. الكتابة لاحقاً تعيد فتحها."))}</p>
+        <label class="chk"><input type="checkbox" id="cesolved" checked> ${esc(L("The issue is solved — mark the ticket solved", "تم حل المشكلة — تعليم البلاغ كمحلول"))}</label>
+        <div class="row"><button class="btn" data-r="0">${esc(L("Cancel", "إلغاء"))}</button><button class="btn pri" data-r="1">${esc(L("End the chat", "إنهاء المحادثة"))}</button></div></div>`;
+      document.body.appendChild(d);
+      d.addEventListener("click", async e => { const b = e.target.closest("[data-r]"); if (!b && e.target !== d) return; const ok = b && b.dataset.r === "1", solved = $("#cesolved", d).checked; d.remove();
+        if (!ok) return; try { tk = await rpc("support_chat_end", { p_ticket: id, p_solved: solved }); push("ticket", id, { text: L("The chat has ended.", "انتهت المحادثة.") }); draw(); } catch (er) { fail(er); } }); },
     tvisit: () => visitPanel({ ticket_id: id, company_id: tk.company_id }) });
-  const who = m => m.staff ? m.email : (tk.app_user && m.email === tk.email ? tk.app_user : m.email);
-  const msg = (m, extra = "") => `<div class="msg ${m.staff ? "staff" : ""} ${m.internal ? "internal" : ""}"><div class="h"><b>${esc(who(m))}</b>${m.internal ? chip(L("Internal note", "ملاحظة داخلية"), "warn") : ""}<span class="muted">${esc(dt(m.created_at))}</span></div>
-    ${m.body ? `<div class="t">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}${extra}</div>`;
-  const diag = Object.entries(tk.diag || {}).filter(([, v]) => v), log = (tk.log || []).slice().reverse();
-  view.innerHTML = `<div class="row" style="margin-bottom:12px"><a class="btn" href="#/support">← ${esc(L("Tickets", "البلاغات"))}</a>${mapChip(TK_ST(), tk.status)}${mapChip(PRIO(), tk.priority)}</div>
-    <div class="split"><div><div class="card thread">${msg({ email: tk.email, body: tk.body, files: tk.files, created_at: tk.created_at }, `<div class="muted small">${esc(tk.kind)}${tk.company_name ? " · " + esc(tk.company_name) : ""}</div>`)}${(tk.messages || []).map(m => msg(m)).join("")}</div>
-      <div class="card"><h3>${esc(L("Reply", "رد"))}</h3><textarea id="rbody" rows="5"></textarea><input type="file" id="rfiles" multiple accept="image/*,video/*,application/pdf,.txt,.xlsx,.zip" style="margin-top:8px">
-        <div class="row" style="margin-top:8px"><label class="chk"><input type="checkbox" id="rint"> ${esc(L("Internal note (the customer does not see it)", "ملاحظة داخلية (لا يراها العميل)"))}</label><span class="sp"></span><button class="btn pri" data-a="reply">${esc(L("Send", "إرسال"))}</button></div></div></div>
-    <div><div class="card"><h3>${esc(L("Ticket", "البلاغ"))}</h3><div class="grid" style="gap:10px">
+  const who = m => m.staff ? (m.name ? `${m.name} (${m.email.split("@")[0]})` : m.email) : (tk.app_user && m.email === tk.email ? tk.app_user : m.email);
+  const msg = (m, extra = "") => m.kind === "event" ? `<div class="evt">— ${esc(m.body === "chat_ended_solved" ? L("Chat ended, ticket solved", "انتهت المحادثة وحُل البلاغ") : L("Chat ended", "انتهت المحادثة"))} · ${esc(m.name || "")} · ${esc(dt(m.created_at))} —</div>`
+    : `<div class="msg ${m.staff ? "staff" : ""} ${m.internal ? "internal" : ""}"><div class="h"><b>${esc(who(m))}</b>${m.internal ? chip(L("Internal note", "ملاحظة داخلية"), "warn") : ""}<span class="muted">${esc(dt(m.created_at))}</span></div>
+    ${m.body ? `<div class="t" dir="auto">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}${extra}</div>`;
+  const thread = () => msg({ email: tk.email, body: tk.body, files: tk.files, created_at: tk.created_at }, `<div class="muted small">${esc(tk.kind)}${tk.company_name ? " · " + esc(tk.company_name) : ""}</div>`) + (tk.messages || []).map(m => msg(m)).join("");
+  const head = () => `<a class="btn" href="#/queue">← ${esc(L("Queue", "قائمة الانتظار"))}</a>${mapChip(TK_ST(), tk.status)}${mapChip(PRIO(), tk.priority)}${mapChip(CHAT(), tk.chat)}
+    ${cust ? rankChip(cust.priority) : ""}<span class="sp"></span>${(tk.assignee || "").toLowerCase() !== myEmail() ? `<button class="btn" data-a="mine">✋ ${esc(L("Assign to me", "إسناد إليّ"))}</button>` : ""}
+    ${tk.chat === "live" ? `<button class="btn danger" data-a="chatend">⏹ ${esc(L("End the chat", "إنهاء المحادثة"))}</button>` : ""}`;
+  const draw = () => { const h = $("#thead"), t = $("#thr"); if (!h || !t) return; h.innerHTML = head(); const end = t.scrollHeight - t.scrollTop - t.clientHeight < 60;
+    t.innerHTML = thread(); previews(t); if (end) t.scrollTop = t.scrollHeight; };
+  const diag = Object.entries(tk.diag || {}).filter(([, v]) => v), log = (tk.log || []).slice().reverse(), co = cust && cust.company, pr = cust && cust.priority;
+  view.innerHTML = `<div class="row" id="thead" style="margin-bottom:12px;flex-wrap:wrap;gap:6px">${head()}</div>
+    <div class="split"><div><div class="card thread" id="thr" style="max-height:62vh;overflow:auto">${thread()}</div>
+      <div class="card"><div class="row" style="gap:8px;margin-bottom:6px"><h3 style="margin:0">${esc(L("Reply", "رد"))}</h3><span class="sp"></span>
+        ${(S.replies || []).length ? `<select data-change="canned" style="max-width:260px"><option value="">💬 ${esc(L("Saved replies…", "الردود المحفوظة…"))}</option>${S.replies.map((r, i) => `<option value="${i}">${esc(r.title)}</option>`).join("")}</select>` : `<a class="small" href="#/replies">💬 ${esc(L("Add saved replies", "إضافة ردود محفوظة"))}</a>`}</div>
+        <textarea id="rbody" rows="4" dir="auto" placeholder="${esc(L("Write to the customer… (Ctrl + Enter sends)", "اكتب للعميل… (Ctrl + Enter للإرسال)"))}"></textarea>
+        <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><input type="file" id="rfiles" multiple accept="image/*,video/*,audio/*,application/pdf,.txt,.xlsx,.zip">
+          ${navigator.mediaDevices && window.MediaRecorder ? `<button type="button" class="btn" data-a="voice">🎤 ${esc(L("Voice note", "رسالة صوتية"))}</button>` : ""}</div>
+        <div class="row" style="margin-top:8px"><label class="chk"><input type="checkbox" id="rint"> ${esc(L("Internal note (the customer does not see it)", "ملاحظة داخلية (لا يراها العميل)"))}</label><span class="sp"></span><button class="btn pri" data-a="reply">${esc(L("Send", "إرسال"))}</button></div>
+        <p class="muted small" style="margin:6px 0 0">${esc(L("Your answer opens a chat at the bottom right of the customer's screen; they see your first name only. End the chat when the issue is done.", "يفتح ردك محادثة أسفل يمين شاشة العميل؛ يرى اسمك الأول فقط. أنهِ المحادثة عند انتهاء المشكلة."))}</p></div></div>
+    <div>${cust ? `<div class="card"><h3>${esc(L("Customer", "العميل"))}</h3><p class="small" style="margin:0 0 8px"><b dir="ltr">${esc(tk.app_user || "")} ${esc(tk.email)}</b></p>
+        <div class="small">${pr ? `<div><b>${esc(L("Support priority", "أولوية الدعم"))}</b>: ${pr.rank} · ${esc(pr.plan_name || pr.plan || L("Trial / none", "تجربة / بدون"))}${pr.reply_hours ? ` · ${esc(L(`first reply within ${pr.reply_hours} h`, `أول رد خلال ${pr.reply_hours} ساعة`))}` : ""}</div>` : ""}
+          ${co ? `<div><b>${esc(L("Company", "الشركة"))}</b>: ${can("customers") ? `<a href="#/company/${co.id}">${esc(co.name)}</a>` : esc(co.name)} · ${esc(co.status || "")}${co.paid_until ? ` · ${esc(L("paid until", "مدفوعة حتى"))} ${esc(day(co.paid_until))}` : co.trial_ends ? ` · ${esc(L("trial until", "تجربة حتى"))} ${esc(day(co.trial_ends))}` : ""}</div>
+            <div><b>${esc(L("People", "الأشخاص"))}</b>: ${num(co.users)} · ${esc(L("admins", "المسؤولون"))}: <span dir="ltr">${esc((co.admins || []).join(", "))}</span></div>` : ""}</div>
+        ${(cust.tickets || []).length ? `<h4 style="margin:12px 0 4px">${esc(L("Earlier tickets", "بلاغات سابقة"))}</h4><div class="small">${cust.tickets.map(o => `<div><a href="#/ticket/${o.id}">${esc(o.ref)}</a> ${esc(o.subject)} ${mapChip(TK_ST(), o.status)}</div>`).join("")}</div>` : ""}
+        ${(cust.visits || []).length ? `<h4 style="margin:12px 0 4px">${esc(L("Visits", "الزيارات"))}</h4><div class="small">${cust.visits.map(o => `<div><a href="#/visit/${o.id}">${esc(o.ref)}</a> ${mapChip(VIS_ST(), o.status)}</div>`).join("")}</div>` : ""}</div>` : ""}
+      <div class="card"><h3>${esc(L("Ticket", "البلاغ"))}</h3><div class="grid" style="gap:10px">
         <label class="f">${esc(L("Status", "الحالة"))}<select name="status" data-change="tset">${Object.entries(TK_ST()).map(([k, v]) => `<option value="${k}" ${k === tk.status ? "selected" : ""}>${esc(v[0])}</option>`).join("")}</select></label>
         <label class="f">${esc(L("Priority", "الأولوية"))}<select name="priority" data-change="tset">${Object.entries(PRIO()).map(([k, v]) => `<option value="${k}" ${k === tk.priority ? "selected" : ""}>${esc(v[0])}</option>`).join("")}</select></label>
-        <label class="f">${esc(L("Assigned to", "مسند إلى"))}<input name="assignee" data-change="tset" value="${esc(tk.assignee || "")}" placeholder="${esc(L("Team member's email", "بريد عضو الفريق"))}" dir="ltr"></label></div>
-      <p class="small"><b>${esc(L("From", "من"))}</b>: <span dir="ltr">${esc(tk.email)}</span>${tk.app_user ? ` (${esc(tk.app_user)})` : ""}<br>${tk.company_id ? `<b>${esc(L("Company", "الشركة"))}</b>: <a href="#/company/${tk.company_id}">${esc(tk.company_name || "")}</a><br>` : ""}<b>${esc(L("Opened", "فُتح"))}</b>: ${esc(dt(tk.created_at))}</p>
+        <label class="f">${esc(L("Assigned to", "مسند إلى"))}<select name="assignee" data-change="tset"><option value="">—</option>${(((q || {}).team) || S.team || []).concat(tk.assignee && !((q || {}).team || S.team || []).some(m => m.email === tk.assignee) ? [{ email: tk.assignee }] : [])
+          .map(m => `<option value="${esc(m.email)}" ${m.email === tk.assignee ? "selected" : ""}>${esc(m.name || m.email)}</option>`).join("")}</select></label></div>
+      <p class="small"><b>${esc(L("Opened", "فُتح"))}</b>: ${esc(dt(tk.created_at))}${tk.first_reply_at ? `<br><b>${esc(L("First reply", "أول رد"))}</b>: ${esc(dt(tk.first_reply_at))}` : ""}</p>
       ${tk.company_id ? `<button class="btn" data-a="tvisit">🚗 ${esc(L("Arrange a visit for this…", "ترتيب زيارة لهذا…"))}</button>` : ""}</div>
       ${diag.length ? `<div class="card"><h3>${esc(L("Technical details", "التفاصيل الفنية"))}</h3><div class="small">${diag.map(([k, v]) => `<div><b>${esc(k)}</b>: ${esc(v)}</div>`).join("")}</div></div>` : ""}
       ${log.length ? `<div class="card"><h3>${esc(L("What happened before the report", "ما حدث قبل البلاغ"))} <span class="muted">(${log.length})</span></h3><div class="tbl log"><table><tbody>${log.map(a => `<tr class="${a.t === "error" || (a.t === "api" && (a.s >= 400 || a.s === "err")) ? "neg" : ""}"><td class="muted" dir="ltr">${esc(a.at || "")}</td><td>${esc(a.t)}</td><td dir="ltr">${esc(a.t === "api" ? `${a.m} ${a.p} → ${a.s}${a.ms != null ? ` · ${a.ms} ms` : ""}${a.e ? ` · ${a.e}` : ""}` : a.t === "screen" ? a.h : a.m || "")}</td></tr>`).join("")}</tbody></table></div></div>` : ""}</div></div>`;
+  if (q) S.team = q.team;
+  afterHooks.push(v => { const t = $("#thr", v); if (t) t.scrollTop = t.scrollHeight;
+    const ta = $("#rbody", v); if (ta) ta.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("[data-a=reply]").click(); } }); });
+  // new messages appear by themselves while the ticket is open
+  S.live = setInterval(async () => { if (document.hidden || parse().parts[0] !== "ticket" || +parse().parts[1] !== id) return;
+    try { const n = await rpc("support_get", { p_ticket: id }); if (n.messages.length !== tk.messages.length || n.status !== tk.status || n.chat !== tk.chat) { tk = n; draw(); } } catch { /* next time */ } }, 5000);
+};
+
+// saved replies the team picks from in a ticket ({name}: the customer's first name)
+PAGES.replies = async view => {
+  const list = (await rpc("console_queue")).replies || [];
+  S.replies = list;
+  const save = async next => { S.replies = await rpc("console_replies_save", { p: next }); toast(L("Saved.", "تم الحفظ.")); route(); };
+  const edit = i => panel(i == null ? L("New saved reply", "رد محفوظ جديد") : list[i].title, form([
+    { k: "title", l: L("Title (what the team picks)", "العنوان (ما يختاره الفريق)"), v: i == null ? "" : list[i].title, req: 1, span: 1 },
+    { k: "body", l: L("Text — {name} becomes the customer's first name", "النص — {name} يصبح الاسم الأول للعميل"), type: "area", rows: 8, v: i == null ? "" : list[i].body, req: 1, span: 1 }], 1),
+    v => { const next = list.slice(), r = { title: v.title.trim(), body: v.body.trim() }; if (i == null) next.push(r); else next[i] = r; return save(next); },
+    { extra: i != null ? `<button type="button" class="btn danger" data-a="rdel">${esc(L("Delete", "حذف"))}</button>` : "" });
+  Object.assign(S.H, { radd: () => edit(null), redit: el => { edit(+el.dataset.i); S.H.rdel = async () => { if (await confirmIt(L("Delete this saved reply?", "حذف هذا الرد المحفوظ؟"), { danger: 1 })) { closePanel(); save(list.filter((_, j) => j !== +el.dataset.i)); } }; } });
+  view.innerHTML = `<div class="card"><div class="row" style="margin-bottom:10px"><p class="muted small" style="margin:0">${esc(L("Ready answers for common questions. In a ticket, pick one to add it to your reply; {name} becomes the customer's first name.", "إجابات جاهزة للأسئلة المتكررة. في البلاغ، اختر واحدة لإضافتها إلى ردك؛ {name} يصبح الاسم الأول للعميل."))}</p><span class="sp"></span>
+      <button class="btn pri" data-a="radd">＋ ${esc(L("New saved reply", "رد محفوظ جديد"))}</button></div>
+    ${list.length ? `<div class="tbl"><table><tbody>${list.map((r, i) => `<tr><td style="width:30%"><b>${esc(r.title)}</b></td><td class="muted" dir="auto">${esc(String(r.body).slice(0, 160))}</td><td class="r"><button class="btn sm" data-a="redit" data-i="${i}">${esc(L("Edit", "تعديل"))}</button></td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${esc(L("No saved replies yet.", "لا ردود محفوظة بعد."))}</div>`}</div>`;
 };
 
 // ================================================================== support visits
@@ -1196,6 +1311,10 @@ PAGES.plans = async view => {
       { k: "contact", l: L("Price on request: customers contact you (Enterprise); it cannot be ordered in the app", "السعر عند الطلب: يتواصل العميل معك (المؤسسات)؛ لا يمكن طلبها من التطبيق"), type: "check", v: p.contact, span: 1 },
       { k: "highlight", l: L("Stand out (outlined)", "مميزة (بإطار)"), type: "check", v: p.highlight }, { k: "hidden", l: L("Hidden: not offered, you can still give it", "مخفية: لا تُعرض، ويمكنك منحها"), type: "check", v: p.hidden },
       { k: "ai", l: L("Includes the AI assistant", "تشمل المساعد الذكي"), type: "check", v: p.ai }, { k: "support", l: L("Includes online support", "تشمل الدعم الإلكتروني"), type: "check", v: p.support !== false },
+      { k: "support_rank", l: L("Support priority (higher is answered first)", "أولوية الدعم (الأعلى يُرد عليه أولاً)"), type: "number", v: p.support_rank ?? 0, min: 0, max: 99,
+        help: L("The support queue puts tickets of higher-priority plans first.", "تضع قائمة الدعم بلاغات الباقات الأعلى أولوية في المقدمة.") },
+      { k: "reply_hours", l: L("First reply within (hours, optional)", "أول رد خلال (ساعات، اختياري)"), type: "number", v: p.reply_hours ?? "", min: 0,
+        help: L("Shown to the team as a due time; blank: no target.", "يظهر للفريق كموعد مستحق؛ فارغ: بلا هدف.") },
       { k: "mods", l: L("Modules", "الأقسام"), type: "select", v: p.modules === "all" || !p.modules ? "all" : "list", opts: [["all", L("Every module", "كل الأقسام")], ["list", L("Core modules plus these:", "الأقسام الأساسية بالإضافة إلى:")]], span: 1 },
       { type: "html", span: 1, html: `<div class="checks">${SECTIONS().filter(([k]) => !(cfg.core_modules || []).includes(k)).map(([k, l]) => `<label class="chk"><input type="checkbox" name="s_${k}" ${mods.includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div>
         <p class="muted small">${esc(L("Core modules and each industry's starter modules are always included (Menus by industry).", "الأقسام الأساسية والأقسام المبدئية لكل نشاط مشمولة دائماً (القوائم حسب النشاط)."))}</p>` },
@@ -1204,10 +1323,11 @@ PAGES.plans = async view => {
       async v => { const np = { ...p, code: (i == null ? v.code : p.code).trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""), name: v.name.trim(), name_ar: v.name_ar.trim(), tagline: v.tagline.trim(), tagline_ar: v.tagline_ar.trim(),
           price: +v.price, users: v.users === "" ? null : +v.users, contact: !!v.contact, deny: treeRead(v, true), features: v.features.split("\n").map(s => s.trim()).filter(Boolean), features_ar: v.features_ar.split("\n").map(s => s.trim()).filter(Boolean),
           badge: v.badge.trim(), badge_ar: v.badge_ar.trim(), color: v.color, highlight: !!v.highlight, hidden: !!v.hidden, ai: !!v.ai, support: !!v.support,
+          support_rank: Math.max(0, Math.min(99, Math.round(+v.support_rank || 0))), reply_hours: v.reply_hours === "" || !(+v.reply_hours > 0) ? null : +v.reply_hours,
           modules: v.mods === "all" ? "all" : SECTIONS().map(s => s[0]).filter(k => v["s_" + k]) };
         if (!np.code) throw new Error(L("Give the plan a code.", "أدخل كود الباقة."));
         if (!np.contact && !(np.users >= 1)) throw new Error(L("Set how many users the plan includes.", "حدد عدد المستخدمين في الباقة."));
-        if (np.users == null) delete np.users; if (!np.deny.length) delete np.deny;
+        if (np.users == null) delete np.users; if (!np.deny.length) delete np.deny; if (np.reply_hours == null) delete np.reply_hours;
         const list = plans.slice(); if (i == null) list.push(np); else list[i] = np; await save(list); }, { wide: true,
         extra: i != null ? `<button type="button" class="btn" data-a="pdup">${esc(L("Duplicate", "نسخ"))}</button>${p.code !== cfg.trial_plan ? `<button type="button" class="btn danger" data-a="pdel">${esc(L("Delete", "حذف"))}</button>` : ""}` : "",
         onOpen: f => { treeWire(f); const draw = () => { const v = readForm(f); $("#pprev", f).innerHTML = planCard({ ...p, ...v, price: +v.price, users: +v.users, features: v.features.split("\n").filter(Boolean), features_ar: v.features_ar.split("\n").filter(Boolean),

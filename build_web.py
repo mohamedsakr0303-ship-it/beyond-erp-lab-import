@@ -198,8 +198,8 @@ def build(make_zip=False):
             shutil.copytree(f, OUT / "vendor" / f.name, dirs_exist_ok=True)
         else:
             shutil.copy(f, OUT / "vendor" / f.name)
-    # p.html: the public pages (booking, forms, signing, guest chat); owner.*: the owner console, a page of its own
-    for f in ("index.html", "bridge.js", "p.html", "owner.html", "owner.js", "owner.css"):
+    # p.html: the public pages (booking, forms, signing, guest chat); owner.*: the owner console, a page of its own (support.html: the same code as the support desk)
+    for f in ("index.html", "bridge.js", "p.html", "owner.html", "support.html", "owner.js", "owner.css"):
         shutil.copy(ROOT / "web-src" / f, OUT / f)
     search_files()
     # installable app (manifest, offline service worker, icons) — used by hosted builds, left out of the zip

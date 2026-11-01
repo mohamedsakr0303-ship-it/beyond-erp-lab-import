@@ -66,7 +66,7 @@ class SearchFiles(unittest.TestCase):
             self.assertIn(f, build_web.PWA_FILES)
 
     def test_private_pages_stay_out_of_search(self):
-        for f in ("owner.html", "p.html"):
+        for f in ("owner.html", "support.html", "p.html"):
             self.assertIn('name="robots" content="noindex', (ROOT / "web-src" / f).read_text(encoding="utf-8"), f)
 
 

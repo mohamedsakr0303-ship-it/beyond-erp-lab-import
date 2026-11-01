@@ -1038,7 +1038,7 @@ function renderShell() {
 function userMenu() {
   return `<button data-a="theme">${esc(themeTitle())}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
-    ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a>` : ""}
+    ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a><a href="support.html" target="_blank" rel="opener" class="conlink">🎧 ${S.lang === "ar" ? "مكتب الدعم" : "Support desk"} ↗</a>` : ""}
     <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة تعريفية" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "تعرّف على BeyondERP" : "Discover BeyondERP"}</a>${appName() === "BeyondERP" ? `<button data-a="shareapp">↗ ${S.lang === "ar" ? "شارك BeyondERP" : "Share BeyondERP"}</button>` : ""}${platformOn() && appName() === "BeyondERP" ? `<a href="#/referrals">🎁 ${S.lang === "ar" ? "برنامج الإحالة" : "Referral program"}</a>` : ""}${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help and support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تنزيل التطبيق" : "Download the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
@@ -8680,6 +8680,8 @@ async function refreshBilling() {
   const ref = store.get("ref", ""); if (ref && C.platform && !S.refTried) { S.refTried = true;
     C.platform("referral_claim", { p_code: ref }).then(r => { store.set("ref", null);
       if (r && r.ok) toast(L2(`Welcome! You have ${r.friend_pct}% off your first subscription.`, `أهلاً بك! لديك خصم ${r.friend_pct}% على اشتراكك الأول.`)); }).catch(() => {}); }
+  // the support team's live chats with this person: the bubble at the bottom of the screen
+  if (C.platform && !S.chatOn) { S.chatOn = true; chatPoll(); }
   // someone subscribed through this person's link: tell them once
   if (C.platform && !S.refNews) { S.refNews = true;
     C.platform("referral_my").then(m => { S.referral = m; if (m && m.unseen) toast(L2(`${m.unseen} ${m.unseen > 1 ? "people" : "person"} subscribed through your link — your reward is waiting (Referral program).`,
@@ -8689,7 +8691,7 @@ async function refreshBilling() {
   if (S.billing && S.billing.is_admin && bt && S.billing.industry !== bt && C.platform && S.indSent !== bt) { S.indSent = bt; C.platform("company_set_industry", { p_company: C.company(), p_industry: bt }).then(st => { if (st) { S.billing = { ...S.billing, ...st }; S.billingAt = 0; } }).catch(() => {}); }
   const um = $(".ucard .dd-menu");
   if (um && S.billing && S.billing.is_owner && !$(".conlink", um))
-    um.insertAdjacentHTML("afterbegin", `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a>`);
+    um.insertAdjacentHTML("afterbegin", `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a><a href="support.html" target="_blank" rel="opener" class="conlink">🎧 ${S.lang === "ar" ? "مكتب الدعم" : "Support desk"} ↗</a>`);
   if (S.billing && S.billing.is_owner && C.platform) {
     try { const me = await C.platform("console_me"), n = ((me.badges || {}).orders || 0) + ((me.badges || {}).tickets || 0) + ((me.badges || {}).visits || 0);
       $$(".conlink").forEach(a => { const old = $(".cbadge", a); if (old) old.remove(); if (n) a.insertAdjacentHTML("beforeend", ` <b class="cbadge">${n}</b>`); });
@@ -13346,13 +13348,14 @@ async function uploadFiles(bucket, files, asStaff) {
   return out;
 }
 const fileList = (bucket, files) => (files || []).length ? `<div class="att-list">${files.map(f => `<button type="button" class="att" data-a="attopen" data-b="${bucket}" data-p="${esc(f.path)}" data-t="${esc(f.type || "")}" title="${esc(f.name)}">
-    <span class="att-prev"></span><span class="att-n">${/^image\//.test(f.type) ? "🖼" : /^video\//.test(f.type) ? "🎬" : "📄"} ${esc(f.name || "file")}</span><small class="muted">${sizeL(f.size)}</small></button>`).join("")}</div>` : "";
+    <span class="att-prev"></span><span class="att-n">${/^image\//.test(f.type) ? "🖼" : /^video\//.test(f.type) ? "🎬" : /^audio\//.test(f.type) ? "🎤" : "📄"} ${esc(f.name || "file")}</span><small class="muted">${sizeL(f.size)}</small></button>`).join("")}</div>` : "";
 // pictures and videos open as previews in place (fetched with the viewer's rights)
 async function filePreviews(view) {
   for (const b of $$(".att[data-p]", view)) {
-    const ty = b.dataset.t || "", box = $(".att-prev", b); if (!box || box.dataset.done || !/^(image|video)\//.test(ty)) continue;
+    const ty = b.dataset.t || "", box = $(".att-prev", b); if (!box || box.dataset.done || !/^(image|video|audio)\//.test(ty)) continue;
     box.dataset.done = "1";
     try { const url = await window.BeyondCloud.fileUrl(b.dataset.b, b.dataset.p); b.dataset.url = url;
+      if (/^audio\//.test(ty)) { const au = document.createElement("audio"); au.controls = true; au.preload = "metadata"; au.src = url; au.className = "att-voice"; b.replaceWith(au); continue; }
       box.innerHTML = /^image\//.test(ty) ? `<img src="${url}" alt="">` : `<video src="${url}" muted preload="metadata"></video>`; } catch { /* listed without a preview */ }
   }
 }
@@ -13759,6 +13762,107 @@ async function supportVisit(view, id) {
   filePreviews(view);
 }
 // one ticket: what was reported, then the conversation (the customer's view, or staff's in the console)
+// ------------------------------------------------------------ live chat with the support team (bottom of the screen)
+// Opens when the team answers a ticket; the person writes, sends pictures, files, voice notes and screen clips; only the
+// team ends it. Checked every 25 seconds (every 4 while open).
+const SCH = { list: [], open: false, id: null, tk: null, last: 0, t: null };
+const chatEvt = m => `${m.body === "chat_ended_solved" ? L2("The chat has ended — the issue is marked solved", "انتهت المحادثة — تم تعليم المشكلة كمحلولة") : L2("The chat has ended", "انتهت المحادثة")}${m.name ? " · " + m.name : ""} · ${dt16(m.created_at)}`;
+async function chatPoll() {
+  clearTimeout(SCH.t);
+  if (!platformOn() || !window.BeyondCloud.joined || !window.BeyondCloud.joined()) { SCH.t = setTimeout(chatPoll, 60000); return; }
+  try {
+    const list = await PLAT("support_live", { p_after: SCH.last || 9e15 });
+    const fresh = list.flatMap(c => (c.new || []).filter(m => m.staff).map(m => ({ ...m, c })));
+    SCH.last = Math.max(SCH.last, ...list.map(c => +c.last || 0));
+    SCH.list = list;
+    if (SCH.open && SCH.id) { const n = await PLAT("support_get", { p_ticket: SCH.id }); if (!SCH.tk || n.messages.length !== SCH.tk.messages.length || n.chat !== SCH.tk.chat) { SCH.tk = n; chatDraw(true); } }
+    else if (fresh.length && SCH.seenOnce) { const m = fresh[fresh.length - 1]; chatPeek(m); }
+    SCH.seenOnce = true;
+  } catch { /* next time */ }
+  chatLauncher();
+  SCH.t = setTimeout(chatPoll, SCH.open ? 4000 : 25000);
+}
+function chatLauncher() {
+  let b = $("#schat-b");
+  const unread = SCH.list.reduce((s, c) => s + (+c.unread || 0), 0);
+  if (!SCH.list.length && !SCH.open) { if (b) b.remove(); const pk = $("#schat-peek"); if (pk) pk.remove(); return; }
+  if (!b) { b = document.createElement("button"); b.id = "schat-b"; b.className = "schat-b"; b.type = "button"; b.dataset.a = "chatopen"; document.body.appendChild(b); }
+  b.title = L2("Chat with BeyondERP support", "محادثة مع دعم BeyondERP"); b.hidden = SCH.open;
+  b.innerHTML = `💬${unread ? `<span class="schat-n">${unread > 9 ? "9+" : unread}</span>` : ""}`;
+}
+function chatPeek(m) {
+  let p = $("#schat-peek"); if (!p) { p = document.createElement("button"); p.type = "button"; p.id = "schat-peek"; p.className = "schat-peek"; p.dataset.a = "chatopen"; document.body.appendChild(p); }
+  p.dataset.id = m.c.id;
+  p.innerHTML = `<b>${esc(m.name || "BeyondERP")}</b> <span class="muted">${esc(m.c.ref)}</span><div dir="auto">${esc(m.kind === "event" ? chatEvt(m) : m.body || L2("Sent a file", "أرسل ملفاً"))}</div>`;
+  clearTimeout(SCH.pk); SCH.pk = setTimeout(() => p.remove(), 12000);
+}
+async function chatOpen(id) {
+  SCH.open = true; SCH.id = id || SCH.id || (SCH.list[0] || {}).id; const pk = $("#schat-peek"); if (pk) pk.remove();
+  if (!SCH.id) return chatClose();
+  try { SCH.tk = await PLAT("support_get", { p_ticket: SCH.id }); } catch (e) { SCH.open = false; return fail(e); }
+  chatDraw(); chatLauncher(); clearTimeout(SCH.t); SCH.t = setTimeout(chatPoll, 4000);
+}
+function chatClose() { SCH.open = false; const w = $("#schat"); if (w) w.remove(); chatLauncher(); }
+function chatDraw(keep) {
+  let w = $("#schat"); const tk = SCH.tk; if (!tk) return;
+  const draft = w ? ($("#schat-t", w) || {}).value || "" : "";
+  if (!w) { w = document.createElement("section"); w.id = "schat"; w.className = "schat"; w.setAttribute("aria-label", L2("Support chat", "محادثة الدعم")); document.body.appendChild(w); }
+  const agent = [...(tk.messages || [])].reverse().find(m => m.staff && m.kind !== "event"), live = tk.chat === "live";
+  const box = $(".schat-m", w), atEnd = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  const msg = m => m.kind === "event" ? `<div class="schat-e">${esc(chatEvt(m))}</div>`
+    : `<div class="schat-x ${m.staff ? "them" : "me"}">${m.staff ? `<small>${esc(m.name || "BeyondERP")}</small>` : ""}${m.body ? `<div dir="auto">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}<time>${esc(String(m.created_at).slice(11, 16))}</time></div>`;
+  w.innerHTML = `<header><span class="schat-av">${esc((agent && agent.name || "B")[0].toUpperCase())}</span><div style="flex:1;min-width:0"><b>${esc(agent && agent.name || "BeyondERP")} · ${esc(L2("Support", "الدعم"))}</b>
+      <small>${esc(tk.ref)} — ${esc(tk.subject)}</small></div>
+      ${SCH.list.length > 1 ? `<select data-change="chatpick" aria-label="${esc(L2("Conversations", "المحادثات"))}">${SCH.list.map(c => `<option value="${c.id}" ${c.id === tk.id ? "selected" : ""}>${esc(c.ref)}${c.unread ? ` (${c.unread})` : ""}</option>`).join("")}</select>` : ""}
+      <button type="button" class="btn icon ghost" data-a="chatmin" title="${esc(L2("Minimize", "تصغير"))}">▾</button></header>
+    <div class="schat-m">${msg({ staff: false, body: tk.body, files: tk.files, created_at: tk.created_at })}${(tk.messages || []).map(msg).join("")}</div>
+    ${live ? `<footer><input type="file" id="schat-f" multiple hidden accept="image/*,video/*,audio/*,application/pdf,.txt,.xlsx,.zip">
+        <textarea id="schat-t" rows="1" dir="auto" placeholder="${esc(L2("Write a message…", "اكتب رسالة…"))}">${esc(draft)}</textarea>
+        <div class="schat-tools"><button type="button" class="btn icon ghost" data-a="chatfile" title="${esc(L2("Pictures, videos or files", "صور أو فيديو أو ملفات"))}">📎</button>
+          ${navigator.mediaDevices && window.MediaRecorder ? `<button type="button" class="btn icon ghost" data-a="chatvoice" title="${esc(L2("Voice note", "رسالة صوتية"))}">🎤</button>` : ""}
+          ${canRecord() ? `<button type="button" class="btn icon ghost" data-a="chatclip" title="${esc(L2("Record the screen", "تسجيل الشاشة"))}">⏺</button>` : ""}
+          <span class="spacer"></span><button type="button" class="btn pri sm" data-a="chatsend">${esc(L2("Send", "إرسال"))}</button></div></footer>`
+      : `<footer class="schat-end"><div>${esc(L2("This chat has ended. If something is still wrong, reopen the ticket.", "انتهت هذه المحادثة. إن بقيت مشكلة، أعد فتح البلاغ."))}</div>
+        <div class="row" style="gap:6px"><a class="btn sm" href="#/support?t=${tk.id}" data-a="chatdone">${esc(L2("Open the ticket", "فتح البلاغ"))}</a><button type="button" class="btn sm pri" data-a="chatdone">${esc(L2("Close", "إغلاق"))}</button></div></footer>`}`;
+  filePreviews(w);
+  const m = $(".schat-m", w); if (!keep || atEnd) m.scrollTop = m.scrollHeight;
+  const t = $("#schat-t", w);
+  if (t) { t.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); S.GLOBAL_H.chatsend(); } });
+    $("#schat-f", w).addEventListener("change", e => chatSend("", [...e.target.files])); if (!keep) t.focus(); }
+}
+async function chatSend(body, files) {
+  const id = SCH.id; if (!id) return;
+  try { const up = files.length ? await uploadFiles("support-files", files) : [];
+    SCH.tk = await PLAT("support_reply", { p_ticket: id, p_body: body, p_files: up, p_internal: false });
+    const t = $("#schat-t"); if (t && body) t.value = "";
+    window.BeyondCloud.platformPush && window.BeyondCloud.platformPush("ticket", id, { text: (body || L2("Sent a file", "أرسل ملفاً")).slice(0, 140) });
+    chatDraw(true);
+  } catch (e) { fail(e); }
+}
+async function chatVoice(btn) {
+  if (btn._rec) { btn._rec.stop(); return; }
+  let stream; try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { return toast(L2("The microphone is not available.", "الميكروفون غير متاح."), true); }
+  const type = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(x => MediaRecorder.isTypeSupported(x)) || "";
+  const rec = btn._rec = new MediaRecorder(stream, type ? { mimeType: type } : {}), parts = []; let n = 0;
+  rec.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
+  const tick = setInterval(() => { n++; btn.textContent = `■ ${n}s`; if (n >= 180) rec.stop(); }, 1000);
+  rec.onstop = () => { clearInterval(tick); stream.getTracks().forEach(x => x.stop()); btn._rec = null; btn.textContent = "🎤"; btn.classList.remove("danger");
+    const mime = (rec.mimeType || "audio/webm").split(";")[0];
+    if (parts.length) chatSend("", [new File(parts, `voice-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.${mime.includes("mp4") ? "m4a" : "webm"}`, { type: mime })]); };
+  rec.start(1000); btn.classList.add("danger"); btn.textContent = "■ 0s";
+  toast(L2("Recording — press ■ to send.", "جارٍ التسجيل — اضغط ■ للإرسال."));
+}
+Object.assign(S.GLOBAL_H, {
+  chatopen: el => chatOpen(+(el && el.dataset.id) || null),
+  chatmin: () => chatClose(),
+  chatpick: el => chatOpen(+el.value),
+  chatsend: () => { const t = $("#schat-t"); if (t && t.value.trim()) chatSend(t.value.trim(), []); },
+  chatfile: () => $("#schat-f").click(),
+  chatvoice: el => chatVoice(el),
+  chatclip: async el => { const f = await recordScreen(el); if (f) chatSend("", [f]); },
+  chatdone: async () => { const id = SCH.id; try { await PLAT("support_seen", { p_ticket: id }); } catch { /* shown again next time */ }
+    SCH.list = SCH.list.filter(c => c.id !== id || c.chat === "live"); SCH.id = null; chatClose(); } });
+
 async function supportTicket(view, id, staff) {
   const C = window.BeyondCloud, tk = await PLAT("support_get", { p_ticket: id }), ar = S.lang === "ar";
   $("#ttl").textContent = `${tk.ref} — ${tk.subject}`;
@@ -13773,8 +13877,8 @@ async function supportTicket(view, id, staff) {
       } catch (e) { el.disabled = false; fail(e); } },
     tksolved: async el => { try { await PLAT("support_close", { p_ticket: id, p_solved: el.dataset.v === "1" }); route(); } catch (e) { fail(e); } },
     tkset: async el => { try { await PLAT("console_ticket_set", { p_ticket: id, p: { [el.name]: el.value } }); toast(t("saved")); } catch (e) { fail(e); } } });
-  const who = m => m.staff ? (staff ? m.email : L2("BeyondERP support", "دعم BeyondERP")) : (tk.app_user && m.email === tk.email ? tk.app_user : m.email);
-  const bubble = (m, first) => `<div class="tk-msg ${m.staff ? "staff" : "cust"} ${m.internal ? "internal" : ""} ${(m.staff === staff) ? "mine" : ""}">
+  const who = m => m.staff ? (staff ? m.email : `${m.name || "BeyondERP"} · ${L2("BeyondERP support", "دعم BeyondERP")}`) : (tk.app_user && m.email === tk.email ? tk.app_user : m.email);
+  const bubble = (m, first) => m.kind === "event" ? `<div class="muted" style="text-align:center;font-size:.85em;margin:8px 0">— ${esc(chatEvt(m))} —</div>` : `<div class="tk-msg ${m.staff ? "staff" : "cust"} ${m.internal ? "internal" : ""} ${(m.staff === staff) ? "mine" : ""}">
       <div class="tk-h"><b>${esc(who(m))}</b>${m.internal ? ` <span class="chip warn">${esc(L2("Internal note", "ملاحظة داخلية"))}</span>` : ""}<span class="muted">${dt16(m.created_at)}</span></div>
       ${m.body ? `<div class="tk-b" dir="auto">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}${first || ""}</div>`;
   const diag = Object.entries(tk.diag || {}).filter(([, v]) => v);

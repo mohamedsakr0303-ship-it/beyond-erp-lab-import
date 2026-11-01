@@ -118,6 +118,19 @@ The console is **a page of its own**: `owner.html` on the same site (for example
 * Billing, read only (unpaid, ended, suspended, archived, maintenance), user limits, company limits per person, new customers, blocking a person, online support, visits and the AI assistant are refused by the database or the server functions. Changing the page does not get around them.
 * Modules, screens and tabs are hidden and refused by the app itself. Someone with technical skills could still reach a hidden module's screens in their own browser, but nothing outside their plan is offered to them.
 
+## The support desk
+
+The support team works in its own page, **support.html** (the 🎧 Support desk link in the ERP's user menu and in the owner console). It uses the same sign-in. A team member who only has the **Support** permission (owner console → Team) sees only the support pages there.
+
+* **Queue.** Tickets waiting for the team come first, then the plan's **support priority**, then whoever has waited longest. Set each plan's priority on Plans: a higher number is answered first. You can also set an optional **first reply within (hours)**: the queue then shows when the reply is due and highlights tickets past it. When this was added, each plan got a priority from its price: the cheapest 0, each bigger plan one more, and "contact us" plans on top. Companies on a trial or without a paid plan have priority 0.
+* **Ticket.** Shows the conversation, the customer's card (plan, priority, status, people, earlier tickets and visits, with no payment details), the technical details and what happened before the report. The team can:
+  * reply with text, files or a 🎤 voice note;
+  * pick a **saved reply**, where `{name}` becomes the customer's first name;
+  * write internal notes the customer never sees;
+  * assign the ticket;
+  * arrange a visit.
+* **Live chat.** The team's first answer opens a chat at the bottom corner of the customer's screen. Customers see the team member's first name, never their email. Both sides can send messages, pictures, videos, files and voice notes; customers on a computer can also send a screen recording. New messages appear by themselves: about every 5 seconds in the support desk, and every 4 seconds in the customer's open chat (25 when it is closed). **Only the team ends the chat** (⏹ End the chat), optionally marking the ticket solved. The customer then sees that the chat ended and can reopen the ticket. Writing again later starts the chat again.
+
 ## Referral program and upgrades
 
 Every signed-in user of the online workspace has a personal share link (`https://mybeyonderp.com/?ref=CODE`) on **🎁 Referral program** in the user menu. The share button uses the same link.
