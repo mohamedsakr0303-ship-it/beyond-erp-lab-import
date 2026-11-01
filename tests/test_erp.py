@@ -196,6 +196,15 @@ class Interchange(unittest.TestCase):
         interchange.import_data(db2, data, mode="replace")
         self.assertEqual(a.income_statement(db)["net_profit"], a.income_statement(db2)["net_profit"])
         self.assertEqual(a.balance_sheet(db)["total_assets"], a.balance_sheet(db2)["total_assets"])
+        db3 = Database(":memory:")                       # into new books (not "replace"): the default offer types are not doubled
+        db3.seed_documents(logo=False)
+        before = db3.one("SELECT COUNT(*) n FROM offer_types")["n"]
+        interchange.import_data(db3, data)
+        self.assertEqual(db3.one("SELECT COUNT(*) n FROM offer_types")["n"], max(before, db.one("SELECT COUNT(*) n FROM offer_types")["n"]))
+        db4 = Database(":memory:")                       # the starter logo in a workbook never replaces a company's own logo
+        db4.x("INSERT OR REPLACE INTO assets(key,mime,w,h,data) VALUES ('logo','image/png',1,1,'data:image/png;base64,OWN')")
+        interchange.import_data(db4, data)
+        self.assertEqual(db4.one("SELECT data FROM assets WHERE key='logo'")["data"], "data:image/png;base64,OWN")
 
 
 class Reports(unittest.TestCase):

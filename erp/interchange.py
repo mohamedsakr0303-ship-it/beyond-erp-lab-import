@@ -1469,6 +1469,12 @@ def _ownership_export(db):
     return out
 
 
+def _is_default_asset(a):
+    from . import brand_assets
+    img = {"logo": brand_assets.LOGO, "watermark": brand_assets.WATERMARK}.get(a.get("key"))
+    return bool(img) and str(a.get("data")) == str(img.get("data"))
+
+
 def _imp_extras(db, ex, mode, counts):
     from . import branding
     if ex.get("entry_meta"):
@@ -1492,11 +1498,17 @@ def _imp_extras(db, ex, mode, counts):
         recurring.import_rows(db, ex["recurring"], counts)
     for a in ex.get("assets") or []:
         if isinstance(a, dict) and a.get("key") in branding.ASSET_KEYS and a.get("data"):
+            if _is_default_asset(a) and db.one("SELECT 1 FROM assets WHERE key=?", (a["key"],)):
+                continue                   # the app's own starter logo never replaces the company's logo
             db.conn.execute("INSERT OR REPLACE INTO assets(key,mime,w,h,data) VALUES (?,?,?,?,?)",
                             (a["key"], a.get("mime") or "image/png", int(a.get("w") or 0), int(a.get("h") or 0), str(a["data"])))
     ids = {}
     for t in ex.get("offer_types") or []:
         if isinstance(t, dict) and t.get("name"):
+            same = db.one("SELECT id FROM offer_types WHERE name=? AND content=?", (acc.text(t["name"]), str(t.get("content") or "{}")))
+            if same:                       # the same type is already here (e.g. the defaults new books start with): reuse it
+                ids[t.get("id")] = same["id"]
+                continue
             ids[t.get("id")] = db.conn.execute("INSERT INTO offer_types(name, content) VALUES (?,?)",
                                                (acc.text(t["name"]), str(t.get("content") or "{}"))).lastrowid
     n = 0

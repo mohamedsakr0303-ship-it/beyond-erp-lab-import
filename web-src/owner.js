@@ -316,7 +316,7 @@ async function loadAlerts(first) {
   S.alerts.forEach(a => S.seen.add(a.key));
   drawBell();
   if (!first && fresh.length) {
-    if (LS("berp.console.sound", true)) beep();
+    beep();
     if ("Notification" in window && Notification.permission === "granted") {
       for (const a of fresh.slice(0, 3)) { const k = AL_KIND()[a.kind] || [a.kind];
         const n = new Notification(`${k[0]} · ${a.title}`, { body: a.detail || "", tag: a.key, icon: "icon-192.png" });
@@ -324,9 +324,41 @@ async function loadAlerts(first) {
     } else toast(`🔔 ${fresh.length} ${L("new notification(s)", "إشعار جديد")}`);
   }
 }
-function beep() { try { const c = new (window.AudioContext || window.webkitAudioContext)(), o = c.createOscillator(), g = c.createGain();
-  o.frequency.value = 880; g.gain.setValueAtTime(.06, c.currentTime); g.gain.exponentialRampToValueAtTime(.0001, c.currentTime + .35);
-  o.connect(g).connect(c.destination); o.start(); o.stop(c.currentTime + .36); } catch { /* no sound */ } }
+// alert sounds, the same set as the ERP: soft tones made in the browser, or the person's own clip; kept on this device
+const SND_KEY = "berp.console.snd";
+const SOUNDS = () => [["chime", L("Chime", "رنين")], ["glass", L("Glass", "زجاج")], ["pop", L("Pop", "فقاعة")], ["marimba", L("Marimba", "ماريمبا")],
+  ["bell", L("Bell", "جرس")], ["soft", L("Soft", "هادئ")], ["pulse", L("Pulse", "نبض")]];
+const TONES = {   // [frequency, start s, length s, type, level]
+  chime: [[880, 0, .22, "sine", 1], [1320, .12, .3, "sine", .9]],
+  glass: [[1568, 0, .5, "sine", .7], [2093, .06, .45, "sine", .45], [3136, .1, .3, "sine", .2]],
+  pop: [[620, 0, .07, "triangle", 1], [930, .05, .08, "triangle", .7]],
+  marimba: [[523, 0, .25, "sine", 1], [659, .11, .25, "sine", .9], [784, .22, .35, "sine", .9]],
+  bell: [[1046, 0, .9, "sine", .8], [2093, 0, .5, "sine", .25], [1568, .02, .6, "sine", .2]],
+  soft: [[440, 0, .4, "sine", .7], [554, .18, .45, "sine", .55]],
+  pulse: [[740, 0, .09, "square", .35], [740, .16, .09, "square", .35], [988, .32, .14, "square", .35]],
+};
+const VIBES = { short: [120], double: [140, 70, 140], long: [450], pulse: [80, 60, 80, 60, 80] };
+const sndPrefs = () => ({ sound: LS("berp.console.sound", true) ? "chime" : "none", volume: 70, vibrate: false, vibe: "double", quiet: false, quiet_from: "22:00", quiet_to: "07:00", ...LS(SND_KEY, {}) });
+const sndSave = patch => LSset(SND_KEY, { ...LS(SND_KEY, {}), ...patch });
+const sndOwn = () => LS("berp.console.sndfile", "");
+let actx = null;
+const audioCtx = () => { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === "suspended") actx.resume(); } catch { actx = null; } return actx; };
+["pointerdown", "keydown"].forEach(ev => window.addEventListener(ev, () => { if (!actx) audioCtx(); }, { once: true, passive: true }));
+function playSound(name, volume) {
+  const vol = Math.max(0, Math.min(100, volume ?? 70)) / 100;
+  if (!vol || name === "none") return;
+  if (name === "custom") { const src = sndOwn(); if (src) { try { const a = new Audio(src); a.volume = vol; a.play().catch(() => {}); } catch { /* no audio */ } return; } name = "chime"; }
+  const c = audioCtx(), tones = TONES[name] || TONES.chime; if (!c) return;
+  const t0 = c.currentTime + .01;
+  tones.forEach(([f, d, len, type, lvl]) => { const o = c.createOscillator(), g = c.createGain(); o.type = type; o.frequency.value = f;
+    g.gain.setValueAtTime(.0001, t0 + d); g.gain.exponentialRampToValueAtTime(Math.max(.0002, .22 * vol * lvl), t0 + d + .015); g.gain.exponentialRampToValueAtTime(.0001, t0 + d + len);
+    o.connect(g); g.connect(c.destination); o.start(t0 + d); o.stop(t0 + d + len + .05); });
+}
+const inQuiet = p => { if (!p.quiet) return false; const now = new Date(), m = now.getHours() * 60 + now.getMinutes(), hm = x => { const [h, mi] = String(x || "0:0").split(":").map(Number); return h * 60 + mi; };
+  const a = hm(p.quiet_from), b = hm(p.quiet_to); return a <= b ? m >= a && m < b : m >= a || m < b; };
+// one alert: the chosen sound and vibration, unless it is quiet time
+function beep() { const p = sndPrefs(); if (inQuiet(p)) return; playSound(p.sound, p.volume);
+  if (p.vibrate) try { navigator.vibrate && navigator.vibrate(VIBES[p.vibe] || VIBES.double); } catch { /* not supported */ } }
 const markAlerts = async (keys, state) => { if (!keys.length) return; await rpc("console_alert_mark", { p_keys: keys, p_state: state });
   S.alerts = state === "dismissed" ? S.alerts.filter(a => !keys.includes(a.key)) : S.alerts.map(a => keys.includes(a.key) ? { ...a, read: state === "read" } : a); drawBell(); };
 
@@ -514,6 +546,7 @@ document.addEventListener("click", async e => {
   if (el.tagName === "BUTTON" || el.dataset.prevent) e.preventDefault();
   try { await G(el, e); } catch (er) { fail(er); }
 });
+document.addEventListener("input", e => { const el = e.target.closest("[data-input]"); if (el && S.H[el.dataset.input]) S.H[el.dataset.input](el, e); });
 document.addEventListener("change", e => { const el = e.target.closest("[data-change]"); if (el && S.H[el.dataset.change]) Promise.resolve(S.H[el.dataset.change](el, e)).catch(fail); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") { if ($("#ctx")) return closeCtx(); const app = $("#app"); if (app && app.classList.contains("menu")) return app.classList.remove("menu"); closePanel(); const p = $("#alpop"); if (p) p.remove(); } });
 document.addEventListener("contextmenu", e => {
@@ -675,12 +708,12 @@ PAGES.alerts = async view => {
   S.H.dismissall = async () => { const keys = (view._list || $("#altbl")._list || []).map(a => a.key); if (!keys.length || !await confirmIt(L(`Dismiss ${keys.length} notification(s)?`, `إخفاء ${keys.length} إشعار؟`))) return; await markAlerts(keys, "dismissed"); route(); };
   S.H.mute = async el => { const m = { ...(S.me.notify || {}) }; if (el.checked) delete m[el.dataset.k]; else m[el.dataset.k] = false; S.me.notify = await rpc("console_my_notify", { p: m }); loadAlerts(true); };
   S.H.perm = async () => { if (!("Notification" in window)) return toast(L("This browser cannot show notifications.", "هذا المتصفح لا يدعم الإشعارات."), true); await Notification.requestPermission(); route(); };
-  S.H.sound = el => LSset("berp.console.sound", el.checked);
+  soundHandlers(view);
   view.innerHTML = `<div class="split"><div class="card"><div id="altbl"></div></div>
     <div><div class="card"><h2>${esc(L("On this device", "على هذا الجهاز"))}</h2>
       <p class="muted small">${esc(L("While this console is open (even in another tab), new notifications pop up on the screen. Phone and computer notifications for tickets, payments and visits also arrive when it is closed, if notifications are on in the ERP (Profile → Notifications).", "طالما اللوحة مفتوحة (حتى في تبويب آخر) تظهر الإشعارات الجديدة على الشاشة. وتصل إشعارات البلاغات والمدفوعات والزيارات للهاتف والكمبيوتر حتى وهي مغلقة إذا فُعّلت الإشعارات في النظام (الملف الشخصي ← الإشعارات)."))}</p>
       ${"Notification" in window ? (Notification.permission === "granted" ? chip(L("Screen notifications on", "إشعارات الشاشة مفعّلة"), "ok") : `<button class="btn pri" data-a="perm">${esc(L("Turn on screen notifications", "تفعيل إشعارات الشاشة"))}</button>`) : ""}
-      <label class="chk" style="margin-top:10px"><input type="checkbox" data-change="sound" ${LS("berp.console.sound", true) ? "checked" : ""}> ${esc(L("Play a sound", "تشغيل صوت"))}</label></div>
+      ${soundCard()}</div>
     <div class="card"><h2>${esc(L("Tell me about", "أبلغني عن"))}</h2><div class="grid" style="gap:6px">${Object.entries(kinds).map(([k, [l, ic]]) => `<label class="chk"><input type="checkbox" data-change="mute" data-k="${k}" ${mute[k] === false ? "" : "checked"}> ${ic} ${esc(l)}</label>`).join("")}</div>
       <p class="muted small">${esc(L("Only what your access covers is shown. Warning times are set in Rules & switches.", "يظهر فقط ما تشمله صلاحياتك. تُضبط أوقات التنبيه من القواعد والمفاتيح."))}</p></div></div></div>`;
   afterHooks.push(v => table($("#altbl", v), "alerts", S.alerts, {
@@ -694,6 +727,39 @@ PAGES.alerts = async view => {
       { k: "from", l: L("From", "من"), type: "from", col: "at" }, { k: "to", l: L("To", "إلى"), type: "to", col: "at" }],
     rowCls: a => a.read ? "" : "unread" }));
 };
+
+// the sound part of "On this device": pick a sound or upload one, volume, vibration and quiet hours
+const soundCard = () => { const p = sndPrefs(), own = !!sndOwn();
+  const opts = [...SOUNDS(), ["custom", L("My sound", "صوتي")], ["none", L("No sound", "بدون صوت")]];
+  return `<h3 style="margin-top:14px">${esc(L("Sound", "الصوت"))}</h3>
+    <div class="sndgrid">${opts.map(([k, l]) => `<button type="button" class="btn sm ${p.sound === k ? "pri" : ""}" data-a="sndpick" data-k="${k}">${k === "none" ? "🔕" : k === "custom" ? "🎵" : "♪"} ${esc(l)}</button>`).join("")}</div>
+    <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+      <label class="btn sm">⬆ ${esc(own ? L("Replace my sound", "استبدال صوتي") : L("Upload a sound", "رفع صوت"))}<input type="file" id="sndfile" accept="audio/*" hidden></label>
+      ${own ? `<button type="button" class="btn sm danger" data-a="sndownx">${esc(L("Remove my sound", "إزالة صوتي"))}</button>` : ""}
+      <button type="button" class="btn sm" data-a="sndtest">▶ ${esc(L("Test", "تجربة"))}</button></div>
+    <label class="small" style="display:block;margin-top:8px">${esc(L("Volume", "مستوى الصوت"))} <b id="sndvolv">${p.volume}%</b>
+      <input type="range" min="0" max="100" step="5" value="${p.volume}" data-change="sndvol" data-input="sndvolshow" style="width:100%"></label>
+    ${"vibrate" in navigator ? `<label class="chk" style="margin-top:6px"><input type="checkbox" data-change="sndvib" ${p.vibrate ? "checked" : ""}> ${esc(L("Vibrate (phones)", "اهتزاز (الهواتف)"))}</label>` : ""}
+    <label class="chk" style="margin-top:6px"><input type="checkbox" data-change="sndquiet" ${p.quiet ? "checked" : ""}> ${esc(L("No sound during quiet hours", "بدون صوت خلال ساعات الهدوء"))}</label>
+    <div class="row" style="gap:8px;margin-top:6px;align-items:center"><input type="time" value="${esc(p.quiet_from)}" data-change="sndfrom" style="max-width:130px"> ${S.lang === "ar" ? "←" : "→"} <input type="time" value="${esc(p.quiet_to)}" data-change="sndto" style="max-width:130px"></div>
+    <p class="muted small">${esc(L("Kept on this device. Notifications still arrive silently during quiet hours.", "يُحفظ على هذا الجهاز. تصل الإشعارات بصمت خلال ساعات الهدوء."))}</p>`; };
+function soundHandlers(view) {
+  const redraw = () => route();
+  S.H.sndpick = el => { const k = el.dataset.k; if (k === "custom" && !sndOwn()) { $("#sndfile", view).click(); return; } sndSave({ sound: k }); playSound(k, sndPrefs().volume); redraw(); };
+  S.H.sndtest = () => playSound(sndPrefs().sound === "none" ? "chime" : sndPrefs().sound, sndPrefs().volume);
+  S.H.sndownx = () => { LSset("berp.console.sndfile", null); if (sndPrefs().sound === "custom") sndSave({ sound: "chime" }); redraw(); };
+  S.H.sndvolshow = el => { const v = $("#sndvolv", view); if (v) v.textContent = el.value + "%"; };
+  S.H.sndvol = el => { S.H.sndvolshow(el); sndSave({ volume: +el.value }); playSound(sndPrefs().sound, +el.value); };
+  S.H.sndvib = el => sndSave({ vibrate: el.checked });
+  S.H.sndquiet = el => sndSave({ quiet: el.checked });
+  S.H.sndfrom = el => sndSave({ quiet_from: el.value });
+  S.H.sndto = el => sndSave({ quiet_to: el.value });
+  afterHooks.push(v => { const f = $("#sndfile", v); if (!f) return; f.addEventListener("change", () => { const file = f.files[0]; if (!file) return;
+    if (!/^audio\//.test(file.type)) return toast(L("Choose a sound file.", "اختر ملف صوت."), true);
+    if (file.size > 290000) return toast(L("The sound is too long. Choose a clip under about 250 KB.", "الصوت طويل جداً. اختر مقطعاً أقل من 250 كيلوبايت تقريباً."), true);
+    const r = new FileReader(); r.onload = () => { try { localStorage.setItem("berp.console.sndfile", JSON.stringify(r.result)); } catch { return toast(L("This device has no room to keep the sound.", "لا توجد مساحة على هذا الجهاز لحفظ الصوت."), true); }
+      sndSave({ sound: "custom" }); playSound("custom", sndPrefs().volume); toast(L("Saved on this device.", "حُفظ على هذا الجهاز.")); redraw(); }; r.readAsDataURL(file); }); });
+}
 
 // ================================================================== customers (companies)
 const lastPay = x => x.last_payment || {};
@@ -1188,6 +1254,7 @@ PAGES.ticket = async (view, parts) => {
   // new messages appear by themselves while the ticket is open
   S.live = setInterval(async () => { if (document.hidden || parse().parts[0] !== "ticket" || +parse().parts[1] !== id) return;
     try { const n = await rpc("support_get", { p_ticket: id }); if (n.messages.length !== tk.messages.length || n.status !== tk.status || n.chat !== tk.chat) {
+      if (n.messages.slice(tk.messages.length).some(m => m.kind !== "event" && !m.staff)) beep();
       const access = n.messages.slice(tk.messages.length).some(m => m.kind === "event" && /^access_/.test(m.body));   // let in or out: the side panel changes too
       tk = n; if (access && !($("#rbody") || {}).value) route(); else draw(); } } catch { /* next time */ } }, 5000);
 };

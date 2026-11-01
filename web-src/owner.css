@@ -214,3 +214,4 @@ label.tn{justify-content:flex-start}.tn.l1{font-weight:600}.tn.l2{padding-inline
 /* support desk: chat events and voice notes in a ticket */
 .thread .evt { text-align: center; color: var(--muted); font-size: .82em; margin: 10px 0; }
 audio.voice { display: block; width: min(320px, 100%); height: 38px; margin: 6px 0; }
+.sndgrid { display: flex; flex-wrap: wrap; gap: 6px; }
