@@ -12258,7 +12258,7 @@ function renderLanding(opt = {}) {
     </div></div>
     <section class="lp-band"><h2>${esc(L2("The systems a growing company runs on", "الأنظمة التي تحتاجها الشركة في نموها"))}</h2>
       <div class="lp-chips">${chips.map(c => `<span>${esc(c)}</span>`).join("")}</div></section>
-    <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span><small class="lp-copy">© ${new Date().getFullYear()} BEYONDERP. ${esc(L2("All rights reserved.", "جميع الحقوق محفوظة."))}</small></footer></div>`;
+    <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span><a class="lp-mail" href="mailto:info@mybeyonderp.com" dir="ltr">info@mybeyonderp.com</a><small class="lp-copy">© ${new Date().getFullYear()} BEYONDERP. ${esc(L2("All rights reserved.", "جميع الحقوق محفوظة."))}</small></footer></div>`;
   const root = $(".lp");
   root.addEventListener("click", e => {
     const home = e.target.closest(".lp-home");

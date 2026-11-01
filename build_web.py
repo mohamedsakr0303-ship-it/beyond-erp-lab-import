@@ -144,18 +144,22 @@ def arabic_page(html, site):
                         'localStorage.setItem("berp.lang",\'"ar"\');}catch(e){}</script>\n<script>(function(){try{var l="";', 1)
 
 
+CONTACT_EMAIL = "info@mybeyonderp.com"
+
+
 def structured_data(site):
     """What search engines read about BeyondERP: the website (its name, so results say "BeyondERP" rather than the
     address), the organization behind it (name and logo), and the software itself."""
     org = {"@type": "Organization", "name": "BeyondERP", "alternateName": "BEYONDERP",
-           "description": "The company behind BeyondERP, a cloud ERP in English and Arabic."}
+           "description": "The company behind BeyondERP, a cloud ERP in English and Arabic.", "email": CONTACT_EMAIL,
+           "contactPoint": {"@type": "ContactPoint", "contactType": "customer support", "email": CONTACT_EMAIL, "availableLanguage": ["English", "Arabic"]}}
     app = {"@type": "SoftwareApplication", "name": "BeyondERP", "applicationCategory": "BusinessApplication",
            "operatingSystem": "Web, Windows, macOS, Android, iOS", "inLanguage": ["en", "ar"], "slogan": "Run the business, not the paperwork.",
            "description": "One cloud ERP for accounting, sales, purchasing, inventory, projects, HR and payroll, with live reports, "
                           "business insights and e-invoicing, in English and Arabic.",
            "featureList": ["Accounting and financial reports", "Sales, invoicing and collections", "Purchasing and inventory",
                            "Projects, contracts and business units", "HR, attendance and payroll", "Equipment rental",
-                           "Customers and deals (CRM)", "E-invoicing", "Insights: why figures changed, monthly pace and targets"],
+                           "Customers and deals", "E-invoicing", "Insights: why figures changed, monthly pace and targets"],
            "offers": {"@type": "Offer", "category": "Subscription", "description": "Free trial, then a monthly or yearly plan per company."}}
     web = {"@type": "WebSite", "name": "BeyondERP", "alternateName": ["Beyond ERP", "BEYONDERP"], "inLanguage": ["en", "ar"]}
     if site:
