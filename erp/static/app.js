@@ -1039,7 +1039,7 @@ function userMenu() {
   return `<button data-a="theme">${esc(themeTitle())}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a><a href="support.html" target="_blank" rel="opener" class="conlink">🎧 ${S.lang === "ar" ? "مكتب الدعم" : "Support desk"} ↗</a>` : ""}
-    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة تعريفية" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "تعرّف على BeyondERP" : "Discover BeyondERP"}</a>${appName() === "BeyondERP" ? `<button data-a="shareapp">↗ ${S.lang === "ar" ? "شارك BeyondERP" : "Share BeyondERP"}</button>` : ""}${platformOn() && appName() === "BeyondERP" ? `<a href="#/referrals">🎁 ${S.lang === "ar" ? "برنامج الإحالة" : "Referral program"}</a>` : ""}${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help and support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تنزيل التطبيق" : "Download the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
+    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة تعريفية" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "تعرّف على BeyondERP" : "Discover BeyondERP"}</a>${appName() === "BeyondERP" ? `<button data-a="shareapp">↗ ${S.lang === "ar" ? "شارك BeyondERP" : "Share BeyondERP"}</button>` : ""}${platformOn() && appName() === "BeyondERP" ? `<a href="#/referrals">🎁 ${S.lang === "ar" ? "برنامج الإحالة" : "Referral program"}</a>` : ""}${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}${platformOn() ? `<a href="#/help">📖 ${S.lang === "ar" ? "المساعدة والأسئلة الشائعة" : "Help & FAQ"}</a>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help and support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تنزيل التطبيق" : "Download the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
 async function loadAlerts(force) {
@@ -8680,6 +8680,9 @@ async function refreshBilling() {
   const ref = store.get("ref", ""); if (ref && C.platform && !S.refTried) { S.refTried = true;
     C.platform("referral_claim", { p_code: ref }).then(r => { store.set("ref", null);
       if (r && r.ok) toast(L2(`Welcome! You have ${r.friend_pct}% off your first subscription.`, `أهلاً بك! لديك خصم ${r.friend_pct}% على اشتراكك الأول.`)); }).catch(() => {}); }
+  // a support team member let into this company by its customer: say so, and until when
+  if (C.companies && C.company) try { const me = (await C.companies() || []).find(c => c.id === C.company()); const was = !!S.supportCo;
+    S.supportCo = me && me.support ? me : null; if (was !== !!S.supportCo) renderBillBar(); } catch { /* next time */ }
   // the support team's live chats with this person: the bubble at the bottom of the screen
   if (C.platform && !S.chatOn) { S.chatOn = true; chatPoll(); }
   // someone subscribed through this person's link: tell them once
@@ -8709,8 +8712,9 @@ function renderBillBar() {
     box.innerHTML = `<div class="banner ${lic.state === "unlicensed" ? "err" : lic.state === "trial" && lic.days_left > 3 ? "info" : "warn"} billbar">${esc(msg)} ${S.boot.user.is_super ? `<a class="btn sm" href="#/settings?tab=system">${ar ? "الترخيص" : "Licence"}</a>` : ""}</div>`;
     return;
   }
-  const b = S.billing, mt = (S.billingPublic || {}).maintenance || {}, ar0 = S.lang === "ar";
-  const notes = (mt.on ? `<div class="banner warn billbar">🛠 ${esc((ar0 ? mt.message_ar || mt.message : mt.message) || L2("BeyondERP is under maintenance — changes are paused for a short while. Everything stays available to view.", "BeyondERP قيد الصيانة — الحفظ متوقف لفترة قصيرة. يبقى كل شيء متاحاً للعرض."))}</div>` : "") + noticesHtml(b);
+  const b = S.billing, mt = (S.billingPublic || {}).maintenance || {}, ar0 = S.lang === "ar", sc = S.supportCo;
+  const notes = (sc ? `<div class="banner ${sc.support === "fix" ? "warn" : "info"} billbar">🎧 ${esc(L2(`Support access: ${sc.name} — ${sc.support === "fix" ? "you may view and fix; every change is signed with your name" : "view only"} — until ${dt16(sc.support_until)}.`,
+      `وصول الدعم: ${sc.name} — ${sc.support === "fix" ? "يمكنك العرض والإصلاح؛ كل تغيير يُوقّع باسمك" : "عرض فقط"} — حتى ${dt16(sc.support_until)}.`))}</div>` : "") + (mt.on ? `<div class="banner warn billbar">🛠 ${esc((ar0 ? mt.message_ar || mt.message : mt.message) || L2("BeyondERP is under maintenance — changes are paused for a short while. Everything stays available to view.", "BeyondERP قيد الصيانة — الحفظ متوقف لفترة قصيرة. يبقى كل شيء متاحاً للعرض."))}</div>` : "") + noticesHtml(b);
   if (b && ["suspended", "archived"].includes(b.status)) {
     box.innerHTML = `<div class="banner err billbar">${esc(b.status === "archived" ? L2("This company is archived: everything stays available to view, print and export; changes are off. Contact BeyondERP to reopen it.", "هذه الشركة مؤرشفة: يبقى العرض والطباعة والتصدير متاحاً، والتعديل متوقف. تواصل مع BeyondERP لإعادة فتحها.")
       : L2("This company is suspended", "هذه الشركة موقوفة") + (b.suspend_note ? ` — ${b.suspend_note}` : "") + L2(". Viewing, printing and exporting remain available; changes are off.", ". يبقى العرض والطباعة والتصدير متاحاً، والتعديل متوقف."))} <a class="btn sm" href="#/support">${esc(L2("Contact us", "تواصل معنا"))}</a></div>${notes}`;
@@ -12070,7 +12074,7 @@ Object.assign(S.GLOBAL_H, { tour: () => { $$(".dd.open").forEach(d => d.classLis
 // ================================================== help & support
 // Where reports go. E-mail stays empty until the domain's support address exists (the button says "coming soon").
 const SUPPORT = { whatsapp: "201012884176", email: "" };
-const SUP_KINDS = () => [["bug", L2("Problem", "مشكلة")], ["question", L2("Question", "سؤال")],
+const SUP_KINDS = () => [["bug", L2("Problem or bug", "مشكلة أو خلل")], ["question", L2("Question", "سؤال")],
   ["suggestion", L2("Suggestion", "اقتراح")], ["billing", L2("Subscription and billing", "الاشتراك والفوترة")]];
 const SUP_STATUS = () => ({ sent: L2("Sent", "مُرسل"), answered: L2("Answered", "تم الرد"), solved: L2("Resolved", "تم الحل") });
 const supEdition = () => STATIC ? (cloudOn() ? L2("Online (shared workspace)", "متصل (مساحة عمل مشتركة)") : L2("Browser (this device only)", "المتصفح (هذا الجهاز فقط)"))
@@ -13680,13 +13684,17 @@ async function supportCloud(view, parts, q) {
         C.platformPush("ticket", tk.id, { isNew: true }); toast(L2(`Sent as ${tk.ref}`, `أُرسل برقم ${tk.ref}`)); location.hash = "#/support?t=" + tk.id;
       } catch (e) { el.disabled = false; fail(e); } } });
   view.innerHTML = `<div class="split sup"><div>
+    <div class="card help-cta"><div style="flex:1;min-width:0"><b>📖 ${esc(L2("Maybe it is already answered", "ربما توجد إجابة بالفعل"))}</b>
+      <div class="muted" style="font-size:.9em">${esc(L2("Search the questions people ask and the problems already solved.", "ابحث في الأسئلة الشائعة والمشكلات التي حُلّت."))}</div></div>
+      <a class="btn" href="#/help">${esc(L2("Help & FAQ", "المساعدة والأسئلة الشائعة"))} →</a></div>
     <div class="card"><h2>${esc(L2("Report an issue", "الإبلاغ عن مشكلة"))}</h2>
       <p class="muted" style="margin-top:0">${esc(L2("Reports go straight to the BeyondERP team. Add screenshots or a short video of the problem; replies appear here and as a notification.", "تصل البلاغات مباشرة إلى فريق BeyondERP. أضف لقطات شاشة أو فيديو قصيراً للمشكلة؛ تظهر الردود هنا وفي الإشعارات."))}</p>
       ${supOk ? "" : `<div class="banner warn">${esc(L2("Online support is not included in this company's plan. Questions about the subscription are always welcome; to report problems, add online support to the subscription.", "الدعم الإلكتروني غير مشمول في باقة هذه الشركة. الأسئلة عن الاشتراك مرحب بها دائماً؛ وللإبلاغ عن المشكلات أضف الدعم الإلكتروني إلى الاشتراك."))}
         ${S.billing && S.billing.is_admin ? ` <a class="btn sm" href="#/subscription">${esc(L2("Subscription", "الاشتراك"))}</a>` : ""}</div>`}
       <form id="supf" class="grid g2" onsubmit="return false">
         <label class="f">${esc(L2("Category", "التصنيف"))}<select name="kind">${SUP_KINDS().filter(([k]) => supOk || k === "billing").map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("")}</select></label>
-        <label class="f">${esc(L2("Summary", "الملخص"))}<input name="subject" required maxlength="200" dir="auto" placeholder="${esc(L2("e.g. Receipt voucher does not save", "مثال: سند القبض لا يُحفظ"))}"></label>
+        <label class="f">${esc(L2("Summary", "الملخص"))}<input name="subject" required maxlength="200" dir="auto" autocomplete="off" placeholder="${esc(L2("e.g. Receipt voucher does not save", "مثال: سند القبض لا يُحفظ"))}"></label>
+        <div class="spanall" id="supsug"></div>
         <label class="f spanall">${esc(L2("Details", "التفاصيل"))}<textarea name="body" rows="5" dir="auto" placeholder="${esc(L2("Steps taken, expected result and actual result.", "الخطوات المتبعة، والنتيجة المتوقعة، والنتيجة الفعلية."))}"></textarea></label>
         <div class="spanall">${dropZone({ id: "supfiles", accept: "image/*,video/*,application/pdf,.txt,.xlsx,.zip", multiple: true, skip: true, hint: L2("Add screenshots or videos", "أضف لقطات شاشة أو فيديو") })}
           ${canRecord() ? `<button type="button" class="btn sm" data-a="suprec">⏺ ${esc(L2("Record the screen (up to 2 minutes)", "تسجيل الشاشة (حتى دقيقتين)"))}</button>` : ""}</div>
@@ -13710,6 +13718,7 @@ async function supportCloud(view, parts, q) {
       ${vis.on !== false ? `<button class="btn pri" data-a="visitnew">🚗 ${esc(L2("Ask for a visit", "طلب زيارة"))}</button>` : ""}
       ${visits.length ? `<div class="vis-list">${visits.map(v => `<a class="vis-row" href="#/support?v=${v.id}"><b>${esc(v.ref)}</b> ${visitChip(v.status)}${v.customer_unread ? ` <span class="chip info">${esc(L2("Update", "تحديث"))}</span>` : ""}
         <span class="muted" style="font-size:.85em">${esc(String(v.reason).slice(0, 60))}</span>${v.price != null ? `<span class="num">${money(v.price)} ${esc(v.currency || "")}</span>` : ""}</a>`).join("")}</div>` : ""}</div>` : ""}</div></div>`;
+  const sinp = $("#supf [name=subject]", view); if (sinp) helpSuggest(sinp, $("#supsug", view));
 }
 // ------------------------------------------------------------ support visits (asked for here, priced and scheduled by the team in the owner console)
 const VISIT_ST = { requested: ["Requested — the team will confirm the price", "مطلوبة — سيؤكد الفريق السعر", "warn"], quoted: ["Price sent — your answer is needed", "أُرسل السعر — بانتظار ردك", "info"],
@@ -13762,11 +13771,107 @@ async function supportVisit(view, id) {
   filePreviews(view);
 }
 // one ticket: what was reported, then the conversation (the customer's view, or staff's in the console)
+// ------------------------------------------------------------ Help & FAQ: questions by category, problems already solved, search
+// Shared solved issues carry only a title and how it was resolved (written by the team, nothing about who reported it).
+const helpT = (x, k) => S.lang === "ar" && x[k + "_ar"] ? x[k + "_ar"] : x[k];
+const helpItem = (x, open) => { const solved = x.src === "solved" || x.resolution !== undefined;
+  return `<details class="help-q" ${open ? "open" : ""}><summary><span dir="auto">${esc(helpT(x, x.q !== undefined ? "q" : "title"))}</span>${solved ? ` <span class="chip ok">${esc(L2("Solved", "تم الحل"))}</span>` : ""}</summary>
+    <div class="help-a" dir="auto">${esc(helpT(x, x.body !== undefined ? "body" : x.resolution !== undefined ? "resolution" : "a"))}</div></details>`; };
+function helpSuggest(input, box) {
+  let tm = null, last = "";
+  input.addEventListener("input", () => { clearTimeout(tm); tm = setTimeout(async () => {
+    const q = input.value.trim(); if (q === last) return; last = q;
+    if (q.length < 4) { box.innerHTML = ""; return; }
+    try { const r = (await PLAT("help_search", { p_q: q })).slice(0, 4); if (input.value.trim() !== q) return;
+      box.innerHTML = r.length ? `<div class="help-sug"><b>💡 ${esc(L2("These might answer it", "قد تجد الإجابة هنا"))}</b>${r.map(x => helpItem(x)).join("")}
+        <a class="muted" style="font-size:.85em" href="#/help?q=${encodeURIComponent(q)}">${esc(L2("Search all of Help & FAQ", "البحث في كل المساعدة والأسئلة الشائعة"))} →</a></div>` : "";
+    } catch { box.innerHTML = ""; } }, 350); });
+}
+PAGES.help = async (view, parts, q) => {
+  $("#ttl").textContent = L2("Help & FAQ", "المساعدة والأسئلة الشائعة"); $("#crumb").textContent = "BeyondERP";
+  if (!platformOn()) { view.innerHTML = `<div class="card"><div class="empty">${esc(L2("Help & FAQ is part of the online workspace.", "المساعدة والأسئلة الشائعة جزء من مساحة العمل الإلكترونية."))}</div></div>`; return; }
+  const d = await PLAT("help_center"), cats = d.categories.filter(c => d.faq.some(f => f.category === c.key) || d.solved.some(x => x.category === c.key));
+  const cat = q.c && cats.some(c => c.key === q.c) ? q.c : "";
+  const faq = d.faq.filter(f => !cat || f.category === cat), solved = d.solved.filter(x => !cat || x.category === cat);
+  const catName = c => (S.lang === "ar" && c.name_ar ? c.name_ar : c.name);
+  view.innerHTML = `<div class="card help-hero"><h2 style="margin:0 0 4px">${esc(L2("How can we help?", "كيف يمكننا مساعدتك؟"))}</h2>
+      <p class="muted" style="margin:0 0 12px">${esc(L2("Search the common questions and the problems already solved by the team.", "ابحث في الأسئلة الشائعة والمشكلات التي حلّها الفريق."))}</p>
+      <input class="in help-search" id="helpq" type="search" dir="auto" autocomplete="off" value="${esc(q.q || "")}" placeholder="${esc(L2("Describe the problem in a few words…", "صف المشكلة بكلمات قليلة…"))}">
+      <div id="helpres"></div></div>
+    <div class="help-layout"><nav class="card help-cats"><a href="#/help" class="${cat ? "" : "on"}">📚 ${esc(L2("Everything", "الكل"))}</a>
+        ${cats.map(c => `<a href="#/help?c=${encodeURIComponent(c.key)}" class="${cat === c.key ? "on" : ""}">${esc(c.icon || "•")} ${esc(catName(c))}</a>`).join("")}</nav>
+      <div style="min-width:0"><div class="card"><h3 style="margin-top:0">${esc(L2("Questions", "الأسئلة"))}</h3>${faq.length ? faq.map(f => helpItem(f)).join("") : `<div class="empty">${esc(L2("No questions here yet.", "لا أسئلة هنا بعد."))}</div>`}</div>
+        <div class="card"><h3 style="margin-top:0">${esc(L2("Problems solved before", "مشكلات حُلّت من قبل"))}</h3>
+          <p class="muted" style="margin-top:0;font-size:.88em">${esc(L2("Shared by the support team, without anything about who reported them.", "يشاركها فريق الدعم دون أي معلومات عمّن أبلغ عنها."))}</p>
+          ${solved.length ? solved.map(x => helpItem(x)).join("") : `<div class="empty">${esc(L2("Nothing shared here yet.", "لم يُشارك شيء هنا بعد."))}</div>`}</div>
+        <div class="card help-cta"><div style="flex:1"><b>${esc(L2("Still need help?", "ما زلت بحاجة إلى مساعدة؟"))}</b><div class="muted" style="font-size:.9em">${esc(L2("Report a problem or a bug; the team answers every report.", "أبلغ عن مشكلة أو خلل؛ يرد الفريق على كل بلاغ."))}</div></div>
+          <a class="btn pri" href="#/support">${esc(L2("Report a problem", "الإبلاغ عن مشكلة"))}</a></div></div></div>`;
+  const inp = $("#helpq", view), box = $("#helpres", view); let tm;
+  const run = async () => { const t = inp.value.trim(); if (t.length < 2) { box.innerHTML = ""; return; }
+    try { const r = await PLAT("help_search", { p_q: t }); if (inp.value.trim() !== t) return;
+      box.innerHTML = r.length ? `<div class="help-results">${r.map(x => helpItem(x, r.length === 1)).join("")}</div>`
+        : `<div class="muted" style="margin-top:10px">${esc(L2("Nothing found — try other words, or report it to the team.", "لم يُعثر على شيء — جرّب كلمات أخرى أو أبلغ الفريق."))} <a href="#/support">${esc(L2("Report a problem", "الإبلاغ عن مشكلة"))}</a></div>`; } catch (e) { fail(e); } };
+  inp.addEventListener("input", () => { clearTimeout(tm); tm = setTimeout(run, 300); }); if (inp.value) run();
+};
+
+// ------------------------------------------------------------ letting the support team into the books (the customer decides)
+// The access is the workspace's (support_access); the books get a user of the support desk's own the first time, through
+// the normal Users screen, so whatever the team member changes is signed with their name and synced like anyone's.
+const myCompanyTicket = tk => !!(tk.company_id && S.billing && S.billing.is_admin && window.BeyondCloud.company && tk.company_id === window.BeyondCloud.company());
+function supportLetIn(tid) {
+  const fromChat = SCH.open; if (fromChat) chatClose();      // the chat would cover the form
+  drawer(L2("Let support into your books", "السماح للدعم بالدخول إلى دفاترك"), `<div class="grid g1">
+      <p class="muted" style="margin:0">${esc(L2("The team member answering this ticket can open this company's books for the time you choose. Everything they change is a normal entry signed with their name in the audit trail, and you can end the access at any time.",
+        "يستطيع عضو الفريق الذي يرد على هذا البلاغ فتح دفاتر هذه الشركة للمدة التي تختارها. كل ما يغيّره قيد عادي موقّع باسمه في سجل التدقيق، ويمكنك إنهاء الوصول في أي وقت."))}</p>
+      <div class="paym"><label class="paym-o"><input type="radio" name="mode" value="view" checked><span><b>👁 ${esc(L2("View only", "عرض فقط"))}</b><small class="muted">${esc(L2("They look; you make the changes.", "يطّلع، وأنت من يجري التغييرات."))}</small></span></label>
+        <label class="paym-o"><input type="radio" name="mode" value="fix"><span><b>🛠 ${esc(L2("View and fix", "عرض وإصلاح"))}</b><small class="muted">${esc(L2("They may correct entries for you, signed with their name.", "يمكنه تصحيح القيود نيابة عنك، موقّعة باسمه."))}</small></span></label></div>
+      <label class="f">${esc(L2("For", "المدة"))}<select name="hours">${[[1, L2("1 hour", "ساعة واحدة")], [4, L2("4 hours", "4 ساعات")], [24, L2("1 day", "يوم واحد")], [72, L2("3 days", "3 أيام")]].map(([h, l]) => `<option value="${h}" ${h === 4 ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>`,
+    async v => {
+      const g = await PLAT("support_access_grant", { p_ticket: tid, p_hours: +v.hours, p_mode: v.mode });
+      try { await supportUserInBooks(g); }
+      catch (e) { toast(L2(`Access is on, but the support user could not be added to the books: ${e.message}`, `تم السماح بالوصول، لكن تعذّر إضافة مستخدم الدعم إلى الدفاتر: ${e.message}`), true); }
+      toast(L2(`${g.agent_name} can open your books until ${dt16(g.expires_at)}.`, `يمكن لـ${g.agent_name} فتح دفاترك حتى ${dt16(g.expires_at)}.`));
+      if (fromChat) chatOpen(tid); else route();
+    }, { submitLabel: L2("Allow", "السماح") });
+}
+async function supportUserInBooks(g) {
+  const r = await api("GET", "/api/users"), users = Array.isArray(r) ? r : (r.users || []);
+  const mine = users.find(u => (u.email || "").toLowerCase() === g.agent);
+  if (mine && mine.active) return;
+  if (mine) return api("PUT", "/api/users/" + mine.id, { active: true });
+  const base = "support-" + (String(g.agent_name || "").toLowerCase().replace(/[^a-z0-9]+/g, "") || "team");
+  const taken = new Set(users.map(u => String(u.username).toLowerCase()));
+  let username = base, n = 2; while (taken.has(username)) username = base + n++;
+  await api("POST", "/api/users", { username, email: g.agent, full_name: `${g.agent_name} · BeyondERP Support`, _no_password: true,
+    perms: Object.fromEntries((S.boot.modules || []).map(m => [m, "edit"])) });
+}
+S.GLOBAL_H.supletin = el => supportLetIn(+el.dataset.id);
+S.GLOBAL_H.supletend = async el => { if (!await uiConfirm(L2("End support's access to your books now?", "إنهاء وصول الدعم إلى دفاترك الآن؟"))) return;
+  try { await PLAT("support_access_end", { p_id: +el.dataset.id }); toast(L2("Support's access has ended.", "انتهى وصول الدعم.")); if (SCH.open) chatOpen(SCH.id); else route(); } catch (e) { fail(e); } };
+// on the customer's ticket page: who is let in now, and the button to let them in
+async function accessCard(tk) {
+  if (!myCompanyTicket(tk)) return "";
+  let list = []; try { list = await PLAT("support_access_list", { p_company: tk.company_id }); } catch { return ""; }
+  const on = list.filter(a => a.on);
+  return `<div class="card"><h3 style="margin-top:0">🔑 ${esc(L2("Support access to your books", "وصول الدعم إلى دفاترك"))}</h3>
+    ${on.length ? on.map(a => `<div class="banner ${a.mode === "fix" ? "warn" : "info"}" style="margin-bottom:8px">${esc(L2(`${a.agent_name} can ${a.mode === "fix" ? "view and fix" : "view"} your books until ${dt16(a.expires_at)}.`,
+        `يمكن لـ${a.agent_name} ${a.mode === "fix" ? "عرض وإصلاح" : "عرض"} دفاترك حتى ${dt16(a.expires_at)}.`))} <button class="btn sm" data-a="supletend" data-id="${a.id}">${esc(L2("End now", "إنهاء الآن"))}</button></div>`).join("")
+      : `<p class="muted" style="margin-top:0;font-size:.9em">${esc(L2("If the team needs to look at or correct something in your books, you can let them in for a few hours.", "إن احتاج الفريق إلى الاطلاع على شيء في دفاترك أو تصحيحه، يمكنك السماح له بالدخول لبضع ساعات."))}</p>`}
+    ${(tk.messages || []).some(m => m.staff && m.kind !== "event") ? `<button class="btn" data-a="supletin" data-id="${tk.id}">🔑 ${esc(L2("Let support in…", "السماح للدعم بالدخول…"))}</button>`
+      : `<p class="muted" style="font-size:.85em;margin:0">${esc(L2("Available once the team has answered this ticket.", "متاح بعد أن يرد الفريق على هذا البلاغ."))}</p>`}</div>`;
+}
+
 // ------------------------------------------------------------ live chat with the support team (bottom of the screen)
 // Opens when the team answers a ticket; the person writes, sends pictures, files, voice notes and screen clips; only the
 // team ends it. Checked every 25 seconds (every 4 while open).
 const SCH = { list: [], open: false, id: null, tk: null, last: 0, t: null };
-const chatEvt = m => `${m.body === "chat_ended_solved" ? L2("The chat has ended — the issue is marked solved", "انتهت المحادثة — تم تعليم المشكلة كمحلولة") : L2("The chat has ended", "انتهت المحادثة")}${m.name ? " · " + m.name : ""} · ${dt16(m.created_at)}`;
+const chatEvt = m => { const b = String(m.body || ""), until = b.includes(":") ? dt16(b.slice(b.indexOf(":") + 1)) : "";
+  const what = b === "chat_ended_solved" ? L2("The chat has ended — the issue is marked solved", "انتهت المحادثة — تم تعليم المشكلة كمحلولة")
+    : b === "chat_ended" ? L2("The chat has ended", "انتهت المحادثة")
+    : b.startsWith("access_fix") ? L2(`Support may view and fix the books until ${until}`, `يمكن للدعم عرض الدفاتر وإصلاحها حتى ${until}`)
+    : b.startsWith("access_view") ? L2(`Support may view the books until ${until}`, `يمكن للدعم عرض الدفاتر حتى ${until}`)
+    : b === "access_ended" ? L2("Support's access to the books has ended", "انتهى وصول الدعم إلى الدفاتر") : b;
+  return `${what}${m.name ? " · " + m.name : ""} · ${dt16(m.created_at)}`; };
 async function chatPoll() {
   clearTimeout(SCH.t);
   if (!platformOn() || !window.BeyondCloud.joined || !window.BeyondCloud.joined()) { SCH.t = setTimeout(chatPoll, 60000); return; }
@@ -13821,6 +13926,7 @@ function chatDraw(keep) {
         <div class="schat-tools"><button type="button" class="btn icon ghost" data-a="chatfile" title="${esc(L2("Pictures, videos or files", "صور أو فيديو أو ملفات"))}">📎</button>
           ${navigator.mediaDevices && window.MediaRecorder ? `<button type="button" class="btn icon ghost" data-a="chatvoice" title="${esc(L2("Voice note", "رسالة صوتية"))}">🎤</button>` : ""}
           ${canRecord() ? `<button type="button" class="btn icon ghost" data-a="chatclip" title="${esc(L2("Record the screen", "تسجيل الشاشة"))}">⏺</button>` : ""}
+          ${myCompanyTicket(tk) ? `<button type="button" class="btn icon ghost" data-a="supletin" data-id="${tk.id}" title="${esc(L2("Let support into your books", "السماح للدعم بالدخول إلى دفاترك"))}">🔑</button>` : ""}
           <span class="spacer"></span><button type="button" class="btn pri sm" data-a="chatsend">${esc(L2("Send", "إرسال"))}</button></div></footer>`
       : `<footer class="schat-end"><div>${esc(L2("This chat has ended. If something is still wrong, reopen the ticket.", "انتهت هذه المحادثة. إن بقيت مشكلة، أعد فتح البلاغ."))}</div>
         <div class="row" style="gap:6px"><a class="btn sm" href="#/support?t=${tk.id}" data-a="chatdone">${esc(L2("Open the ticket", "فتح البلاغ"))}</a><button type="button" class="btn sm pri" data-a="chatdone">${esc(L2("Close", "إغلاق"))}</button></div></footer>`}`;
@@ -13906,6 +14012,7 @@ async function supportTicket(view, id, staff) {
       ${log.length ? `<div class="card"><h3 style="margin-top:0">${esc(L2("What happened before the report", "ما حدث قبل البلاغ"))} <span class="muted">(${log.length})</span></h3><div class="tbl act-log"><table><tbody>
         ${log.map(a => `<tr class="${a.t === "error" || (a.t === "api" && (a.s >= 400 || a.s === "err")) ? "neg" : ""}"><td class="muted" dir="ltr">${esc(a.at || "")}</td><td>${esc(a.t)}</td>
           <td dir="ltr">${esc(a.t === "api" ? `${a.m} ${a.p} → ${a.s}${a.ms != null ? ` · ${a.ms} ms` : ""}${a.e ? ` · ${a.e}` : ""}` : a.t === "screen" ? a.h : a.m || "")}</td></tr>`).join("")}</tbody></table></div></div>` : ""}` : ""}</div></div>`;
+  if (!staff) { const ac = await accessCard(tk), col = $(".tk-solo > div", view); if (ac && col) col.insertAdjacentHTML("beforeend", ac); }
   filePreviews(view);
 }
 

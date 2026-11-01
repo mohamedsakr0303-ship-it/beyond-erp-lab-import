@@ -131,6 +131,22 @@ The support team works in its own page, **support.html** (the 🎧 Support desk 
   * arrange a visit.
 * **Live chat.** The team's first answer opens a chat at the bottom corner of the customer's screen. Customers see the team member's first name, never their email. Both sides can send messages, pictures, videos, files and voice notes; customers on a computer can also send a screen recording. New messages appear by themselves: about every 5 seconds in the support desk, and every 4 seconds in the customer's open chat (25 when it is closed). **Only the team ends the chat** (⏹ End the chat), optionally marking the ticket solved. The customer then sees that the chat ended and can reopen the ticket. Writing again later starts the chat again.
 
+### Help & FAQ, bug reports and shared solutions
+
+* **Help & FAQ** (app user menu → 📖 Help & FAQ): questions by category in both languages, the problems the team has solved and shared, and a search across both. The report form suggests matching answers while the person types the summary.
+* **Managing it** (support desk → Help center): add and order categories and questions (English and Arabic, published or draft).
+* **Bug reports** (support desk → Bug reports): every report of the kind "Problem or bug", with the errors recorded before it, the version and the screen. Each one goes through the queue like any ticket.
+* **Closing** (✓ Close… on a ticket): a ticket cannot be closed before the customer has had an answer. If the team hasn't replied yet, the reply is written in the same form. The team chooses whether to **share** the solution:
+  * Only the title and the resolution written in that form are published, in a separate list.
+  * Nothing about the customer is copied: no name, company, message or file.
+  * Shared solutions can be edited or hidden at any time (Help center → Shared solutions).
+
+### Support access to a customer's books
+
+* **The customer decides.** A company administrator lets the team member answering their ticket in: 🔑 in the chat, or on the ticket page. They choose **View only** or **View and fix**, for 1 hour to 3 days, and can end it at any time. Nobody on the platform team can let themselves in.
+* **For the team member:** the company appears in the ERP's company list with a banner saying what they may do and until when. They don't become a member: they take no user seat and aren't listed among the company's people. When the time is up, or the customer ends it, they are out at once. The server refuses their changes after that, and refuses all changes while access is view only.
+* **Signed changes:** the customer's app adds a user "Name · BeyondERP Support" to the books the first time; adding it takes no seat. Every change the team member makes is a normal entry, through the same screens and rules as anyone's, signed with their name in the audit trail and the shared change log, and reversible the same way. The user stays in the books for next time, with no access between grants; a super administrator can deactivate it.
+
 ## Referral program and upgrades
 
 Every signed-in user of the online workspace has a personal share link (`https://mybeyonderp.com/?ref=CODE`) on **🎁 Referral program** in the user menu. The share button uses the same link.

@@ -156,7 +156,8 @@ const NAV0 = () => [
     ["people", "☺", L("People", "الأشخاص"), "customers"], ["referrals", "🎁", L("Referrals", "الإحالات"), "customers"], ["cancellations", "✗", L("Cancellations & churn", "الإلغاءات والمغادرة"), "customers"]]],
   [L("Money", "المال"), [["payments", "⧗", L("Payments to verify", "مدفوعات للتحقق"), "billing"], ["ledger", "≣", L("All payments", "كل المدفوعات"), "billing"],
     ["methods", "💳", L("Payment methods", "طرق الدفع"), "settings"]]],
-  [L("Support", "الدعم"), [["queue", "☰", L("Support queue", "قائمة الدعم"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "support"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"],
+  [L("Support", "الدعم"), [["queue", "☰", L("Support queue", "قائمة الدعم"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "support"],
+    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "support"], ["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "support"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "support"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]]],
   [L("Product", "المنتج"), [["plans", "◎", L("Plans", "الباقات"), "settings"], ["addons", "＋", L("Modules, AI & support", "الأقسام والذكاء الاصطناعي والدعم"), "settings"],
     ["menus", "☰", L("Menus by industry", "القوائم حسب النشاط"), "settings"], ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"]]],
@@ -164,7 +165,8 @@ const NAV0 = () => [
     ["log", "⌚", L("Activity", "السجل"), "_full"], ["deleted", "⌫", L("Deleted companies", "الشركات المحذوفة"), "customers"]]]];
 const navOk = a => a === "*" || can(a);
 const DESK_NAV = () => [[L("Support", "الدعم"), [["queue", "☰", L("Queue", "قائمة الانتظار"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"],
-    ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "support"]], "support"],
+    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "support"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "support"]], "support"],
+  [L("Help center", "مركز المساعدة"), [["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "support"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "support"]], "product"],
   [L("Customers", "العملاء"), [["customers", "▦", L("Customers", "العملاء"), "customers"], ["people", "☺", L("People", "الأشخاص"), "customers"]], "business"],
   [L("Me", "أنا"), [["alerts", "🔔", L("Notifications", "الإشعارات"), "*"]], "console"]];
 
@@ -1094,7 +1096,9 @@ async function recordVoice(btn, done) {
 PAGES.ticket = async (view, parts) => {
   const id = +parts[1];
   let tk = await rpc("support_get", { p_ticket: id });
-  const [cust, q] = await Promise.all([rpc("console_ticket_customer", { p_ticket: id }).catch(() => null), S.replies ? null : rpc("console_queue").catch(() => null)]);
+  const [cust, q, accAll] = await Promise.all([rpc("console_ticket_customer", { p_ticket: id }).catch(() => null), S.replies ? null : rpc("console_queue").catch(() => null),
+    tk.company_id ? rpc("support_access_list", { p_company: tk.company_id }).catch(() => []) : []]);
+  const acc = (accAll || []).filter(a => a.on);
   if (q) S.replies = q.replies;
   $("#ttl").textContent = `${tk.ref} — ${tk.subject}`; $("#crumb").textContent = L("Support queue", "قائمة الدعم");
   const first = String(tk.app_user || tk.email || "").split(/[@\s]/)[0];
@@ -1119,15 +1123,32 @@ PAGES.ticket = async (view, parts) => {
       document.body.appendChild(d);
       d.addEventListener("click", async e => { const b = e.target.closest("[data-r]"); if (!b && e.target !== d) return; const ok = b && b.dataset.r === "1", solved = $("#cesolved", d).checked; d.remove();
         if (!ok) return; try { tk = await rpc("support_chat_end", { p_ticket: id, p_solved: solved }); push("ticket", id, { text: L("The chat has ended.", "انتهت المحادثة.") }); draw(); } catch (er) { fail(er); } }); },
-    tvisit: () => visitPanel({ ticket_id: id, company_id: tk.company_id }) });
+    tvisit: () => visitPanel({ ticket_id: id, company_id: tk.company_id }),
+    tclose: async () => { const h = await rpc("console_help").catch(() => ({ categories: [] })), answered = (tk.messages || []).some(m => m.staff && !m.internal && m.kind !== "event");
+      panel(L(`Close ${tk.ref}`, `إغلاق ${tk.ref}`), form([
+        { k: "reply", l: answered ? L("Last message to the customer (optional)", "رسالة أخيرة للعميل (اختيارية)") : L("Your answer to the customer (required: every report gets an answer)", "ردك على العميل (مطلوب: كل بلاغ يحصل على رد)"), type: "area", rows: 3, span: 1, req: !answered },
+        { k: "share", l: L("Share it in Help & FAQ so others can solve it themselves", "نشره في المساعدة والأسئلة الشائعة ليحلها الآخرون بأنفسهم"), type: "check", span: 1 },
+        { type: "html", span: 1, html: `<div class="banner warn small">${esc(L("Only the title and the resolution below are published — write them without names, companies, figures or anything private. Nothing else from the ticket is shared.", "يُنشر العنوان والحل أدناه فقط — اكتبهما دون أسماء أو شركات أو أرقام أو أي شيء خاص. لا يُنشر أي شيء آخر من البلاغ."))}</div>` },
+        { k: "category", l: L("Category", "التصنيف"), type: "select", opts: [["", "—"], ...h.categories.map(c => [c.key, (S.lang === "ar" && c.name_ar) || c.name])] },
+        { k: "title", l: L("Title (the problem, in general words)", "العنوان (المشكلة بعبارة عامة)"), v: "" },
+        { k: "title_ar", l: L("Title (Arabic)", "العنوان (عربي)"), v: "", dir: "rtl" }, { type: "html", html: "" },
+        { k: "resolution", l: L("How it was resolved", "كيف حُلّت"), type: "area", rows: 4 }, { k: "resolution_ar", l: L("How it was resolved (Arabic)", "كيف حُلّت (عربي)"), type: "area", rows: 4, dir: "rtl" }]),
+        async v => { tk = await rpc("console_ticket_close", { p_ticket: id, p: v }); if ((v.reply || "").trim()) push("ticket", id, { text: v.reply.slice(0, 140) }); toast(v.share ? L("Closed and shared.", "أُغلق ونُشر.") : L("Closed.", "أُغلق.")); }, { saveLabel: L("Close the ticket", "إغلاق البلاغ") }); },
+    accend: async el => { if (!await confirmIt(L("End this access to the customer's books now?", "إنهاء هذا الوصول إلى دفاتر العميل الآن؟"))) return; await rpc("support_access_end", { p_id: +el.dataset.id }); route(); } });
   const who = m => m.staff ? (m.name ? `${m.name} (${m.email.split("@")[0]})` : m.email) : (tk.app_user && m.email === tk.email ? tk.app_user : m.email);
-  const msg = (m, extra = "") => m.kind === "event" ? `<div class="evt">— ${esc(m.body === "chat_ended_solved" ? L("Chat ended, ticket solved", "انتهت المحادثة وحُل البلاغ") : L("Chat ended", "انتهت المحادثة"))} · ${esc(m.name || "")} · ${esc(dt(m.created_at))} —</div>`
+  const evt = b => { b = String(b || ""); const until = b.includes(":") ? dt(b.slice(b.indexOf(":") + 1)) : "";
+    return b === "chat_ended_solved" ? L("Chat ended, ticket solved", "انتهت المحادثة وحُل البلاغ") : b === "chat_ended" ? L("Chat ended", "انتهت المحادثة")
+      : b.startsWith("access_fix") ? L(`The customer let support view and fix the books until ${until}`, `سمح العميل للدعم بعرض الدفاتر وإصلاحها حتى ${until}`)
+      : b.startsWith("access_view") ? L(`The customer let support view the books until ${until}`, `سمح العميل للدعم بعرض الدفاتر حتى ${until}`)
+      : b === "access_ended" ? L("Access to the books ended", "انتهى الوصول إلى الدفاتر") : b; };
+  const msg = (m, extra = "") => m.kind === "event" ? `<div class="evt">— ${esc(evt(m.body))}${m.staff && m.name ? " · " + esc(m.name) : ""} · ${esc(dt(m.created_at))} —</div>`
     : `<div class="msg ${m.staff ? "staff" : ""} ${m.internal ? "internal" : ""}"><div class="h"><b>${esc(who(m))}</b>${m.internal ? chip(L("Internal note", "ملاحظة داخلية"), "warn") : ""}<span class="muted">${esc(dt(m.created_at))}</span></div>
     ${m.body ? `<div class="t" dir="auto">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}${extra}</div>`;
   const thread = () => msg({ email: tk.email, body: tk.body, files: tk.files, created_at: tk.created_at }, `<div class="muted small">${esc(tk.kind)}${tk.company_name ? " · " + esc(tk.company_name) : ""}</div>`) + (tk.messages || []).map(m => msg(m)).join("");
   const head = () => `<a class="btn" href="#/queue">← ${esc(L("Queue", "قائمة الانتظار"))}</a>${mapChip(TK_ST(), tk.status)}${mapChip(PRIO(), tk.priority)}${mapChip(CHAT(), tk.chat)}
     ${cust ? rankChip(cust.priority) : ""}<span class="sp"></span>${(tk.assignee || "").toLowerCase() !== myEmail() ? `<button class="btn" data-a="mine">✋ ${esc(L("Assign to me", "إسناد إليّ"))}</button>` : ""}
-    ${tk.chat === "live" ? `<button class="btn danger" data-a="chatend">⏹ ${esc(L("End the chat", "إنهاء المحادثة"))}</button>` : ""}`;
+    ${tk.chat === "live" ? `<button class="btn danger" data-a="chatend">⏹ ${esc(L("End the chat", "إنهاء المحادثة"))}</button>` : ""}
+    ${tk.status !== "closed" ? `<button class="btn" data-a="tclose">✓ ${esc(L("Close…", "إغلاق…"))}</button>` : `${chip(tk.shared ? L("Shared as a solution", "منشور كحل") : L("Not shared", "غير منشور"), tk.shared ? "ok" : "")}`}`;
   const draw = () => { const h = $("#thead"), t = $("#thr"); if (!h || !t) return; h.innerHTML = head(); const end = t.scrollHeight - t.scrollTop - t.clientHeight < 60;
     t.innerHTML = thread(); previews(t); if (end) t.scrollTop = t.scrollHeight; };
   const diag = Object.entries(tk.diag || {}).filter(([, v]) => v), log = (tk.log || []).slice().reverse(), co = cust && cust.company, pr = cust && cust.priority;
@@ -1140,7 +1161,13 @@ PAGES.ticket = async (view, parts) => {
           ${navigator.mediaDevices && window.MediaRecorder ? `<button type="button" class="btn" data-a="voice">🎤 ${esc(L("Voice note", "رسالة صوتية"))}</button>` : ""}</div>
         <div class="row" style="margin-top:8px"><label class="chk"><input type="checkbox" id="rint"> ${esc(L("Internal note (the customer does not see it)", "ملاحظة داخلية (لا يراها العميل)"))}</label><span class="sp"></span><button class="btn pri" data-a="reply">${esc(L("Send", "إرسال"))}</button></div>
         <p class="muted small" style="margin:6px 0 0">${esc(L("Your answer opens a chat at the bottom right of the customer's screen; they see your first name only. End the chat when the issue is done.", "يفتح ردك محادثة أسفل يمين شاشة العميل؛ يرى اسمك الأول فقط. أنهِ المحادثة عند انتهاء المشكلة."))}</p></div></div>
-    <div>${cust ? `<div class="card"><h3>${esc(L("Customer", "العميل"))}</h3><p class="small" style="margin:0 0 8px"><b dir="ltr">${esc(tk.app_user || "")} ${esc(tk.email)}</b></p>
+    <div>${acc.length ? `<div class="card"><h3>🔑 ${esc(L("Access to the customer's books", "الوصول إلى دفاتر العميل"))}</h3>${acc.map(a => `<div class="banner ${a.mode === "fix" ? "warn" : "info"} small" style="margin-bottom:6px">
+        ${esc(L(`${a.agent_name} (${a.agent}) may ${a.mode === "fix" ? "view and fix" : "view"} until ${dt(a.expires_at)}.`, `يمكن لـ${a.agent_name} (${a.agent}) ${a.mode === "fix" ? "العرض والإصلاح" : "العرض"} حتى ${dt(a.expires_at)}.`))}
+        <button class="btn sm" data-a="accend" data-id="${a.id}">${esc(L("End", "إنهاء"))}</button></div>`).join("")}
+        ${acc.some(a => a.agent === myEmail()) ? `<a class="btn pri" href="index.html" target="_blank" rel="noopener">↗ ${esc(L("Open their books", "فتح دفاترهم"))}</a>
+          <p class="muted small">${esc(L(`In the ERP, choose “${tk.company_name || ""}” in the company list. Changes are signed with your name; when the time is up you are out.`, `في النظام اختر «${tk.company_name || ""}» من قائمة الشركات. التغييرات تُوقّع باسمك؛ وعند انتهاء المدة تخرج تلقائياً.`))}</p>` : ""}</div>`
+      : tk.company_id && tk.status !== "closed" ? `<div class="card"><p class="muted small" style="margin:0">🔑 ${esc(L("To look into their books, ask the customer to let you in (🔑 in their chat, or on the ticket).", "للاطلاع على دفاترهم، اطلب من العميل السماح لك بالدخول (🔑 في محادثته أو في البلاغ)."))}</p></div>` : ""}
+      ${cust ? `<div class="card"><h3>${esc(L("Customer", "العميل"))}</h3><p class="small" style="margin:0 0 8px"><b dir="ltr">${esc(tk.app_user || "")} ${esc(tk.email)}</b></p>
         <div class="small">${pr ? `<div><b>${esc(L("Support priority", "أولوية الدعم"))}</b>: ${pr.rank} · ${esc(pr.plan_name || pr.plan || L("Trial / none", "تجربة / بدون"))}${pr.reply_hours ? ` · ${esc(L(`first reply within ${pr.reply_hours} h`, `أول رد خلال ${pr.reply_hours} ساعة`))}` : ""}</div>` : ""}
           ${co ? `<div><b>${esc(L("Company", "الشركة"))}</b>: ${can("customers") ? `<a href="#/company/${co.id}">${esc(co.name)}</a>` : esc(co.name)} · ${esc(co.status || "")}${co.paid_until ? ` · ${esc(L("paid until", "مدفوعة حتى"))} ${esc(day(co.paid_until))}` : co.trial_ends ? ` · ${esc(L("trial until", "تجربة حتى"))} ${esc(day(co.trial_ends))}` : ""}</div>
             <div><b>${esc(L("People", "الأشخاص"))}</b>: ${num(co.users)} · ${esc(L("admins", "المسؤولون"))}: <span dir="ltr">${esc((co.admins || []).join(", "))}</span></div>` : ""}</div>
@@ -1160,7 +1187,77 @@ PAGES.ticket = async (view, parts) => {
     const ta = $("#rbody", v); if (ta) ta.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("[data-a=reply]").click(); } }); });
   // new messages appear by themselves while the ticket is open
   S.live = setInterval(async () => { if (document.hidden || parse().parts[0] !== "ticket" || +parse().parts[1] !== id) return;
-    try { const n = await rpc("support_get", { p_ticket: id }); if (n.messages.length !== tk.messages.length || n.status !== tk.status || n.chat !== tk.chat) { tk = n; draw(); } } catch { /* next time */ } }, 5000);
+    try { const n = await rpc("support_get", { p_ticket: id }); if (n.messages.length !== tk.messages.length || n.status !== tk.status || n.chat !== tk.chat) {
+      const access = n.messages.slice(tk.messages.length).some(m => m.kind === "event" && /^access_/.test(m.body));   // let in or out: the side panel changes too
+      tk = n; if (access && !($("#rbody") || {}).value) route(); else draw(); } } catch { /* next time */ } }, 5000);
+};
+
+// bug reports: every one, open and closed; each is answered and closed (shared or not) from its ticket
+PAGES.bugs = async view => {
+  const rows = await rpc("console_bugs");
+  if (!DT.bugs) DT.bugs = { f: { st: "open" }, q: "" };
+  view.innerHTML = `<div class="kpis">${kpi(L("Open", "مفتوحة"), num(rows.filter(r => r.status !== "closed").length), rows.some(r => r.status !== "closed") ? "warn" : "ok")}
+      ${kpi(L("With errors recorded", "بها أخطاء مسجلة"), num(rows.filter(r => r.errors > 0 && r.status !== "closed").length))}${kpi(L("Closed", "مغلقة"), num(rows.filter(r => r.status === "closed").length))}
+      ${kpi(L("Shared as solutions", "منشورة كحلول"), num(rows.filter(r => r.shared).length), "ok")}</div><div class="card"><div id="btbl"></div></div>`;
+  afterHooks.push(v => table($("#btbl", v), "bugs", rows, { sort: "created_at", dir: "desc", search: ["ref", "subject", "email", "company_name", "version", "screen"],
+    onRow: t => { location.hash = "#/ticket/" + t.id; }, rowCls: t => t.unread ? "unread" : "",
+    cols: [{ k: "ref", l: L("Report", "البلاغ"), h: t => `<b>${esc(t.ref)}</b> ${esc(t.subject)}<span class="sub">${esc(t.company_name || "")} · <span dir="ltr">${esc(t.email)}</span></span>` },
+      { k: "errors", l: L("Errors", "الأخطاء"), num: true, h: t => t.errors ? chip(String(t.errors), "bad") : "—" }, { k: "files", l: "📎", num: true },
+      { k: "version", l: L("Version", "الإصدار"), h: t => esc(t.version || "—") }, { k: "screen", l: L("Screen", "الشاشة"), h: t => `<span dir="ltr">${esc(t.screen || "—")}</span>` },
+      { k: "st", l: L("Status", "الحالة"), v: t => t.status, h: t => mapChip(TK_ST(), t.status) + (t.status === "closed" ? " " + chip(t.shared ? L("Shared", "منشور") : L("Private", "خاص"), t.shared ? "ok" : "") : "") },
+      { k: "assignee", l: L("Assigned", "المسؤول"), h: t => t.assignee ? esc(t.assignee.split("@")[0]) : "—" }, { k: "created_at", l: L("Reported", "أُبلغ"), date: true, h: t => esc(dt(t.created_at)) }],
+    filters: [{ k: "st", l: L("Status", "الحالة"), type: "select", opts: [["open", L("Not closed", "غير مغلقة")], ["closed", L("Closed", "مغلقة")]], test: (t, v) => v === "open" ? t.status !== "closed" : t.status === "closed" }] }));
+};
+
+// Help & FAQ: categories and questions in both languages (what customers read in the app's Help & FAQ)
+PAGES.help = async view => {
+  const d = await rpc("console_help"), cats = d.categories, catName = k => { const c = cats.find(x => x.key === k); return c ? ((S.lang === "ar" && c.name_ar) || c.name) : "—"; };
+  const faqEdit = f => panel(f ? L("Edit question", "تعديل السؤال") : L("New question", "سؤال جديد"), form([
+      { k: "category", l: L("Category", "التصنيف"), type: "select", v: f ? f.category || "" : "", opts: [["", "—"], ...cats.map(c => [c.key, (S.lang === "ar" && c.name_ar) || c.name])] },
+      { k: "sort", l: L("Order", "الترتيب"), type: "number", v: f ? f.sort : 0 },
+      { k: "q", l: L("Question", "السؤال"), v: f ? f.q : "", req: 1 }, { k: "q_ar", l: L("Question (Arabic)", "السؤال (عربي)"), v: f ? f.q_ar : "", dir: "rtl" },
+      { k: "a", l: L("Answer", "الإجابة"), type: "area", rows: 7, v: f ? f.a : "", req: 1 }, { k: "a_ar", l: L("Answer (Arabic)", "الإجابة (عربي)"), type: "area", rows: 7, v: f ? f.a_ar : "", dir: "rtl" },
+      { k: "published", l: L("Published (customers see it)", "منشور (يراه العملاء)"), type: "check", v: f ? f.published : true, span: 1 }]),
+    async v => { await rpc("console_help_faq", { p: { ...v, id: f ? f.id : null, sort: +v.sort || 0 } }); toast(L("Saved.", "تم الحفظ.")); },
+    { wide: true, extra: f ? `<button type="button" class="btn danger" data-a="faqdel" data-id="${f.id}">${esc(L("Delete", "حذف"))}</button>` : "" });
+  const catEdit = c => panel(c ? c.name : L("New category", "تصنيف جديد"), form([
+      { k: "key", l: L("Code (letters, never changes)", "الكود (حروف، لا يتغير)"), v: c ? c.key : "", req: 1, dir: "ltr", dis: !!c },
+      { k: "icon", l: L("Icon (an emoji)", "الأيقونة (رمز تعبيري)"), v: c ? c.icon : "" }, { k: "name", l: L("Name", "الاسم"), v: c ? c.name : "", req: 1 },
+      { k: "name_ar", l: L("Name (Arabic)", "الاسم (عربي)"), v: c ? c.name_ar : "", dir: "rtl" }, { k: "sort", l: L("Order", "الترتيب"), type: "number", v: c ? c.sort : 0 }]),
+    async v => { await rpc("console_help_category", { p: { ...v, key: c ? c.key : v.key.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""), sort: +v.sort || 0 } }); toast(L("Saved.", "تم الحفظ.")); },
+    { extra: c ? `<button type="button" class="btn danger" data-a="catdel" data-k="${esc(c.key)}">${esc(L("Delete", "حذف"))}</button>` : "" });
+  Object.assign(S.H, { faqnew: () => faqEdit(null), faqedit: el => faqEdit(d.faq.find(f => f.id === +el.dataset.id)), catnew: () => catEdit(null), catedit: el => catEdit(cats.find(c => c.key === el.dataset.k)),
+    faqdel: async el => { if (await confirmIt(L("Delete this question?", "حذف هذا السؤال؟"), { danger: 1 })) { closePanel(); await rpc("console_help_faq", { p: { id: +el.dataset.id, delete: true } }); route(); } },
+    catdel: async el => { if (await confirmIt(L("Delete this category? Its questions stay, without a category.", "حذف هذا التصنيف؟ تبقى أسئلته دون تصنيف."), { danger: 1 })) { closePanel(); await rpc("console_help_category", { p: { key: el.dataset.k, delete: true } }); route(); } } });
+  view.innerHTML = `<div class="split" style="grid-template-columns:minmax(0,1fr) 320px"><div class="card"><div class="row" style="margin-bottom:10px"><h3 style="margin:0">${esc(L("Questions", "الأسئلة"))} <span class="muted">(${d.faq.length})</span></h3><span class="sp"></span>
+        <button class="btn pri" data-a="faqnew">＋ ${esc(L("New question", "سؤال جديد"))}</button></div>
+      ${d.faq.length ? `<div class="tbl"><table><thead><tr><th>${esc(L("Question", "السؤال"))}</th><th>${esc(L("Category", "التصنيف"))}</th><th>${esc(L("Arabic", "العربية"))}</th><th></th></tr></thead><tbody>${d.faq.map(f => `<tr>
+        <td><b dir="auto">${esc(f.q)}</b>${f.published ? "" : " " + chip(L("Draft", "مسودة"), "warn")}<span class="sub" dir="auto">${esc(String(f.a).slice(0, 110))}</span></td><td>${esc(catName(f.category))}</td>
+        <td>${f.q_ar && f.a_ar ? chip("✓", "ok") : chip(L("Missing", "ناقصة"), "warn")}</td><td class="r"><button class="btn sm" data-a="faqedit" data-id="${f.id}">${esc(L("Edit", "تعديل"))}</button></td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty">${esc(L("No questions yet. Add the ones customers ask most; they appear in the app's Help & FAQ and in the suggestions while someone writes a report.", "لا أسئلة بعد. أضف أكثر ما يسأله العملاء؛ تظهر في المساعدة والأسئلة الشائعة في النظام وفي الاقتراحات أثناء كتابة البلاغ."))}</div>`}</div>
+    <div class="card"><div class="row" style="margin-bottom:10px"><h3 style="margin:0">${esc(L("Categories", "التصنيفات"))}</h3><span class="sp"></span><button class="btn sm" data-a="catnew">＋</button></div>
+      ${cats.map(c => `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(c.icon || "•")} ${esc((S.lang === "ar" && c.name_ar) || c.name)}</span><span class="sp"></span>
+        <span class="muted small">${d.faq.filter(f => f.category === c.key).length}</span><button class="btn sm" data-a="catedit" data-k="${esc(c.key)}">${esc(L("Edit", "تعديل"))}</button></div>`).join("")}</div></div>`;
+};
+
+// solutions shared from closed tickets (only a title and a resolution; never anything about the customer)
+PAGES.solved = async view => {
+  const d = await rpc("console_help"), cats = d.categories;
+  const edit = x => panel(x.title, form([
+      { k: "category", l: L("Category", "التصنيف"), type: "select", v: x.category || "", opts: [["", "—"], ...cats.map(c => [c.key, (S.lang === "ar" && c.name_ar) || c.name])] },
+      { k: "published", l: L("Published (customers see it)", "منشور (يراه العملاء)"), type: "check", v: x.published },
+      { k: "title", l: L("Title", "العنوان"), v: x.title, req: 1 }, { k: "title_ar", l: L("Title (Arabic)", "العنوان (عربي)"), v: x.title_ar, dir: "rtl" },
+      { k: "resolution", l: L("How it was resolved", "كيف حُلّت"), type: "area", rows: 6, v: x.resolution, req: 1 }, { k: "resolution_ar", l: L("How it was resolved (Arabic)", "كيف حُلّت (عربي)"), type: "area", rows: 6, v: x.resolution_ar, dir: "rtl" }]),
+    async v => { await rpc("console_help_solved", { p: { ...v, id: x.id } }); toast(L("Saved.", "تم الحفظ.")); },
+    { wide: true, extra: `<button type="button" class="btn danger" data-a="soldel" data-id="${x.id}">${esc(L("Delete", "حذف"))}</button>` });
+  Object.assign(S.H, { soledit: el => edit(d.solved.find(x => x.id === +el.dataset.id)),
+    soldel: async el => { if (await confirmIt(L("Delete this shared solution?", "حذف هذا الحل المنشور؟"), { danger: 1 })) { closePanel(); await rpc("console_help_solved", { p: { id: +el.dataset.id, delete: true } }); route(); } } });
+  view.innerHTML = `<div class="card"><p class="muted small" style="margin-top:0">${esc(L("Shared when a ticket is closed (Close… → Share it). Only the title and the resolution are public; the ticket stays private and is shown here for the team only.", "تُنشر عند إغلاق البلاغ (إغلاق… ← نشره). العنوان والحل فقط علنيان؛ يبقى البلاغ خاصاً ويظهر هنا للفريق فقط."))}</p>
+    ${d.solved.length ? `<div class="tbl"><table><thead><tr><th>${esc(L("Title", "العنوان"))}</th><th>${esc(L("Category", "التصنيف"))}</th><th>${esc(L("From ticket", "من البلاغ"))}</th><th>${esc(L("Shared", "النشر"))}</th><th></th></tr></thead><tbody>
+      ${d.solved.map(x => `<tr><td><b dir="auto">${esc(x.title)}</b>${x.kind === "bug" ? " " + chip(L("Bug", "خلل"), "") : ""}<span class="sub" dir="auto">${esc(String(x.resolution).slice(0, 120))}</span></td>
+        <td>${esc(((cats.find(c => c.key === x.category) || {}).name) || "—")}</td><td>${x.ticket_id ? `<a href="#/ticket/${x.ticket_id}">${esc(x.ticket_ref || "")}</a>` : "—"}</td>
+        <td>${x.published ? chip(L("Published", "منشور"), "ok") : chip(L("Hidden", "مخفي"), "")}</td><td class="r"><button class="btn sm" data-a="soledit" data-id="${x.id}">${esc(L("Edit", "تعديل"))}</button></td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${esc(L("Nothing shared yet.", "لم يُنشر شيء بعد."))}</div>`}</div>`;
 };
 
 // saved replies the team picks from in a ticket ({name}: the customer's first name)
