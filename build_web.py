@@ -145,6 +145,8 @@ def arabic_page(html, site):
 
 
 CONTACT_EMAIL = "info@mybeyonderp.com"
+SOCIAL = {"LinkedIn": "https://www.linkedin.com/company/mybeyonderp", "Facebook": "https://www.facebook.com/people/Beyond-ERP/61595801625159/",
+          "Instagram": "https://www.instagram.com/mybeyonderp/"}
 
 
 def structured_data(site):
@@ -152,7 +154,7 @@ def structured_data(site):
     address), the organization behind it (name and logo), and the software itself."""
     org = {"@type": "Organization", "name": "BeyondERP", "alternateName": "BEYONDERP",
            "description": "The company behind BeyondERP, a cloud ERP in English and Arabic.", "email": CONTACT_EMAIL,
-           "contactPoint": {"@type": "ContactPoint", "contactType": "customer support", "email": CONTACT_EMAIL, "availableLanguage": ["English", "Arabic"]}}
+           "contactPoint": {"@type": "ContactPoint", "contactType": "customer support", "email": CONTACT_EMAIL, "availableLanguage": ["English", "Arabic"]}, "sameAs": list(SOCIAL.values())}
     app = {"@type": "SoftwareApplication", "name": "BeyondERP", "applicationCategory": "BusinessApplication",
            "operatingSystem": "Web, Windows, macOS, Android, iOS", "inLanguage": ["en", "ar"], "slogan": "Run the business, not the paperwork.",
            "description": "One cloud ERP for accounting, sales, purchasing, inventory, projects, HR and payroll, with live reports, "
