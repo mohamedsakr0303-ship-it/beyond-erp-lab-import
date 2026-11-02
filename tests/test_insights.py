@@ -197,7 +197,8 @@ class CorrectionsAndEdges(unittest.TestCase):
 
     def test_a_reversal_is_not_another_document(self):
         e = self.db.one("""SELECT e.id, e.date FROM journal_entries e JOIN journal_lines l ON l.entry_id=e.id JOIN accounts a ON a.code=l.account
-                           WHERE e.status='posted' AND a.type='Revenue' AND e.reversal_of IS NULL AND e.reversed_by IS NULL ORDER BY e.date DESC LIMIT 1""")
+                           WHERE e.status='posted' AND a.type='Revenue' AND e.reversal_of IS NULL AND e.reversed_by IS NULL
+                           GROUP BY e.id HAVING SUM(l.credit - l.debit) > 0 ORDER BY e.date DESC LIMIT 1""")   # a sale, not a return
         m = e["date"][:7]
         f, t = m + "-01", insights._month_end(m)
         before = insights.totals(self.db, "revenue", f, t)[""]
