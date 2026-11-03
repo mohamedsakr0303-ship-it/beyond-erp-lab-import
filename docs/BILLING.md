@@ -49,7 +49,7 @@ Screenshots are kept in a private storage bucket (`billing-proofs`): only the cu
    | `PAYMOB_INTEGRATION_IDS` | Comma-separated integration ids (card, mobile wallet…), from Developers → Payment integrations |
 
    Then set Paymob's transaction processed callback to `https://<project>.supabase.co/functions/v1/billing?hook=paymob`, and add a payment method of type **Card**.
-6. **Deploy the database and functions.** Apply the migrations (`supabase db push`) and deploy the `billing` and `push` edge functions, so the console, orders, support and notifications work.
+6. **Deploy the database and functions.** Apply the migrations (`supabase db push --remote`) and deploy the `billing` and `push` edge functions, so the console, orders, support and notifications work.
 7. **Switch billing on.** Owner console → Plans and settings → **Switch billing on**. Each person's first company gets its trial from that moment. Switching off makes the app free again, and nothing is lost.
 
 ## Billing on, off, per company

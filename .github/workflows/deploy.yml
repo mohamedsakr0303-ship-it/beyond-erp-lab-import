@@ -110,13 +110,13 @@ jobs:
       - uses: supabase/setup-cli@v3
         if: steps.changed.outputs.run == 'true' && env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
         with:
-          version: latest
+          version: 3.0.0      # pinned: a new major version changed these commands once; move up on purpose, after checking
       - name: Apply database migrations
         if: steps.changed.outputs.run == 'true' && env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
         run: |
           set -o pipefail
-          { supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD" &&
-            supabase db push --password "$SUPABASE_DB_PASSWORD"; } 2>&1 | tee out.txt || {
+          { supabase link --project-ref "$PROJECT_ID" &&
+            supabase db push --remote --password "$SUPABASE_DB_PASSWORD" --yes; } 2>&1 | tee out.txt || {
             if grep -qi "unauthorized" out.txt; then
               echo "::error title=Supabase access token expired or revoked::Create a new one (supabase.com → your avatar → Account preferences → Access Tokens), put it in the repository secret SUPABASE_ACCESS_TOKEN, then re-run this workflow."
             else
@@ -128,7 +128,7 @@ jobs:
         run: |
           set -o pipefail
           for fn in login manage-user billing ai push mail; do
-            supabase functions deploy "$fn" --project-ref "$PROJECT_ID" --no-verify-jwt --use-api 2>&1 | tee out.txt ||
+            supabase functions deploy "$fn" --remote="$PROJECT_ID" --no-verify-jwt --use-api --yes 2>&1 | tee out.txt ||
               { echo "::error title=Function $fn::$(tail -c 1500 out.txt | tr '\n' ' ')"; exit 1; }
           done
       - name: Skipped
