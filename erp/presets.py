@@ -12,7 +12,7 @@ from . import accounting as acc
 from .accounting import ValidationError, text
 
 MAX_PER_FORM = 50
-MAX_VALUES = 4000          # characters of saved values per fill-in
+MAX_VALUES = 15000         # characters of saved values per fill-in (the workbook cell holds 32,767)
 KEY_RE = re.compile(r"^[a-z_]+:[a-z_]{1,40}$")
 def _now():
     import datetime as _dt
@@ -44,7 +44,7 @@ def save(db, key, name, values, user=""):
     name = text(name, "name", required=True, maxlen=80)
     if not isinstance(values, dict):
         raise ValidationError("Nothing to save")
-    line_ok = lambda v: isinstance(v, list) and len(v) <= 60 and all(
+    line_ok = lambda v: isinstance(v, list) and len(v) <= 100 and all(
         isinstance(x, dict) and all(isinstance(y, (str, int, float, bool)) or y is None for y in x.values()) for x in v)
     vals = {k: v for k, v in values.items() if k not in SKIP and isinstance(k, str)
             and ((isinstance(v, (str, int, float, bool)) and str(v).strip() != "") or (k == "lines" and line_ok(v) and v))}

@@ -108,6 +108,25 @@ class FillIns(unittest.TestCase):
         st, r = call("DELETE", f"/api/presets/{pid}?key=doc:expense")
         self.assertEqual((st, r["presets"].get("doc:expense")), (200, None))
 
+    def test_invoices_and_contracts_follow_their_own_permissions(self):
+        db = Database(":memory:")
+        call, tok_clerk, clerk = session(db)
+        lines = [{"item_no": str(i), "description": f"Work item {i}", "unit": "m2", "qty": i, "price": 12.5} for i in range(1, 81)]
+        st, r = call("POST", "/api/presets", {"key": "invoice:new", "name": "Monthly maintenance",
+                                              "values": {"customer": "Acme", "vat_code": "VAT14", "fees": '{"*": "5%"}', "lines": lines}})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(len(r["preset"]["values"]["lines"]), 80)                           # a long invoice fits
+        st, r = call("POST", "/api/presets", {"key": "contract:new", "name": "Standard sub",
+                                              "values": {"kind": "sub", "party": "Beta", "retention_pct": "5",
+                                                         "lines": [{"description": "Plastering", "unit": "m2", "rate": "40"}]}})
+        self.assertEqual(st, 200, r)
+        db.x("UPDATE users SET perms=? WHERE id=?", (json.dumps({"sales.invoices": "view", "contracts.contracts": "view"}), clerk))
+        for key in ("invoice:new", "contract:new"):
+            self.assertEqual(call("POST", "/api/presets", {"key": key, "name": "x", "values": {"a": "1"}}, tok=tok_clerk)[0], 403)
+        db.x("UPDATE users SET perms=? WHERE id=?", (json.dumps({"sales.invoices": "add"}), clerk))
+        self.assertEqual(call("POST", "/api/presets", {"key": "invoice:new", "name": "x", "values": {"a": "1"}}, tok=tok_clerk)[0], 200)
+        self.assertEqual(call("POST", "/api/presets", {"key": "contract:new", "name": "x", "values": {"a": "1"}}, tok=tok_clerk)[0], 403)
+
     def test_order_lines_are_kept(self):
         db = Database(":memory:")
         p = presets.save(db, "po:new", "Diesel", {"supplier": "Fuel Co", "lines": [{"kind": "expense", "description": "Diesel", "qty": "100"}]})

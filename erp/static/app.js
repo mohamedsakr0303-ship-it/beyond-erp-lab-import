@@ -3622,6 +3622,17 @@ PAGES.invoice = async (view, parts, q) => {
     if ($("#etacard")) etaPanel(x);
     const setLines = ls => { x = { ...x, ...header(), lines: ls }; render(); };
     const g = sheetGrid({ setLines, after: () => S.H.letot(), readOnly: locked }); if (!locked) wireGridBar(g, setLines);
+    // saved fill-ins (new invoices): the customer, taxes, lines and fees; never the number, date or contract
+    if (isNew && !locked) presetBar($(".card", view), "invoice:new", () => {
+      const { number, date, boq_id, ...h } = header();
+      const lines = readLines().filter(l => !isBlank(l.description)).map(({ style, contract_qty, billed_before, ...l }) => l);
+      const fb = feeBody(); return { ...h, ...(lines.length ? { lines } : {}), ...(Object.keys(fb).length ? { fees: JSON.stringify(fb) } : {}) };
+    }, v => {
+      let fm = {}; try { fm = JSON.parse(v.fees || "{}") || {}; } catch { fm = {}; }
+      fees = Object.fromEntries(Object.entries(fm).map(([k, r]) => [k, parseFloat(r) || 0])); feesOn = Object.keys(fees).length > 0 || feesOn;
+      const { fees: _f, lines, ...h } = v;
+      x = { ...x, ...header(), ...h, boq_id: "", number: $("[name=number]").value, date: $("[name=date]").value, lines: lines || [] }; render();
+    });
     S.H.letot();
   };
   const header = () => ({ bu_id: $("[name=bu_id]").value, number: $("[name=number]").value, date: $("[name=date]").value, boq_id: $("[name=boq_id]").value,
@@ -11647,6 +11658,13 @@ function contractForm(c) {
   }, { wide: true });
   const calc = () => { let s = 0; $$("tr.cl", f).forEach(tr => { const a = (+$("[data-f=qty]", tr).value || 0) * (+$("[data-f=rate]", tr).value || 0); s += a; $(".camt", tr).textContent = a ? money(a) : ""; }); $("#ctot", f).textContent = s ? `${t("total")}: ${money(s)}` : ""; };
   f.addEventListener("input", calc); calc();
+  // saved fill-ins (new contracts): the party, terms, scope and lines; never the dates
+  if (isNew) presetBar(f, "contract:new", () => {
+    const { signed_on, start, finish, retention_release, ...v } = readForm(f);
+    const lines = $$("tr.cl", f).map(tr => Object.fromEntries($$("[data-f]", tr).map(i => [i.dataset.f, i.value]))).filter(l => !isBlank(l.description));
+    return { ...v, ...(lines.length ? { lines } : {}) };
+  }, v => contractForm({ ...c, ...v, kind: c.kind, id: null, lines: v.lines || [],
+    retention_pct: v.retention_pct ? +v.retention_pct / 100 : "", advance_recovery_pct: v.advance_recovery_pct ? +v.advance_recovery_pct / 100 : "" }));
   f.addEventListener("click", e => { const k = e.target.dataset.k; if (k === "addl") $(".ctbl tbody", f).insertAdjacentHTML("beforeend", lineRow()); if (k === "rm" && $$("tr.cl", f).length > 1) { e.target.closest("tr").remove(); calc(); } });
 }
 function voForm(c, v) {

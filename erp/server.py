@@ -920,7 +920,8 @@ DOCS = {  # type -> (function, module)
 
 # saved fill-ins (erp/presets.py): whoever may add on a form may save, use and delete its fill-ins
 PRESET_FORMS = {**{"doc:" + k: v[1] for k, v in DOCS.items()}, "po:new": "purchasing.orders", "custody:new": "purchasing.custody",
-                "contact:new": "purchasing.contacts", "loan:new": "accounting.loans", "recurring:new": "accounting.recurring"}
+                "contact:new": "purchasing.contacts", "loan:new": "accounting.loans", "recurring:new": "accounting.recurring",
+                "invoice:new": "sales.invoices", "contract:new": "contracts.contracts"}
 
 
 def _preset_ok(ctx, key):
