@@ -41,6 +41,21 @@ _ACC = {
     "scaffolding": [("5065", "Installation & Dismantling Crews", "أطقم التركيب والفك", "COGS", "cogs"),
                     ("5066", "Scaffold Repairs, Painting & Maintenance", "إصلاح ودهان وصيانة السقالات", "COGS", "cogs"),
                     ("5067", "Transport of Equipment", "نقل المعدات", "COGS", "cogs")],
+    "restaurant": [("4026", "Food & Beverage Sales", "مبيعات الأطعمة والمشروبات", "Revenue", "operating_revenue"),
+                   ("5011", "Food & Beverage Cost", "تكلفة الأطعمة والمشروبات", "COGS", "cogs"),
+                   ("6033", "Delivery App Commissions", "عمولات تطبيقات التوصيل", "Expense", "marketing"),
+                   ("6036", "Kitchen Gas & Utilities", "غاز ومرافق المطبخ", "Expense", "other_operating")],
+    "services": [("4036", "Consulting & Professional Fees", "أتعاب استشارية ومهنية", "Revenue", "operating_revenue"),
+                 ("5031", "Subcontracted Consultants & Freelancers", "استشاريون ومستقلون بالتعاقد", "COGS", "cogs")],
+    "manufacturing": [("1205", "Raw Materials Inventory", "مخزون الخامات", "Asset", "inventory"),
+                      ("1206", "Work in Process Inventory", "إنتاج تحت التشغيل", "Asset", "inventory"),
+                      ("5012", "Raw Materials Used", "خامات مستخدمة في الإنتاج", "COGS", "cogs"),
+                      ("5032", "Factory Labour", "أجور المصنع", "COGS", "cogs"),
+                      ("5046", "Factory Overheads (power, maintenance)", "مصروفات صناعية غير مباشرة (كهرباء، صيانة)", "COGS", "cogs")],
+    "logistics": [("4048", "Freight & Transport Revenue", "إيرادات النقل والشحن", "Revenue", "operating_revenue"),
+                  ("5068", "Fuel & Tolls", "الوقود والرسوم", "COGS", "cogs"),
+                  ("5069", "Drivers' Trip Allowances", "بدلات رحلات السائقين", "COGS", "cogs"),
+                  ("5071", "Fleet Repairs & Tyres", "إصلاحات وإطارات الأسطول", "COGS", "cogs")],
     "general": [],
     "healthcare": care.ACCOUNTS,
     "homecare": care.ACCOUNTS,
@@ -150,8 +165,107 @@ TYPES = {
                            "owed to them (2115) and paid weekly or monthly; salaried staff stay on payroll.",
                            "Insured patients: the insurer's share is claimed monthly like a clinic; family-paid care is billed to the patient.",
                            "Consumables used at home (dressing kits, catheters) leave stock at cost on each visit."]},
+    "restaurant": {"name": "Restaurants & cafés", "ar": "المطاعم والكافيهات", "hide": ["rentals", "estimating", "contracts", "equipment", "care", "projects"],
+                   "departments": ["Kitchen", "Service / Floor", "Purchasing & Store", "Delivery", "Finance", "Admin"],
+                   "jobs": ["Restaurant Manager", "Head Chef", "Cook", "Kitchen Helper", "Waiter", "Barista", "Cashier", "Delivery Rider",
+                            "Storekeeper", "Accountant"],
+                   "bu": "Branch / outlet", "components": {"commission": False},
+                   "guide": ["Each branch is a business unit, so each shows its own profit.",
+                             "Sales go to 4026 and food and drink bought to 5011: their ratio is your food cost %. Count the store "
+                             "monthly (Inventory → Stock counts) so waste shows as a difference.",
+                             "Delivery apps keep a commission: book it to 6033 (the model “Delivery app settlement” splits the payout).",
+                             "Daily suppliers on credit (vegetables, meat, bread): use “Expense on credit” or a saved fill-in per supplier."]},
+    "services": {"name": "Professional services & consulting", "ar": "الخدمات المهنية والاستشارات",
+                 "hide": ["rentals", "shop", "estimating", "contracts", "equipment", "care", "stock"],
+                 "departments": ["Consulting", "Delivery", "Business Development", "Finance", "Admin"],
+                 "jobs": ["Managing Partner", "Senior Consultant", "Consultant", "Analyst", "Project Coordinator", "Accountant", "Administrator"],
+                 "bu": "Client engagement", "components": {"commission": True},
+                 "guide": ["Each client engagement is a business unit; invoice fees to 4036 and book freelancers you bring in to 5031, "
+                           "so each engagement shows its own margin.",
+                           "Retainers paid in advance are client advances: apply them to each month's invoice.",
+                           "Track time with tasks and attendance; bill hours from the invoice lines."]},
+    "manufacturing": {"name": "Manufacturing & workshops", "ar": "التصنيع والورش", "hide": ["rentals", "care", "estimating"],
+                      "departments": ["Production", "Quality", "Maintenance", "Warehouse", "Sales", "Finance", "Admin"],
+                      "jobs": ["Plant Manager", "Production Supervisor", "Machine Operator", "Technician", "Quality Inspector", "Storekeeper",
+                               "Sales Representative", "Accountant", "Worker"],
+                      "bu": "Production line / order", "components": {"commission": False},
+                      "guide": ["Buy raw materials into stock (1205); issue them to production and the cost moves to 5012.",
+                                "Factory wages go to 5032 and power and maintenance to 5046, so each line or order shows its full cost.",
+                                "Use a business unit per production line or big order; finished goods sit in stock until sold."]},
+    "logistics": {"name": "Transport & logistics", "ar": "النقل والخدمات اللوجستية", "hide": ["shop", "estimating", "contracts", "care"],
+                  "departments": ["Operations / Dispatch", "Fleet & Maintenance", "Drivers", "Sales", "Finance", "Admin"],
+                  "jobs": ["Operations Manager", "Dispatcher", "Driver", "Mechanic", "Fleet Supervisor", "Sales Representative", "Accountant"],
+                  "bu": "Vehicle / route / client contract", "components": {"commission": False},
+                  "guide": ["Each truck or route is a business unit: freight revenue (4048) against fuel and tolls (5068), drivers' "
+                            "trip allowances (5069) and repairs (5071) shows each vehicle's profit.",
+                            "Give drivers trip money as cash custody and settle it with their receipts; or pay fuel from the custody directly.",
+                            "Vehicles are equipment: log their hours or kilometres and maintenance under Plant & equipment."]},
 }
-ORDER = ["general", "interior", "contracting", "development", "sales", "investment", "scaffolding", "healthcare", "homecare"]
+ORDER = ["general", "interior", "contracting", "development", "sales", "investment", "scaffolding", "healthcare", "homecare",
+         "restaurant", "services", "manufacturing", "logistics"]
+
+# entry models each business uses often, added to the company's models when the template is applied (only when every
+# fixed account in them is the one this template expects). Sides as in entries.py; "lines" for more than two.
+_MODELS = {
+    "contracting": [{"id": "ind_sub_cert_retention", "name": "Subcontractor certificate with retention", "name_ar": "مستخلص مقاول باطن مع محتجزات",
+                     "kind": "Direct Cost", "party": "required", "bu": "required",
+                     "lines": [{"account": "role:subcontract_cost", "side": "debit"}, {"account": "role:sub_payable", "side": "credit"},
+                               {"account": "role:retention_payable", "side": "credit"}]}],
+    "interior": [{"id": "ind_client_supply", "name": "Client-supply furniture on credit", "name_ar": "أثاث توريد للعميل على الحساب",
+                  "kind": "Direct Cost", "debit": "5075", "credit": "role:ap", "party": "required", "bu": "required"}],
+    "scaffolding": [{"id": "ind_crew_owed", "name": "Installation crew work owed", "name_ar": "أعمال طاقم تركيب مستحقة", "kind": "Direct Cost",
+                     "debit": "5065", "credit": "role:sub_payable", "party": "required", "bu": "optional"},
+                    {"id": "ind_transport_owed", "name": "Equipment transport owed", "name_ar": "نقل معدات مستحق", "kind": "Direct Cost",
+                     "debit": "5067", "credit": "role:ap", "party": "required", "bu": "optional"}],
+    "development": [{"id": "ind_reservation", "name": "Unit reservation deposit received", "name_ar": "استلام جدية حجز وحدة", "kind": "Receipt Voucher",
+                     "debit": "subtype:cash", "credit": "2140", "party": "required", "bu": "optional"},
+                    {"id": "ind_broker_owed", "name": "Broker commission owed", "name_ar": "عمولة وسيط مستحقة", "kind": "Operating Expense",
+                     "debit": "6032", "credit": "role:ap", "party": "required", "bu": "optional"}],
+    "sales": [{"id": "ind_delivery_owed", "name": "Delivery cost owed to the courier", "name_ar": "تكلفة توصيل مستحقة لشركة الشحن",
+               "kind": "Operating Expense", "debit": "6034", "credit": "role:ap", "party": "required", "bu": "optional"}],
+    "investment": [{"id": "ind_dividend", "name": "Dividend received", "name_ar": "توزيعات أرباح مستلمة", "kind": "Receipt Voucher",
+                    "debit": "subtype:cash", "credit": "4091", "party": "optional", "bu": "optional"}],
+    "healthcare": [{"id": "ind_doctor_share", "name": "Doctor's share owed", "name_ar": "حصة طبيب مستحقة", "kind": "Direct Cost",
+                    "debit": "5090", "credit": "2115", "party": "required", "bu": "optional"}],
+    "homecare": [{"id": "ind_doctor_share", "name": "Caregiver's share owed", "name_ar": "حصة مقدم رعاية مستحقة", "kind": "Direct Cost",
+                  "debit": "5090", "credit": "2115", "party": "required", "bu": "optional"}],
+    "restaurant": [{"id": "ind_delivery_payout", "name": "Delivery app settlement", "name_ar": "تسوية تطبيق التوصيل", "kind": "Receipt Voucher",
+                    "party": "required", "bu": "optional",
+                    "lines": [{"account": "subtype:cash", "side": "debit"}, {"account": "6033", "side": "debit"}, {"account": "4026", "side": "credit"}]},
+                   {"id": "ind_food_on_credit", "name": "Food supplies on credit", "name_ar": "مشتريات أطعمة على الحساب", "kind": "Direct Cost",
+                    "debit": "5011", "credit": "role:ap", "party": "required", "bu": "optional"}],
+    "services": [{"id": "ind_freelancer_owed", "name": "Freelancer work owed", "name_ar": "أعمال مستقل مستحقة", "kind": "Direct Cost",
+                  "debit": "5031", "credit": "role:ap", "party": "required", "bu": "optional"}],
+    "manufacturing": [{"id": "ind_materials_to_production", "name": "Raw materials issued to production", "name_ar": "صرف خامات للإنتاج",
+                       "kind": "Journal Voucher", "debit": "5012", "credit": "1205", "party": "none", "bu": "optional"},
+                      {"id": "ind_power_owed", "name": "Factory power bill owed", "name_ar": "فاتورة كهرباء المصنع المستحقة",
+                       "kind": "Direct Cost", "debit": "5046", "credit": "role:ap", "party": "required", "bu": "optional"}],
+    "logistics": [{"id": "ind_fuel_on_credit", "name": "Fuel on credit (station account)", "name_ar": "وقود على الحساب (حساب المحطة)",
+                   "kind": "Direct Cost", "debit": "5068", "credit": "role:ap", "party": "required", "bu": "optional"},
+                  {"id": "ind_trip_allowance", "name": "Driver trip allowance paid", "name_ar": "بدل رحلة سائق مصروف",
+                   "kind": "Direct Cost", "debit": "5069", "credit": "subtype:cash", "party": "optional", "bu": "optional"}],
+}
+
+
+def _add_models(db, key, own_codes):
+    """The business's own entry models, when their fixed accounts are this template's (or system ones): never one that
+    would post to an account of the same number that means something else in these books."""
+    from . import entries
+    have = {t["id"] for t in entries.load(db)}
+    names = {c: n for c, n, *_ in _ACC.get(key, [])}
+    added = []
+    for m in _MODELS.get(key, []):
+        if m["id"] in have:
+            continue
+        specs = [ln["account"] for ln in m.get("lines", [])] or [m["debit"], m["credit"]]
+        fixed = [x for x in specs if x and ":" not in x]
+        if any(not db.one("SELECT 1 FROM accounts WHERE code=?" + (" AND name=?" if c in names else ""),
+                          (c, names[c]) if c in names else (c,)) for c in fixed):
+            continue
+        added.append(m)
+    if added:
+        entries.save(db, entries.load(db) + added)
+    return [m["id"] for m in added]
 
 
 def catalogue():
@@ -192,7 +306,8 @@ def apply(db, key, hide_modules=True):
             if c["code"] in t["components"]:
                 c["active"] = t["components"][c["code"]]
         payroll.save_settings(db, {"components": s["components"]})
-    return {"type": key, "accounts_added": added, "hidden": t["hide"] if hide_modules else None}
+        models = _add_models(db, key, added)
+    return {"type": key, "accounts_added": added, "models_added": models, "hidden": t["hide"] if hide_modules else None}
 
 
 # ---- the same guide in Arabic (catalogue() sends both; the screen shows the reader's language)
@@ -242,6 +357,23 @@ TYPES_AR = {
         "الممرضون والمعالجون بالزيارة أو بالوردية: حصتهم من كل خدمة تكلفة (5090) مستحقة لهم (2115) تُصرف أسبوعياً أو شهرياً؛ والموظفون بالراتب يبقون في الرواتب.",
         "المرضى المؤمَّن عليهم: حصة التأمين تُطالب شهرياً مثل العيادة؛ والرعاية التي تدفعها الأسرة تُفوتر للمريض.",
         "المستهلكات المستخدمة بالمنزل (أطقم غيار، قساطر) تخرج من المخزون بالتكلفة مع كل زيارة."]),
+    "restaurant": ("فرع / منفذ", [
+        "كل فرع وحدة أعمال ليظهر ربح كل منها.",
+        "المبيعات في 4026 والأطعمة والمشروبات المشتراة في 5011: نسبتهما هي نسبة تكلفة الطعام. اجرد المخزن شهرياً (المخزون ← الجرد) ليظهر الهدر كفرق.",
+        "تطبيقات التوصيل تخصم عمولة: سجّلها في 6033 (نموذج «تسوية تطبيق التوصيل» يقسم المبلغ المحوَّل).",
+        "الموردون اليوميون على الحساب (خضار، لحوم، خبز): استخدم «مصروف على الحساب» أو تعبئة محفوظة لكل مورد."]),
+    "services": ("تكليف عميل", [
+        "كل تكليف لعميل وحدة أعمال؛ فوتر الأتعاب في 4036 وسجّل المستقلين الذين تستعين بهم في 5031 ليظهر هامش كل تكليف.",
+        "الاشتراكات المدفوعة مقدماً دفعات مقدمة من العملاء: سوّها مع فاتورة كل شهر.",
+        "تابع الوقت بالمهام والحضور؛ وفوتر الساعات من بنود الفاتورة."]),
+    "manufacturing": ("خط إنتاج / أمر", [
+        "اشترِ الخامات إلى المخزون (1205)؛ واصرفها للإنتاج فتنتقل تكلفتها إلى 5012.",
+        "أجور المصنع في 5032 والكهرباء والصيانة في 5046، فيظهر لكل خط أو أمر تكلفته الكاملة.",
+        "استخدم وحدة أعمال لكل خط إنتاج أو أمر كبير؛ والإنتاج التام يبقى في المخزون حتى يُباع."]),
+    "logistics": ("مركبة / خط سير / عقد عميل", [
+        "كل شاحنة أو خط سير وحدة أعمال: إيراد النقل (4048) مقابل الوقود والرسوم (5068) وبدلات رحلات السائقين (5069) والإصلاحات (5071) يُظهر ربح كل مركبة.",
+        "أعطِ السائقين مصروف الرحلة كعهدة نقدية وسوِّها بإيصالاتهم؛ أو ادفع الوقود من العهدة مباشرة.",
+        "المركبات معدات: سجّل ساعاتها أو كيلومتراتها وصيانتها من شاشة المعدات والآلات."]),
 }
 WORK_AR = {"Frame scaffold — installation": "سقالة شبابيك — تركيب", "Frame scaffold — dismantling": "سقالة شبابيك — فك",
            "Loading / unloading a truck": "تحميل / تفريغ سيارة", "Wall painting": "دهان حوائط", "Gypsum-board ceiling": "سقف جبس بورد",

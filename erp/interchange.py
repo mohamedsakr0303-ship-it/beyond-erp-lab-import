@@ -526,11 +526,15 @@ def export_data(db):
     period_to = db.setting("report_to") or f"{_dt.date.today().year}-12-31"
     out["Settings"] = [{"key": "report_from", "value": period_from}, {"key": "report_to", "value": period_to}]
     for r in db.q("SELECT key, value FROM settings ORDER BY key"):
-        if r["key"] not in ("schema_version", "report_from", "report_to", "docs_seeded", *ETA_SECRETS):
+        # entry models and saved fill-ins travel in their own sheets (a big set would not fit one Excel cell)
+        if r["key"] not in ("schema_version", "report_from", "report_to", "docs_seeded", "entry_types", "form_presets", *ETA_SECRETS):
             out["Settings"].append({"key": r["key"], "value": r["value"]})
     from . import payroll as _pr   # employees and payroll rules carry no money: re-import updates them
     out["Employees"] = _pr.employee_sheet_rows(db)
     out["Payroll Settings"] = _pr.settings_sheet_rows(db)
+    from . import entries as _en, presets as _ps
+    out["Entry Models"] = _en.sheet_rows(db)
+    out["Saved Fill-ins"] = _ps.sheet_rows(db)
     _site_sheets(db, out)
     from . import budgets   # budgets carry no money, so the export can include them (re-import replaces, never doubles)
     out["Budgets"] = budgets.export_rows(db)

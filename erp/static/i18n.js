@@ -318,7 +318,7 @@ Object.assign(window.I18N, {
   g_assets: ["Assets & Treasury", "الأصول والخزينة"], m_assets: ["Fixed Asset Register", "سجل الأصول الثابتة"], p_depr: ["Depreciation runs", "احتساب الإهلاك"],
   p_ownership: ["Ownership changes (transfer, admit, exit)", "تغيير الملكية (تنازل، دخول، خروج)"],
   line_party: ["Party", "الطرف"], line_party_help: ["Optional: the party sub-ledger for this line (e.g. each partner)", "اختياري: الطرف الفرعي لهذا السطر (مثل كل شريك)"],
-  template_help: ["Fills in the accounts. Edit the list in Settings → Menus → Entry types.", "يملأ الحسابات. عدّل القائمة من الإعدادات ← القوائم ← أنواع القيود."],
+  template_help: ["Fills in the lines. The most recently used come first; save your own with “Save as a model” below.", "يملأ السطور. الأحدث استخداماً أولاً؛ احفظ نموذجك بزر «حفظ كنموذج» بالأسفل."],
   hidden_moved: ["Now in", "انتقلت إلى"],
   "Capital Contribution": ["Capital contribution", "زيادة رأس المال"], "Capital Withdrawal": ["Capital withdrawal", "تخفيض رأس المال"],
   "Owner Drawing": ["Partner drawing", "مسحوبات شريك"], "Partner Loan": ["Loan from partner", "قرض من شريك"],

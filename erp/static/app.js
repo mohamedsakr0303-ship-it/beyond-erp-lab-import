@@ -212,6 +212,27 @@ function uiDialog(msg, o = {}) {
 }
 const uiConfirm = (msg, o) => uiDialog(msg, o);
 const uiPrompt = (msg, value, o) => uiDialog(msg, { ...o, input: value == null ? "" : value });
+// a small form above whatever is open (a name and a few ticks): resolves to its values, or null when cancelled.
+// fields: [{k, l, v, type: "text" | "checkbox", req}]
+function uiForm(title, fields, note = "") {
+  closeMenus();
+  return new Promise(resolve => {
+    const bg = document.createElement("div"); bg.className = "dlg-bg";
+    bg.innerHTML = `<form class="dlg" role="dialog" aria-modal="true"><h3>${esc(title)}</h3>
+      ${fields.map(f => f.type === "checkbox" ? `<label class="chk" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" name="${f.k}" ${f.v ? "checked" : ""}> ${esc(f.l)}</label>`
+        : `<label class="f" style="display:block;margin:6px 0">${esc(f.l)}<input class="dlg-in" name="${f.k}" value="${esc(f.v ?? "")}" dir="auto" ${f.req ? "required" : ""}></label>`).join("")}
+      ${note ? `<div class="dlg-msg muted" style="font-size:.85em">${esc(note)}</div>` : ""}
+      <div class="dlg-foot"><button type="button" class="btn" data-r="0">${esc(L2("Cancel", "إلغاء"))}</button><button type="submit" class="btn pri">${esc(L2("Save", "حفظ"))}</button></div></form>`;
+    const fm = $("form", bg);
+    const done = v => { bg.classList.add("out"); setTimeout(() => bg.remove(), 120); resolve(v); };
+    fm.addEventListener("submit", e => { e.preventDefault(); e.stopPropagation();
+      done(Object.fromEntries(fields.map(f => [f.k, f.type === "checkbox" ? fm.elements[f.k].checked : fm.elements[f.k].value.trim()]))); });
+    bg.addEventListener("click", e => { e.stopPropagation(); if (e.target.closest("[data-r='0']") || e.target === bg) done(null); });
+    bg.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(null); } });
+    document.body.appendChild(bg);
+    const first = $("input:not([type=checkbox])", fm); if (first) { first.focus(); first.select(); }
+  });
+}
 const uiAlert = (msg, o) => uiDialog(msg, { cancel: false, danger: false, ...o });
 const qs = o => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
 
@@ -2427,7 +2448,46 @@ async function openDoc(type, pre, edit, copyVals, via) {
       await attachFrom(f, r, edit && edit.id); await saveNewContacts(nc); },
     { submitLabel: via ? (via.mode === "approve" ? L2("Approve and post", "اعتماد وترحيل") : L2("Submit for approval", "إرسال للاعتماد")) : undefined,
       onOpen: f => { if (d.open) d.open(f, !!edit); if (vals) fillForm(f, vals); if (d.calc) { S.H.calc = () => d.calc(f); d.calc(f); }
+      if (!edit && !via) presetBar(f, "doc:" + type, () => { const x = readForm(f); delete x._files; delete x.date; return x; }, x => { applyValues(f, x); if (d.calc) d.calc(f); });
       [["vendor", "supplier"], ["party", type === "receipt" ? "customer" : "supplier"], ["worker", "employee"]].forEach(([k, c]) => { if ($(`[name=${k}]`, f) && $(`[name=${k}]`, f).getAttribute("list") === "parties") nc.push(offerContact(f, k, c)); }); } });
+}
+// Saved fill-ins (erp/presets.py): at the top of a form, pick one to fill it in, save what is on screen under a name,
+// or delete one. Company-wide, most recently used first. read() → the values to keep; apply(values) fills the form.
+function presetBar(f, key, read, apply) {
+  const all = () => (S.boot.form_presets = S.boot.form_presets || {});
+  const list = () => (all()[key] || []).slice().sort((a, b) => String(b.used_at || "").localeCompare(String(a.used_at || "")));
+  const box = document.createElement("div"); box.className = "preset-bar";
+  const draw = () => { const L = list();
+    box.innerHTML = `<span class="pb-l">📋 ${esc(L2("Saved fill-ins", "تعبئة محفوظة"))}</span>
+      ${L.length ? `<select class="no-pick pb-sel"><option value="">${esc(L2("Fill in from…", "تعبئة من…"))}</option>${L.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select>` : `<span class="muted pb-none">${esc(L2("None yet", "لا يوجد بعد"))}</span>`}
+      <button type="button" class="btn sm pb-save">💾 ${esc(L2("Save as fill-in", "حفظ كتعبئة"))}</button>
+      <button type="button" class="btn sm danger pb-del" hidden>🗑</button>`; };
+  draw();
+  box.addEventListener("change", async e => { if (!e.target.classList.contains("pb-sel")) return;
+    const p = list().find(x => x.id === e.target.value); $(".pb-del", box).hidden = !p; if (!p) return;
+    apply(p.values); toast(L2(`Filled in from “${p.name}”. Check it, then save.`, `تمت التعبئة من «${p.name}». راجعها ثم احفظ.`));
+    api("POST", "/api/presets/use", { key, id: p.id }).then(r => { S.boot.form_presets = r.presets; }).catch(() => {}); });
+  box.addEventListener("click", async e => {
+    if (e.target.closest(".pb-save")) {
+      const sel = $(".pb-sel", box), cur = sel && list().find(x => x.id === sel.value);
+      const m = await uiForm(L2("Save as a fill-in", "حفظ كتعبئة"), [{ k: "name", l: L2("Name", "الاسم"), req: 1, v: cur ? cur.name : "" }],
+        L2("Everything on the form except the date and files is kept. Everyone in the company can use it. The same name replaces the old one.", "يُحفظ كل ما في النموذج عدا التاريخ والملفات، ويستطيع كل من في الشركة استخدامه. الاسم نفسه يستبدل القديم."));
+      if (!m || !m.name) return;
+      try { const r = await api("POST", "/api/presets", { key, name: m.name, values: read() }); S.boot.form_presets = r.presets; draw();
+        toast(L2(`Saved “${r.preset.name}”.`, `حُفظ «${r.preset.name}».`)); } catch (er) { fail(er); }
+    }
+    if (e.target.closest(".pb-del")) {
+      const sel = $(".pb-sel", box), p = sel && list().find(x => x.id === sel.value); if (!p) return;
+      if (!await uiConfirm(L2(`Delete the fill-in “${p.name}” for everyone in the company?`, `حذف التعبئة «${p.name}» لكل من في الشركة؟`), { danger: true })) return;
+      try { const r = await api("DELETE", `/api/presets/${encodeURIComponent(p.id)}?` + qs({ key })); S.boot.form_presets = r.presets; draw(); toast(L2("Deleted.", "حُذف.")); } catch (er) { fail(er); }
+    } });
+  f.prepend(box);
+  return box;
+}
+// a fill-in's values put into a form, with the same events typing would fire (totals, shown / hidden fields follow)
+function applyValues(f, vals) {
+  fillForm(f, vals);
+  Object.keys(vals).forEach(k => { const el = $(`[name="${k}"]`, f); if (el) { el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); } });
 }
 function fillForm(f, vals) {
   Object.entries(vals).forEach(([k, v]) => { const el = $(`[name="${k}"]`, f); if (!el || v == null) return;
@@ -2500,13 +2560,16 @@ function journalForm(e, copy, via) {
     { k: "ref", l: t("ref"), v: e ? e.ref : "" },
     ...(e && (e.kind === "Direct Cost" || e.kind === "Supplier Discount" || (e.meta && e.meta.deal_ref)) ? [{ k: "deal_ref", l: t("deal_ref"), v: e.meta.deal_ref || "" },
       { k: "deal_status", l: t("deal_status"), type: "select", opts: [["", "—"], "Open", "Settled"], v: e.meta.deal_status || "" }] : []),
-    { k: "memo", l: t("memo"), v: e ? e.memo : "", span: "spanall" }]) + (e && !copy ? "" : jItemsEditor(copy && e && e.meta && e.meta.items)) + `<div style="margin-top:12px">${journalLinesEditor(lines)}</div>`
+    { k: "memo", l: t("memo"), v: e ? e.memo : "", span: "spanall" }]) + (e && !copy ? "" : jItemsEditor(copy && e && e.meta && e.meta.items)) + `<div style="margin-top:12px">${journalLinesEditor(lines)}</div>` + `<div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button type="button" class="btn sm" data-a="jmsave">💾 ${esc(L2("Save as a model", "حفظ كنموذج"))}</button>${e ? "" : `<button type="button" class="btn sm danger" data-a="jmdel" id="jmdel" hidden>🗑 ${esc(L2("Delete this model", "حذف هذا النموذج"))}</button>`}</div>`
     + (via ? "" : `<div style="margin-top:12px">${form([ATTACH_FIELD()], 1)}</div>`);
   const collect = f => $$("#jl tbody tr", f).map(tr => ({ account: $(".ja", tr).value, debit: $(".jd", tr).value, credit: $(".jc", tr).value, party: $(".jp", tr).value }));
   const allItems = f => $$("#ji tbody tr", f).map(tr => ({ item: $(".ji-n", tr).value.trim(), unit: $(".ji-u", tr).value.trim(), qty: $(".ji-q", tr).value, rate: $(".ji-p", tr).value, warehouse_id: $(".ji-w", tr).value }));
   const items = f => allItems(f).filter(x => x.item && +x.qty && +x.rate);
   drawer((via ? `${L2("Draft", "مسودة")} #${via.aid}` : e && !copy ? t("edit") : t("new")) + " — " + t("m_journal"), html, async (v, f) => {
     delete v._files;
+    const mdl = v.template && tpl[v.template];          // what the chosen model asks for
+    if (mdl && mdl.bu === "required" && !v.bu_id) throw new Error(L2(`“${mdl.name}” is booked to a business unit (project): choose it.`, `«${(S.lang === "ar" && mdl.name_ar) || mdl.name}» يُسجَّل على وحدة أعمال (مشروع): اخترها.`));
+    if (mdl && mdl.party === "required" && !v.party && !collect(f).some(l => l.party)) throw new Error(L2(`“${mdl.name}” needs the party (who is owed or who owes).`, `«${(S.lang === "ar" && mdl.name_ar) || mdl.name}» يحتاج الطرف (الدائن أو المدين).`));
     const its = allItems(f);
     lineGaps(its, x => !x.item && (+x.qty || +x.rate), "a quantity or price without an item. Enter the item, or clear the line.", "كمية أو سعر بدون صنف. أدخل الصنف أو امسح السطر.");
     lineGaps(its, x => x.item && !(+x.qty && +x.rate), "enter both the quantity and the unit price of the item.", "أدخل الكمية وسعر الوحدة للصنف.");
@@ -2518,7 +2581,8 @@ function journalForm(e, copy, via) {
       "أدخل المبالغ في سطرين على الأقل: مدين في سطر ودائن في آخر."));
     const body = { ...v, lines: kept, ...(items(f).length ? { items: items(f) } : {}) };
     if (e && !copy) await attachFrom(f, await sendEntry("PUT", "/api/journal/" + e.id, body, via, t("saved")) || { id: e.id }, e.id);
-    else await attachFrom(f, await sendEntry("POST", "/api/journal", { ...body, kind: via ? e.kind || "Journal Voucher" : copy ? (Object.values(tpl).some(x => x.kind === e.kind) ? e.kind : "Journal Voucher") : v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" }, via, t("saved")));
+    else if (v.template) modelUsed(v.template);
+    if (!(e && !copy)) await attachFrom(f, await sendEntry("POST", "/api/journal", { ...body, kind: via ? e.kind || "Journal Voucher" : copy ? (Object.values(tpl).some(x => x.kind === e.kind) ? e.kind : "Journal Voucher") : v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" }, via, t("saved")));
   }, { submitLabel: via ? (via.mode === "approve" ? L2("Approve and post", "اعتماد وترحيل") : L2("Submit for approval", "إرسال للاعتماد")) : undefined, onOpen: f => {
     const bal = () => { const L = collect(f); const it = $("#ji", f) ? jItemsTotal(f) : 0; const d = it + L.reduce((s, l) => s + (+l.debit || 0), 0), c = L.reduce((s, l) => s + (+l.credit || 0), 0);
       $("#jbal", f).innerHTML = `${t("debit")} ${money(d)} · ${t("credit")} ${money(c)} — <span class="${Math.abs(d - c) < 0.005 && d > 0 ? "bal-ok" : "bal-bad"}">${Math.abs(d - c) < 0.005 && d > 0 ? t("balanced") : t("unbalanced")}</span>`; };
@@ -2526,9 +2590,48 @@ function journalForm(e, copy, via) {
     if ($("#ji", f)) jItemsWire(f, bal);
     S.H.jadd = () => { $("#jl tbody", f).insertAdjacentHTML("beforeend", $("#jlrow", f).innerHTML); bal(); };   // a fresh row, never a copy
     S.H.jrm = el => { if ($$("#jl tbody tr", f).length > 2) el.closest("tr").remove(); bal(); };
-    S.H.jtpl = el => { const x = tpl[el.value]; if (!x) return; const rows = $$("#jl tbody tr", f);
+    // a model fills the lines: its accounts (a fixed one, or the usual choice), debit or credit, any amounts it keeps
+    S.H.jtpl = el => { const x = tpl[el.value], del = $("#jmdel", f); if (del) del.hidden = !x; if (!x) return;
       const code = side => side.fixed || side.default || "";
-      $(".ja", rows[0]).value = code(x.dr); $(".ja", rows[1]).value = code(x.cr); if (!$("[name=memo]", f).value) $("[name=memo]", f).value = (S.lang === "ar" && x.name_ar) || x.name; };
+      const want = x.lines ? x.lines.map(l => ({ account: code(l.res), side: l.side, amount: l.amount, party: l.party }))
+        : [{ account: code(x.dr), side: "debit" }, { account: code(x.cr), side: "credit" }];
+      const tb = $("#jl tbody", f);
+      while ($$("tr", tb).length < want.length) tb.insertAdjacentHTML("beforeend", $("#jlrow", f).innerHTML);
+      $$("tr", tb).forEach((tr, i) => { const w = want[i];
+        if (!w) { if (i >= 2) tr.remove(); else { $(".ja", tr).value = ""; $(".jd", tr).value = ""; $(".jc", tr).value = ""; } return; }
+        const s = $(".ja", tr); s.value = w.account; s.dispatchEvent(new Event("change", { bubbles: true }));
+        $(".jd", tr).value = w.side === "debit" && w.amount != null ? w.amount : ""; $(".jc", tr).value = w.side === "credit" && w.amount != null ? w.amount : "";
+        $(".jd", tr).placeholder = w.side === "debit" ? t("debit") : ""; $(".jc", tr).placeholder = w.side === "credit" ? t("credit") : "";
+        if (w.party) $(".jp", tr).value = w.party; });
+      const set = (k, v) => { const i = $(`[name=${k}]`, f); if (i && v && !i.value) i.value = v; };
+      set("memo", x.memo || (S.lang === "ar" && x.name_ar) || x.name); set("party", x.party_name);
+      if (x.bu_code) { const b = (S.boot.bus || []).find(u => u.code === x.bu_code); if (b) set("bu_id", String(b.id)); }
+      bal(); };
+    // save what is on screen as a model for the whole company; delete one that is not needed
+    S.H.jmsave = async () => {
+      const rows = collect(f).filter(l => l.account);
+      if (rows.length < 2) return toast(L2("Choose the accounts of at least two lines first.", "اختر حسابات سطرين على الأقل أولاً."), true);
+      const side = (l, i) => +l.debit ? "debit" : +l.credit ? "credit" : ($$("#jl tbody tr", f)[i] && $(".jd", $$("#jl tbody tr", f)[i]).placeholder ? "debit" : i === 0 ? "debit" : "credit");
+      const v = readForm(f);
+      const m = await uiForm(L2("Save as a model", "حفظ كنموذج"), [
+        { k: "name", l: L2("Model name", "اسم النموذج"), req: 1, v: v.template && tpl[v.template] && !tpl[v.template].builtin ? tpl[v.template].name : (v.memo || "") },
+        { k: "keep_amounts", l: L2("Keep the amounts (otherwise they are filled in each time)", "الاحتفاظ بالمبالغ (وإلا تُدخل كل مرة)"), type: "checkbox" },
+        { k: "keep_details", l: L2("Keep the narration, party and business unit", "الاحتفاظ بالبيان والطرف ووحدة الأعمال"), type: "checkbox", v: true }],
+        L2("Everyone in the company sees it in the model list, most recently used first. A model with the same name is replaced.", "يظهر لكل من في الشركة في قائمة النماذج، الأحدث استخداماً أولاً. النموذج بنفس الاسم يُستبدل."));
+      if (!m || !m.name) return;
+      try { const bu = (S.boot.bus || []).find(u => String(u.id) === String(v.bu_id));
+        const r = await api("POST", "/api/entry-models", { name: m.name, keep_amounts: m.keep_amounts, keep_details: m.keep_details, memo: v.memo, party: v.party, bu_code: bu ? bu.code : "",
+          kind: v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher",
+          lines: rows.map((l, i) => ({ account: l.account, side: side(l, i), amount: +l.debit || +l.credit || "", party: l.party })) });
+        S.boot.enums.entry_types = r.entry_types; toast(L2(`Saved as “${r.model.name}”.`, `حُفظ باسم «${r.model.name}».`));
+        tpl[r.model.id] = r.entry_types.find(x => x.id === r.model.id); const sel = $("[name=template]", f);
+        if (sel && ![...sel.options].some(o => o.value === r.model.id)) sel.querySelector("option").insertAdjacentHTML("afterend", `<option value="${esc(r.model.id)}">${esc(r.model.name)}</option>`);
+        if (sel) { sel.value = r.model.id; $("#jmdel", f).hidden = false; } } catch (er) { fail(er); }
+    };
+    S.H.jmdel = async () => { const sel = $("[name=template]", f), x = sel && tpl[sel.value]; if (!x) return;
+      if (!await uiConfirm(L2(`Delete the model “${x.name}” for everyone in the company?`, `حذف النموذج «${(S.lang === "ar" && x.name_ar) || x.name}» لكل من في الشركة؟`), { danger: true })) return;
+      try { const r = await api("DELETE", "/api/entry-models/" + encodeURIComponent(x.id)); S.boot.enums.entry_types = r.entry_types; delete tpl[x.id];
+        sel.querySelector(`option[value="${CSS.escape(x.id)}"]`).remove(); sel.value = ""; $("#jmdel", f).hidden = true; toast(L2("Model deleted.", "حُذف النموذج.")); } catch (er) { fail(er); } };
   } });
 }
 
@@ -7089,7 +7192,9 @@ async function custodyForm(C, pre = {}) {
   drawer(ed ? `${t("edit")} — ${C.code}` : L2("Issue cash custody", "صرف عهدة نقدية"), html, async v => {
     if (ed) { await api("PUT", "/api/custody/" + C.id, v); toast(t("saved")); refreshCustodies(); }
     else { const r = await api("POST", "/api/custody", v); toast(t("saved")); refreshCustodies(); closeDrawer(); location.hash = "#/cust/" + r.id; return false; }
-  }, { onOpen: f => { S.H.cusync = () => { const g = k => ($(`[name=${k}]`, f) || {}).value; if (ed) return; const bk = g("booking");
+  }, { onOpen: f => { if (!ed) presetBar(f, "custody:new", () => { const { issued_on, due_date, code, for_doc, ...x } = readForm(f); return x; },
+        x => { applyValues(f, x); S.H.cusync(); });
+      S.H.cusync = () => { const g = k => ($(`[name=${k}]`, f) || {}).value; if (ed) return; const bk = g("booking");
       const show = (k, on) => { const el = $(`[name=${k}]`, f); el.closest("label").style.display = on ? "" : "none"; el.dataset.skip = on ? "" : "1"; };
       show("amount", bk !== "none"); show("paid_from", bk === "money"); }; S.H.cusync(); } });
 }
@@ -9070,6 +9175,11 @@ function poForm(po) {
     $("select", box).insertAdjacentHTML("beforeend", r.rows.map(x => `<option value="${x.id}">${esc(x.code)} · ${fd(x.date)}${x.bu_code ? " · " + esc(x.bu_code) : ""} · ${esc(x.requested_by || "")} (${x.lines} ${L2("lines to order", "بنود للطلب")})</option>`).join(""));
     box.hidden = false; }).catch(() => {});
   S.H.pofrom = el => { if (el.value) poFromRequest(el.value); };
+  if (isNew && !po.pr_id) presetBar(f, "po:new", () => { const { date, pr_id, ...x } = readForm(f);
+      x.lines = $$("tr.pol", f).map(tr => Object.fromEntries(["kind", "description", "account", "qty", "unit", "rate"].map(k => [k, $(`[data-f=${k}]`, tr).value])))
+        .filter(l => l.description.trim());
+      return x; },
+    x => poForm({ ...x, id: null, date: today(), lines: (x.lines || []).length ? x.lines : [{ kind: "cost", qty: 1 }] }));
   S.H.poquote = el => poFromRequest(po.pr_id, el.value);
   f.addEventListener("input", calc); f.addEventListener("change", e => { if (e.target.dataset.f === "kind") { e.target.closest("tr").querySelector("[data-f=account]").dataset.v = ""; $("[data-f=account]", e.target.closest("tr")).value = ""; fill(e.target.closest("tr")); } calc(); });
   f.addEventListener("click", e => { const k = e.target.dataset.k; if (k === "addl") { $(".potbl tbody", f).insertAdjacentHTML("beforeend", lineRow({ kind: $("[name=bu_id]", f).value ? "cost" : "expense" })); fill($(".potbl tbody tr:last-child", f)); }
@@ -9346,8 +9456,12 @@ function importWizard(sheet) {
 }
 
 // ================================================================= entry types
+// the model just used moves to the top of the lists (the server keeps the same order for everyone)
+const modelUsed = id => { const L = S.boot.enums.entry_types || [], i = L.findIndex(x => x.id === id); if (i > 0) L.unshift(...L.splice(i, 1)); };
 function entryTypeForm(id) {
   const e = (S.boot.enums.entry_types || []).find(x => x.id === id); if (!e) return;
+  if (e.lines) {             // a model with its own lines opens as a journal entry with the model applied
+    journalForm(); const s = $(".drawer [name=template]"); if (s) { s.value = id; S.H.jtpl(s); } return; }
   const opts = side => side.choose.map(c => { const a = S.boot.accounts.find(x => x.code === c) || { code: c, name: c }; return [c, `${c} — ${aname(a)}`]; });
   const fixed = side => { const a = S.boot.accounts.find(x => x.code === side.fixed) || {}; return `${side.fixed} — ${aname(a)}`; };
   const fields = [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", req: 1 },
@@ -9357,7 +9471,7 @@ function entryTypeForm(id) {
   if (e.bu !== "none") fields.push({ k: "bu_id", l: t("bu"), type: "select", opts: buOpts(e.bu === "required" ? "" : "—"), req: e.bu === "required" });
   fields.push({ k: "ref", l: t("ref") }, { k: "memo", l: t("memo"), v: (S.lang === "ar" && e.name_ar) || e.name, span: "spanall" });
   drawer((S.lang === "ar" && e.name_ar) || e.name, form(fields) + partyList("etparties", (S.boot.partners || []).map(p => p.name)),
-    async v => { await api("POST", "/api/entry/" + e.id, v); toast(t("posted")); });
+    async v => { await api("POST", "/api/entry/" + e.id, v); modelUsed(e.id); toast(t("posted")); });
 }
 
 // Settings → Menus: hide sections & screens, the "+ New" menu, entry types
@@ -9726,7 +9840,9 @@ const IND_NAMES = { general: ["General business", "نشاط عام"], interior: 
   contracting: ["Contracting & construction", "المقاولات والإنشاءات"], development: ["Real-estate development", "التطوير العقاري"],
   sales: ["Trading & sales", "التجارة والمبيعات"], investment: ["Investment & holding", "الاستثمار والقابضة"],
   scaffolding: ["Scaffolding & equipment rental", "تأجير السقالات والمعدات"], healthcare: ["Clinics & medical centres", "العيادات والمراكز الطبية"],
-  homecare: ["Home healthcare", "الرعاية الصحية المنزلية"] };
+  homecare: ["Home healthcare", "الرعاية الصحية المنزلية"], restaurant: ["Restaurants & cafés", "المطاعم والكافيهات"],
+  services: ["Professional services & consulting", "الخدمات المهنية والاستشارات"], manufacturing: ["Manufacturing & workshops", "التصنيع والورش"],
+  logistics: ["Transport & logistics", "النقل والخدمات اللوجستية"] };
 function indName(k) { const n = IND_NAMES[k]; return n ? L2(n[0], n[1]) : k; }
 PAGES.industry = async (view) => {
   const d = await api("GET", "/api/industries");
@@ -9740,7 +9856,7 @@ PAGES.industry = async (view) => {
   const ed = can("settings.menus", "edit");
   S.H.indapply = async el => { const k = el.dataset.k, ty = d.types.find(x => x.key === k);
     if (!await uiConfirm(L2(`Apply the “${ty.name}” template? Missing accounts are added, unused modules are hidden (restorable in Settings → Menus) and payroll departments and pay items are set. Nothing is deleted.`, `هل تريد تطبيق قالب «${ty.name_ar}»؟ تُضاف الحسابات الناقصة، وتُخفى الأقسام غير المستخدمة (ويمكن استعادتها من الإعدادات ← القوائم)، وتُضبط أقسام الرواتب وبنود الأجر. لا يُحذف شيء.`))) return;
-    try { const r = await api("POST", "/api/industries/apply", { type: k }); toast(L2(`Applied: ${r.accounts_added.length} account(s) added.`, `تم التطبيق: أُضيف ${r.accounts_added.length} حساب.`)); await refreshBoot(); route();
+    try { const r = await api("POST", "/api/industries/apply", { type: k }); toast(L2(`Applied: ${r.accounts_added.length} account(s) and ${(r.models_added || []).length} entry model(s) added.`, `تم التطبيق: أُضيف ${r.accounts_added.length} حساب و${(r.models_added || []).length} نموذج قيد.`)); await refreshBoot(); route();
       if (platformOn()) window.dispatchEvent(new Event("beyond-billing"));     // the platform learns the new industry
     } catch (e) { fail(e); } };
   view.innerHTML = `<div class="banner info">${L2("Choose the company's business type. Each template enables the relevant modules, adds required accounts and sets payroll departments, job titles, pay items and crew work items. A ready Excel workbook is available for each type.", "اختر نوع نشاط الشركة. يفعّل كل قالب الأقسام المناسبة، ويضيف الحسابات اللازمة، ويضبط أقسام الرواتب والمسميات الوظيفية وبنود الأجر وبنود أعمال الأطقم. يتوفر مصنف Excel جاهز لكل نوع.")}</div>
@@ -12005,7 +12121,9 @@ PAGES.ereceipts = async (view, parts, q) => {
 const TYPE_NAMES = () => ({ interior: L2("Interior design and fit-out", "التصميم الداخلي والتشطيبات"), contracting: L2("Contracting and construction", "المقاولات والإنشاءات"),
   development: L2("Real-estate development", "التطوير العقاري"), sales: L2("Trading and sales", "التجارة والمبيعات"), investment: L2("Investment and holding", "الاستثمار والشركات القابضة"),
   scaffolding: L2("Equipment rental", "تأجير المعدات"), healthcare: L2("Clinics and medical centres", "العيادات والمراكز الطبية"),
-  homecare: L2("Home healthcare", "الرعاية الصحية المنزلية"), general: L2("General business", "نشاط عام") });
+  homecare: L2("Home healthcare", "الرعاية الصحية المنزلية"), restaurant: L2("Restaurants and cafés", "المطاعم والكافيهات"),
+  services: L2("Professional services and consulting", "الخدمات المهنية والاستشارات"), manufacturing: L2("Manufacturing and workshops", "التصنيع والورش"),
+  logistics: L2("Transport and logistics", "النقل والخدمات اللوجستية"), general: L2("General business", "نشاط عام") });
 const TOUR = () => [
   ["", L2("Welcome to BeyondERP", "مرحباً بك في BeyondERP"), L2("A short tour. Select Next to continue, Hide to examine an area, or Skip at any time.", "جولة قصيرة. اختر «التالي» للمتابعة، أو «إخفاء» لمعاينة جزء، أو «تخطي» في أي وقت."), "core"],
   ["#nav", L2("The menu", "القائمة"), L2("All screens, grouped by area. Select a group to show its screens.", "جميع الشاشات مصنفة حسب المجال. اختر مجموعة لعرض شاشاتها."), "core"],

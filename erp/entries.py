@@ -40,7 +40,32 @@ BUILTIN = [
     ("wht_offset", "Offset client-withheld tax against income tax", "خصم ضريبة الخصم من ضريبة الدخل", "Journal Voucher", "role:income_tax_payable", "role:wht_receivable", "none", "none"),
     ("legal_reserve", "Transfer to legal reserve", "تجنيب الاحتياطي القانوني", "Reserve Transfer", "role:retained", "subtype:reserves", "none", "none"),
     ("investment", "Buy an investment", "شراء استثمار", "Journal Voucher", "subtype:investment", "subtype:cash", "optional", "none"),
+    # work and purchases owed, nothing paid yet: the cost lands on the project now, the supplier is owed until paid
+    ("work_on_credit", "Work at a project on credit (owed to the supplier)", "أعمال بمشروع على الحساب (مستحقة للمورد)",
+     "Direct Cost", "type:COGS", "role:ap", "required", "required"),
+    ("sub_certified", "Subcontractor work certified (owed)", "أعمال مقاول باطن معتمدة (مستحقة)", "Direct Cost",
+     "role:subcontract_cost", "role:sub_payable", "required", "required"),
+    ("expense_on_credit", "Expense on credit (owed to the supplier)", "مصروف على الحساب (مستحق للمورد)", "Operating Expense",
+     "type:Expense", "role:ap", "required", "optional"),
+    ("supplier_advance", "Advance paid to a supplier", "دفعة مقدمة لمورد", "Payment Voucher", "role:supplier_advances",
+     "subtype:cash", "required", "optional"),
+    ("supplier_advance_apply", "Apply a supplier advance to their bill", "تسوية دفعة مقدمة مع فاتورة المورد", "Journal Voucher",
+     "role:ap", "role:supplier_advances", "required", "optional"),
+    ("client_advance", "Advance received from a client", "دفعة مقدمة من عميل", "Receipt Voucher", "subtype:cash",
+     "role:client_advances", "required", "optional"),
+    ("retention_in", "Client retention collected", "تحصيل محتجزات العميل", "Receipt Voucher", "subtype:cash",
+     "role:retention_receivable", "required", "optional"),
+    ("cheque_deposit", "Deposit a customer's cheque", "إيداع شيك عميل", "Journal Voucher", "subtype:cash", "role:notes_receivable",
+     "optional", "none"),
+    ("partner_paid", "A partner paid a company cost personally", "شريك دفع تكلفة للشركة من ماله", "Journal Voucher",
+     "type:Expense,COGS", "role:partner_current", "required", "optional"),
+    ("employee_advance", "Salary advance to an employee", "سلفة لموظف", "Journal Voucher", "role:employee_advances", "subtype:cash",
+     "required", "none"),
+    ("salary_accrue", "Salaries owed for the month", "إثبات الرواتب المستحقة", "Payroll Accrual", "type:Expense,COGS",
+     "role:accrued_payroll", "none", "optional"),
 ]
+MAX_LINES = 20
+MAX_MODELS = 300
 ID_RE = re.compile(r"^[a-z0-9_]{1,40}$")
 SIDE_RE = re.compile(r"^(|[\w.-]{1,20}|role:[a-z_]+|subtype:[a-z_,]+|type:[A-Za-z,]+)$")
 
@@ -52,14 +77,15 @@ def defaults():
 
 def load(db):
     raw = (db.setting("entry_types") or "").strip()
-    if not raw:
-        return defaults()
     try:
-        types = json.loads(raw)
+        removed = set(json.loads(db.setting("entry_types_removed") or "[]"))
     except ValueError:
-        return defaults()
+        removed = set()
+    try:
+        types = json.loads(raw) if raw else []
+    except ValueError:
+        types = []
     have = {t.get("id") for t in types}
-    removed = set(json.loads(db.setting("entry_types_removed") or "[]"))
     # built-ins added by later versions appear unless they were removed on purpose
     return types + [t for t in defaults() if t["id"] not in have and t["id"] not in removed]
 
@@ -85,11 +111,68 @@ def resolve_side(db, spec, accounts=None):
     return {"choose": [a["code"] for a in live], "default": ""}
 
 
+def used(db):
+    """When each model was last used ({id: ISO time}), company-wide: the lists show the most recently used first."""
+    try:
+        u = json.loads(db.setting("entry_types_used") or "{}")
+        return u if isinstance(u, dict) else {}
+    except ValueError:
+        return {}
+
+
+def touch(db, tid):
+    """A model was just used to post an entry."""
+    if not tid or not any(t["id"] == tid for t in load(db)):
+        return
+    import datetime as _dt
+    u = used(db)
+    u[tid] = _dt.datetime.now().isoformat(timespec="microseconds")     # two uses in the same second still have an order
+    db.set_setting("entry_types_used", json.dumps(u))
+
+
 def for_client(db):
-    """Entry types with each side resolved to account codes (what the forms need)."""
+    """Entry types with each side resolved to account codes (what the forms need), most recently used first."""
     accounts = db.q("SELECT code, type, subtype, role, active FROM accounts ORDER BY code")
-    return [{**t, "dr": resolve_side(db, t["debit"], accounts), "cr": resolve_side(db, t["credit"], accounts)}
-            for t in load(db)]
+    u = used(db)
+    out = []
+    for t in load(db):
+        row = {**t, "dr": resolve_side(db, t["debit"], accounts), "cr": resolve_side(db, t["credit"], accounts),
+               "used_at": u.get(t["id"], "")}
+        if t.get("lines"):
+            row["lines"] = [{**ln, "res": resolve_side(db, ln["account"], accounts)} for ln in t["lines"]]
+        out.append(row)
+    return sorted(out, key=lambda t: t["used_at"], reverse=True)       # stable: never-used keep their order
+
+
+def _clean_model_lines(name, lines):
+    """A model's own lines: each an account (or a choice, as for a side), debit or credit, and optionally an amount and
+    a party. Amounts left empty are filled in when the model is used."""
+    if lines in (None, "", []):
+        return None
+    if not isinstance(lines, list):
+        raise ValidationError(f"{name}: lines must be a list")
+    out = []
+    for i, ln in enumerate(lines, start=1):
+        if not isinstance(ln, dict):
+            continue
+        spec = text(ln.get("account"))
+        if not SIDE_RE.match(spec):
+            raise ValidationError(f"{name}: line {i} has a bad account setting")
+        side = text(ln.get("side")).lower()
+        if side not in ("debit", "credit"):
+            raise ValidationError(f"{name}: line {i} must be a debit or a credit")
+        amount = ln.get("amount")
+        amount = None if amount in (None, "") else acc.num(amount, f"{name}: line {i} amount")
+        if amount is not None and amount < 0:
+            raise ValidationError(f"{name}: line {i} amount cannot be negative")
+        out.append({"account": spec, "side": side, "amount": amount, "party": text(ln.get("party"), maxlen=120)})
+    if len(out) < 2:
+        raise ValidationError(f"{name}: a model needs at least two lines")
+    if len(out) > MAX_LINES:
+        raise ValidationError(f"{name}: at most {MAX_LINES} lines")
+    if not any(ln["side"] == "debit" for ln in out) or not any(ln["side"] == "credit" for ln in out):
+        raise ValidationError(f"{name}: a model needs a debit line and a credit line")
+    return out
 
 
 def save(db, types):
@@ -104,19 +187,123 @@ def save(db, types):
             tid = f"{tid}_{len(seen)}"
         seen.add(tid)
         name = text(t.get("name"), "entry type name", required=True, maxlen=80)
+        lines = _clean_model_lines(name, t.get("lines"))
+        if lines:                                   # a model with its own lines: the two sides are its first debit and credit
+            t = {**t, "debit": next(ln["account"] for ln in lines if ln["side"] == "debit"),
+                 "credit": next(ln["account"] for ln in lines if ln["side"] == "credit")}
         for side in ("debit", "credit"):
             if not SIDE_RE.match(text(t.get(side))):
                 raise ValidationError(f"{name}: bad {side} account setting")
-        out.append({"id": tid, "name": name, "name_ar": text(t.get("name_ar"), maxlen=80),
-                    "kind": text(t.get("kind"), maxlen=60) or name, "debit": text(t.get("debit")), "credit": text(t.get("credit")),
-                    "party": t.get("party") if t.get("party") in ("none", "optional", "required") else "optional",
-                    "bu": t.get("bu") if t.get("bu") in ("none", "optional", "required") else "optional",
-                    "active": t.get("active") not in (False, 0, "0", "false"),
-                    "builtin": tid in {b[0] for b in BUILTIN}})
+        row = {"id": tid, "name": name, "name_ar": text(t.get("name_ar"), maxlen=80),
+               "kind": text(t.get("kind"), maxlen=60) or name, "debit": text(t.get("debit")), "credit": text(t.get("credit")),
+               "party": t.get("party") if t.get("party") in ("none", "optional", "required") else "optional",
+               "bu": t.get("bu") if t.get("bu") in ("none", "optional", "required") else "optional",
+               "active": t.get("active") not in (False, 0, "0", "false"),
+               "builtin": tid in {b[0] for b in BUILTIN}}
+        if lines:
+            row["lines"] = lines
+        for k, n in (("memo", 300), ("party_name", 120), ("bu_code", 40), ("by", 80), ("created_at", 40)):
+            if text(t.get(k)):
+                row[k] = text(t.get(k), maxlen=n)
+        out.append(row)
+    if len(out) > MAX_MODELS:
+        raise ValidationError(f"At most {MAX_MODELS} entry models")
     removed = sorted({b[0] for b in BUILTIN} - {t["id"] for t in out})
     db.set_setting("entry_types", json.dumps(out, ensure_ascii=False))
     db.set_setting("entry_types_removed", json.dumps(removed))
     return out
+
+
+def add_model(db, d, user=""):
+    """Save an entry as a model, from the journal form: its lines (accounts, debit or credit, amounts only when asked),
+    and optionally its narration, party and business unit. Company-wide; a model with the same name is replaced."""
+    name = text(d.get("name"), "model name", required=True, maxlen=80)
+    keep = d.get("keep_amounts") in (True, 1, "1", "true", "on")
+    lines = []
+    for ln in d.get("lines") or []:
+        if not isinstance(ln, dict) or not text(ln.get("account")):
+            continue
+        if not db.one("SELECT 1 FROM accounts WHERE code=?", (text(ln.get("account")),)):
+            raise ValidationError(f"Unknown account {text(ln.get('account'))}")
+        lines.append({"account": text(ln.get("account")), "side": text(ln.get("side")).lower(),
+                      "amount": ln.get("amount") if keep and ln.get("amount") not in (None, "", 0, "0") else None,
+                      "party": text(ln.get("party"))})
+    types = load(db)
+    same = next((t for t in types if t["name"].strip().lower() == name.lower() and not t.get("builtin")), None)
+    tid = same["id"] if same else "m_" + (re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:30] or "model")
+    base, n = tid, 1
+    while not same and any(t["id"] == tid for t in types):
+        n += 1
+        tid = f"{base[:34]}_{n}"
+    row = {"id": tid, "name": name, "name_ar": text(d.get("name_ar"), maxlen=80), "kind": text(d.get("kind"), maxlen=60) or "Journal Voucher",
+           "lines": lines, "party": "optional", "bu": "optional", "active": True, "by": user, "created_at": acc.now_iso()[:10]}
+    if d.get("keep_details") in (True, 1, "1", "true", "on"):
+        row.update({"memo": text(d.get("memo")), "party_name": text(d.get("party")), "bu_code": text(d.get("bu_code"))})
+    out = save(db, [row if t["id"] == tid else t for t in types] + ([] if same else [row]))
+    touch(db, tid)
+    return next(t for t in out if t["id"] == tid)
+
+
+def delete_model(db, tid):
+    """Remove a model for the whole company. A built-in one can be brought back from Settings → Menus → Entry types."""
+    types = load(db)
+    if not any(t["id"] == tid for t in types):
+        raise ValidationError("That model was already removed")
+    save(db, [t for t in types if t["id"] != tid])
+    u = used(db)
+    if u.pop(tid, None):
+        db.set_setting("entry_types_used", json.dumps(u))
+
+
+# ---------------------------------------------------------------- the workbook: one row per model line
+def sheet_rows(db):
+    """Models made or changed by the company, for the "Entry Models" sheet (built-ins as shipped are not listed)."""
+    base = {t["id"]: t for t in defaults()}
+    rows = []
+    for t in load(db):
+        b = base.get(t["id"])
+        if b and all(t.get(k) == b[k] for k in ("name", "name_ar", "kind", "debit", "credit", "party", "bu", "active")) and not t.get("lines"):
+            continue
+        lines = t.get("lines") or [{"account": t["debit"], "side": "debit", "amount": None, "party": ""},
+                                   {"account": t["credit"], "side": "credit", "amount": None, "party": ""}]
+        for i, ln in enumerate(lines, start=1):
+            rows.append({"model": t["id"], "name": t["name"], "name_ar": t.get("name_ar", ""), "kind": t["kind"], "line": i,
+                         "side": ln["side"].title(), "account": ln["account"], "amount": ln.get("amount"), "line_party": ln.get("party", ""),
+                         "party": t.get("party", "optional"), "bu": t.get("bu", "optional"), "active": "Yes" if t.get("active", True) else "No",
+                         "memo": t.get("memo", ""), "party_name": t.get("party_name", ""), "bu_code": t.get("bu_code", "")})
+    return rows
+
+
+def import_sheet(db, rows):
+    """The "Entry Models" sheet back in: each model replaces the one with the same id (others stay). Two-line models
+    without amounts keep the simple two-sided form; the rest keep their lines."""
+    by = {}
+    for r in rows or []:
+        mid = text(r.get("model")) or re.sub(r"[^a-z0-9]+", "_", text(r.get("name")).lower()).strip("_")[:40]
+        if not mid:
+            continue
+        by.setdefault(mid, []).append(r)
+    if not by:
+        return 0
+    types = {t["id"]: t for t in load(db)}
+    for mid, rs in by.items():
+        rs = sorted(rs, key=lambda r: acc.num(r.get("line") or 0, "line"))
+        h = rs[0]
+        lines = [{"account": text(r.get("account")), "side": text(r.get("side")).lower(), "amount": r.get("amount"),
+                  "party": text(r.get("line_party"))} for r in rs]
+        simple = len(lines) == 2 and lines[0]["side"] == "debit" and lines[1]["side"] == "credit" and not any(
+            ln["amount"] not in (None, "") or ln["party"] for ln in lines)
+        row = {"id": mid, "name": text(h.get("name")) or mid, "name_ar": text(h.get("name_ar")), "kind": text(h.get("kind")),
+               "party": text(h.get("party")) or "optional", "bu": text(h.get("bu")) or "optional",
+               "active": text(h.get("active")).lower() not in ("no", "false", "0"),
+               "memo": text(h.get("memo")), "party_name": text(h.get("party_name")), "bu_code": text(h.get("bu_code"))}
+        if simple:
+            row.update(debit=lines[0]["account"], credit=lines[1]["account"])
+        else:
+            row["lines"] = lines
+        types[mid] = row
+    save(db, list(types.values()))
+    return len(by)
 
 
 def kinds(db):

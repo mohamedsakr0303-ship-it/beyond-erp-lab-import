@@ -32,6 +32,7 @@ SHEET_PERM = {
     "Journal Vouchers": "accounting.journal", "Chart of Accounts": "accounting.coa", "Partners": "partners",
     "Partner Shares": "partners", "Partner Transactions": "partners.transactions", "Tax Codes": "tax.codes",
     "Products": "shop.products", "Settings": "settings", "Loans": "accounting.loans", "Loan Transactions": "accounting.loans",
+    "Entry Models": "accounting.journal", "Saved Fill-ins": "settings",
     "Cash Custody": "purchasing.custody", "Custody Expenses": "purchasing.custody", "Rental Equipment": "rentals.fleet",
     "Rental Stock Lots": "rentals.fleet", "Rental Contracts": "rentals.contracts", "Sales Contracts": "shop.orders",
     "Bank Statement Lines": "accounting.bankrec", "Recurring Entries": "accounting.recurring", "Budgets": "accounting.budgets", "Purchase Orders": "purchasing.orders", "Service Plans": "shop.subscriptions", "Service Subscriptions": "shop.subscriptions",

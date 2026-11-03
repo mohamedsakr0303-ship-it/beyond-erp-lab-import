@@ -160,11 +160,13 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
         period = [r for r in base["Settings"] if r["key"] in ("report_from", "report_to") and r["key"] not in have]
         data["Settings"] = period + list(data["Settings"])
     elif template:
-        keep = {"Settings", "Chart of Accounts", "Warehouses", "Tax Codes"}
+        keep = {"Settings", "Chart of Accounts", "Warehouses", "Tax Codes", "Entry Models"}   # set-up, not data
         data = {k: (v if k in keep else []) for k, v in data.items()}
     from . import branding
     ident = identity or (branding.template_identity(db) if template and given is None else None)   # not the demo file
     if ident and not ident["own"]:   # universal: placeholders instead of this company's details (skipped on import)
+        data = {**data, "Entry Models": [{**r, "line_party": "", "party_name": "", "memo": "", "bu_code": ""}
+                                         for r in data.get("Entry Models") or []]}
         rows = [r for r in data.get("Settings") or [] if r.get("key") in GENERIC_SETTING_KEYS]
         data = {**data, "Settings": [{"key": "company_name", "value": ident["name"]},
                                      {"key": "company_tagline", "value": ident["tagline"]}] + rows}
@@ -2047,7 +2049,9 @@ COVER_SECTIONS = [
     ("START HERE", [("How to Use", "What to type on which sheet, and what updates by itself"),
                     ("Partner Pack", "The partners' management accounts: billed profit, work in progress, statements, each partner's equity"),
                     ("Dashboard", "Live position: cash, receivables, payables, profit, margins, projects, months"),
-                    ("Settings", "Company details and the report period (report_from / report_to)")]),
+                    ("Settings", "Company details and the report period (report_from / report_to)"),
+                    ("Entry Models", "The company's own entry models: one row per line, offered in the app's journal"),
+                    ("Saved Fill-ins", "Forms' saved fill-ins: pick one in the app to fill a form in")]),
     ("EVERY DAY", [("Journal Vouchers", "Any entry as balanced debit and credit lines"),
                    ("Direct Costs", "Project costs: materials, subcontractors, site labour"),
                    ("Operating Expenses", "Office and company overhead"), ("Payroll", "Quick wage entries (one line per worker)"),

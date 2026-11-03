@@ -26,6 +26,22 @@ def _specs(C):
                   "and the pay items (name | Arabic | earning/deduction | fixed/run | taxable | insurable | on/off). Rates as decimals: 0.11 = 11 %",
          "cols": [C("key", "Setting", "الإعداد", width=26, required=True), C("value", "Value", "القيمة", width=60),
                   C("note", "Note", "ملاحظة", width=30)]},
+        {"name": "Entry Models", "ar": "نماذج القيود", "module": "accounting", "setup": True,
+         "title": "Entry models the company made or changed — one row per line; rows with the same Model ID form one model. Account: a code, "
+                  "role:ap, type:Expense or subtype:cash (a choice made when it is used). Amount blank = filled in each time. "
+                  "Re-importing replaces the model with the same ID; built-in models as shipped are not listed",
+         "cols": [C("model", "Model ID", "رمز النموذج", width=18, required=True), C("name", "Model Name", "اسم النموذج", width=30, required=True),
+                  C("name_ar", "Arabic Name", "الاسم بالعربية", width=26), C("kind", "Entry Type", "نوع القيد", width=16),
+                  C("line", "Line", "السطر", kind="num", width=6), C("side", "Debit / Credit", "مدين / دائن", width=9, choices=["Debit", "Credit"]),
+                  C("account", "Account", "الحساب", width=18, required=True), C("amount", "Amount (optional)", "المبلغ (اختياري)", kind="money"),
+                  C("line_party", "Line Party", "طرف السطر", width=16), C("party", "Party", "الطرف", width=9, choices=["none", "optional", "required"]),
+                  C("bu", "Business Unit", "وحدة الأعمال", width=9, choices=["none", "optional", "required"]),
+                  C("active", "On", "مفعّل", width=6, choices=["Yes", "No"]), C("memo", "Narration", "البيان", width=24),
+                  C("party_name", "Default Party", "الطرف الافتراضي", width=16), C("bu_code", "Default Business Unit", "وحدة الأعمال الافتراضية", width=12)]},
+        {"name": "Saved Fill-ins", "ar": "التعبئات المحفوظة", "module": "settings", "setup": True,
+         "title": "Forms' saved fill-ins (company-wide): the form, a name and its values. Re-importing replaces the fill-in of the same form and name",
+         "cols": [C("form", "Form", "النموذج", width=18, required=True), C("name", "Name", "الاسم", width=26, required=True),
+                  C("values", "Values", "القيم", width=60, required=True), C("by", "Saved By", "حفظه", width=14), C("used_at", "Last Used", "آخر استخدام", width=18)]},
         {"name": "Employees", "ar": "الموظفون والعمال", "module": "payroll", "setup": True,
          "title": "Employees and workers (the contract). Re-importing a row with the same code updates the employee — nothing is doubled",
          "cols": [C("code", "Employee Code", "كود الموظف", width=10, required=True), C("name", "Name", "الاسم", width=22, required=True),
@@ -1019,7 +1035,18 @@ ROW_IMPORTERS = [("Employees", employee_row), ("Loans", loan), ("Loan Transactio
                  ("Budgets", budget_row), ("Service Plans", service_plan), ("Service Subscriptions", service_sub),
                  ("Project Phases", phase_row), ("Project Tasks", task_row), ("Variation Orders", vo_row), ("Subcontract Payments", sub_payment),
                  ("Equipment", equipment_row), ("Maintenance Plans", plan_row), ("Equipment Usage", usage_row), ("Maintenance Log", maint_row)]
+def entry_model_rows(db, items, user=""):
+    from . import entries
+    return entries.import_sheet(db, [r for _, r in items])
+
+
+def fill_in_rows(db, items, user=""):
+    from . import presets
+    return presets.import_sheet(db, [r for _, r in items])
+
+
 GROUP_IMPORTERS = [("Payroll Settings", lambda r: "all", payroll_settings_rows),
+                   ("Entry Models", lambda r: "all", entry_model_rows), ("Saved Fill-ins", lambda r: "all", fill_in_rows),
                    ("Payroll Run", lambda r: str(r.get("date"))[:7], payroll_run_rows),
                    ("Custody Expenses", lambda r: (str(r.get("custody")), str(r.get("report") or r.get("date"))), custody_reports),
                    ("Rental Contracts", lambda r: str(r.get("ref")), rent_contract),
@@ -1033,7 +1060,7 @@ GROUP_IMPORTERS = [("Payroll Settings", lambda r: "all", payroll_settings_rows),
                    ("Stock Counts", lambda r: str(r.get("code")), count_rows),
                    ("Attendance", lambda r: str(r.get("date"))[:10], attendance_rows),
                    ("E-Receipts", lambda r: str(r.get("number")), receipt_rows)]
-ORDER = ["Payroll Settings", "Employees", "Payroll Run", "Loans", "Loan Transactions", "Cash Custody", "Custody Expenses", "Rental Equipment", "Rental Stock Lots",
+ORDER = ["Payroll Settings", "Entry Models", "Saved Fill-ins", "Employees", "Payroll Run", "Loans", "Loan Transactions", "Cash Custody", "Custody Expenses", "Rental Equipment", "Rental Stock Lots",
          "Rental Contracts", "Sales Contracts", "Recurring Entries", "Bank Statement Lines", "Purchase Orders", "Budgets", "Service Plans", "Service Subscriptions",
          "Project Phases", "Project Tasks", "Contracts", "Variation Orders", "Subcontractor Certificates", "Subcontract Payments",
          "Purchase Requests", "Supplier Quotes", "Stock Counts", "Equipment", "Maintenance Plans", "Equipment Usage", "Maintenance Log",

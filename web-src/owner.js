@@ -471,7 +471,8 @@ const SECTIONS = () => [["dashboard", L("Dashboard & calculators", "لوحة ا�
   ["import_export", L("Import & export", "الاستيراد والتصدير")], ["settings", L("Settings & automations", "الإعدادات والأتمتة")], ["users", L("Users & audit", "المستخدمون والتدقيق")]];
 const secName = k => (SECTIONS().find(s => s[0] === k) || [k, k])[1];
 // industries in the order the ERP lists them (erp/industries.py ORDER), then any added in the console
-const IND_ORDER = ["general", "interior", "contracting", "development", "sales", "investment", "scaffolding", "healthcare", "homecare"];
+const IND_ORDER = ["general", "interior", "contracting", "development", "sales", "investment", "scaffolding", "healthcare", "homecare",
+  "restaurant", "services", "manufacturing", "logistics"];
 const industriesOf = cfg => { const rank = k => IND_ORDER.includes(k) ? IND_ORDER.indexOf(k) : 99;
   return Object.entries(cfg.core_by_industry || {}).sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0])); };
 // sections → screens → tabs of the ERP, named as the ERP names them (its i18n.js). Tabs: as erp/db.py SUBTABS.

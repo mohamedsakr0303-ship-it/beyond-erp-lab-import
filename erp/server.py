@@ -129,6 +129,11 @@ def _my_bus(db, user):
     return [b for b in rows if b["id"] in sc.ids] if sc else rows
 
 
+def _presets(db):
+    from . import presets
+    return presets.load(db)
+
+
 def _open_custodies(db):
     """Open custody cards (code, holder): offered as a money source wherever a payment is made."""
     try:
@@ -225,6 +230,7 @@ def bootstrap(ctx):
         "stages": [r["name"] for r in db.q("SELECT DISTINCT name FROM project_phases ORDER BY name LIMIT 300")],
         "warehouses": db.q("SELECT * FROM warehouses ORDER BY id"),
         "custodies": _open_custodies(db),
+        "form_presets": _presets(db),
         "partners": db.q("SELECT * FROM partners ORDER BY id"),
         "items": db.q("SELECT * FROM stock_items ORDER BY name"),
         "tax_codes": db.q("SELECT * FROM tax_codes ORDER BY kind, code"),
@@ -458,9 +464,28 @@ def put_settings(ctx):
 
 @route("PUT", "/api/entry-types", "settings.menus", "edit")
 def put_entry_types(ctx):
-    out = entries.save(ctx.db, ctx.body.get("types"))
+    # the Settings table edits names, sides and switches; a model's own lines and saved details stay as they were
+    old = {t["id"]: t for t in entries.load(ctx.db)}
+    types = [{**{k: old[t.get("id")][k] for k in ("lines", "memo", "party_name", "bu_code", "by", "created_at") if k in old.get(t.get("id"), {})}, **t}
+             if isinstance(t, dict) and t.get("id") in old else t for t in (ctx.body.get("types") or [])]
+    out = entries.save(ctx.db, types)
     ctx.log("settings", "entry types")
     return ok({"types": out})
+
+
+@route("POST", "/api/entry-models", "accounting.journal", "add")
+def add_entry_model(ctx):
+    """Save the entry on screen as a model for the whole company (anyone who may add journal entries)."""
+    m = entries.add_model(ctx.db, ctx.body, ctx.user["username"])
+    ctx.log("entry_model.save", m["name"])
+    return ok({"model": m, "entry_types": entries.for_client(ctx.db)})
+
+
+@route("DELETE", "/api/entry-models/<tid>", "accounting.journal", "edit")
+def delete_entry_model(ctx, tid):
+    entries.delete_model(ctx.db, tid)
+    ctx.log("entry_model.delete", tid)
+    return ok({"entry_types": entries.for_client(ctx.db)})
 
 
 @route("PUT", "/api/new-menu", "settings.menus", "edit")
@@ -477,6 +502,7 @@ def post_entry_type(ctx, tid):
     except _Duplicate as e:
         return _dup_reply(e)
     ctx.log("journal.add", eid)
+    entries.touch(ctx.db, tid)
     return ok({"id": eid})
 
 
@@ -842,6 +868,8 @@ def journal_add(ctx):
     except _Duplicate as e:
         return _dup_reply(e)
     ctx.log("journal.add", eid)
+    if ctx.body.get("template"):                    # the model used goes to the top of everyone's list
+        entries.touch(ctx.db, acc.text(ctx.body.get("template")))
     return ok({"id": eid})
 
 
@@ -888,6 +916,46 @@ DOCS = {  # type -> (function, module)
     "partner_tx": (acc.record_partner_tx, "partners.transactions"),
     "stock_move": (acc.stock_move, "stock.moves"),
 }
+
+
+# saved fill-ins (erp/presets.py): whoever may add on a form may save, use and delete its fill-ins
+PRESET_FORMS = {**{"doc:" + k: v[1] for k, v in DOCS.items()}, "po:new": "purchasing.orders", "custody:new": "purchasing.custody",
+                "contact:new": "purchasing.contacts", "loan:new": "accounting.loans", "recurring:new": "accounting.recurring"}
+
+
+def _preset_ok(ctx, key):
+    if key not in PRESET_FORMS:
+        raise acc.ValidationError("Unknown form")
+    ctx.require(PRESET_FORMS[key], "add")
+
+
+@route("POST", "/api/presets")
+def preset_save(ctx):
+    from . import presets
+    key = acc.text(ctx.body.get("key"))
+    _preset_ok(ctx, key)
+    p = presets.save(ctx.db, key, ctx.body.get("name"), ctx.body.get("values"), ctx.user["username"])
+    ctx.log("preset.save", f"{key} {p['name']}")
+    return ok({"preset": p, "presets": presets.load(ctx.db)})
+
+
+@route("POST", "/api/presets/use")
+def preset_use(ctx):
+    from . import presets
+    key = acc.text(ctx.body.get("key"))
+    _preset_ok(ctx, key)
+    presets.touch(ctx.db, key, ctx.body.get("id"))
+    return ok({"presets": presets.load(ctx.db)})
+
+
+@route("DELETE", "/api/presets/<pid>")
+def preset_delete(ctx, pid):
+    from . import presets
+    key = acc.text(ctx.q.get("key"))
+    _preset_ok(ctx, key)
+    presets.delete(ctx.db, key, pid)
+    ctx.log("preset.delete", f"{key} {pid}")
+    return ok({"presets": presets.load(ctx.db)})
 
 
 @route("POST", "/api/docs/<dtype>")

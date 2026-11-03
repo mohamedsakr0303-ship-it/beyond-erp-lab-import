@@ -929,9 +929,14 @@ def _care_demo(db, industry, user, a0, today):
                                                              {"account": acc.money_account(db, "Bank Transfer"), "credit": r["bal"] / 100}])
 
 
+# business types without a demo of their own show the closest one
+DEMO_AS = {"restaurant": "sales", "services": "general", "manufacturing": "sales", "logistics": "general"}
+
+
 def load(db, user="", replace=False, industry=None, lang="en"):
     """Fill the books with the demo company — the whole of it, or what one business type does (industry, after
     industries.apply). Refuses on books that already hold data unless replace (wipes first)."""
+    industry = DEMO_AS.get(industry, industry)
     from . import (assets, bankrec, documents, interchange, recurring, rentals, sales)
     if not is_empty(db) and not replace:
         raise ValidationError("These books already contain data. Demo data loads into an empty company only; create a new company to try it.")
