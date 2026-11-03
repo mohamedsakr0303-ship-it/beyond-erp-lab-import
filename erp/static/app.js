@@ -11799,6 +11799,12 @@ function prForm(pr) {
     const r = await api("POST", "/api/purchase-requests", { ...v, lines }); toast(t("saved")); closeDrawer(); location.hash = "#/purchase-request/" + r.id; return false;
   }, { wide: true });
   f.addEventListener("click", e => { const k = e.target.dataset.k; if (k === "addl") $(".prtbl tbody", f).insertAdjacentHTML("beforeend", lineRow({ kind: $("[name=bu_id]", f).value ? "cost" : $("[name=warehouse_id]", f).value ? "stock" : "expense" })); if (k === "rm" && $$("tr.prl", f).length > 1) e.target.closest("tr").remove(); });
+  // saved fill-ins (new requests): the project or store, notes and items; never the dates or who asks
+  if (!pr.id) presetBar(f, "pr:new", () => {
+    const { date, needed_by, requested_by, submit, ...v } = readForm(f);
+    const lines = $$("tr.prl", f).map(tr => Object.fromEntries($$("[data-f]", tr).map(i => [i.dataset.f, i.value]))).filter(l => !isBlank(l.description));
+    return { ...v, ...(lines.length ? { lines } : {}) };
+  }, v => prForm({ date: today(), ...v, lines: v.lines && v.lines.length ? v.lines : [{ qty: 1 }] }));
 }
 PAGES["purchase-requests"] = async (view, parts, q) => {
   const rows = await api("GET", "/api/purchase-requests?" + qs(q));

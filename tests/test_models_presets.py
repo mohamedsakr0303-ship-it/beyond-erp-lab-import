@@ -141,6 +141,17 @@ class FillIns(unittest.TestCase):
         db.x("UPDATE users SET perms=? WHERE id=?", (json.dumps({"sales.offers": "view"}), clerk))
         self.assertEqual(call("POST", "/api/presets", {"key": "offer:new", "name": "x", "values": {"a": "1"}}, tok=tok_clerk)[0], 403)
 
+    def test_purchase_requests_follow_their_own_permission(self):
+        db = Database(":memory:")
+        call, tok_clerk, clerk = session(db)
+        st, r = call("POST", "/api/presets", {"key": "pr:new", "name": "Weekly site consumables", "values": {
+            "notes": "Weekly top-up", "needed_by": "2026-11-10",
+            "lines": [{"kind": "cost", "description": "Cement bags", "qty": "20", "unit": "bag", "est_rate": "100"}]}})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["preset"]["values"]["lines"][0]["description"], "Cement bags")
+        db.x("UPDATE users SET perms=? WHERE id=?", (json.dumps({"purchasing.requests": "view", "purchasing.orders": "add"}), clerk))
+        self.assertEqual(call("POST", "/api/presets", {"key": "pr:new", "name": "x", "values": {"a": "1"}}, tok=tok_clerk)[0], 403)
+
     def test_order_lines_are_kept(self):
         db = Database(":memory:")
         p = presets.save(db, "po:new", "Diesel", {"supplier": "Fuel Co", "lines": [{"kind": "expense", "description": "Diesel", "qty": "100"}]})
