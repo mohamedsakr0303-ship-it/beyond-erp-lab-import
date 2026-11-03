@@ -5273,6 +5273,15 @@ function offerEditor(view, d, opts) {
         <div class="card">${form([{ k: "closing", l: t("closing"), type: "textarea", v: d.closing, input: "ofield", span: "spanall" }], 1)}</div>
       </div><div class="pv"><div class="muted" style="margin-bottom:6px">${t("live_preview")}</div><iframe id="opv" title="preview"></iframe></div></div>`;
     $$("textarea[name]", view).forEach(el => { el.dir = "auto"; });
+    // saved fill-ins (new quotations): client, project, texts and every section; never the date, status or number
+    if (opts.presetKey) presetBar($(".card", view), opts.presetKey, () => {
+      const { client, project, bu_id, lang, title, intro, closing, type_id } = d;
+      return { client, project, bu_id, lang, title, intro, closing, type_id, sections: JSON.stringify(d.sections || []) };
+    }, v => {
+      let secs = d.sections; try { const p = JSON.parse(v.sections || "null"); if (Array.isArray(p)) secs = p; } catch { /* keep the sections on screen */ }
+      ["client", "project", "bu_id", "lang", "title", "intro", "closing", "type_id"].forEach(k => { if (v[k] !== undefined) d[k] = v[k]; });
+      d.sections = secs; render();
+    });
     boqsP.then(bs => d.sections.forEach((s, i) => { const sel = $("#oboq" + i); if (sel && bs.length) sel.insertAdjacentHTML("beforeend", bs.map(b => `<option value="${b.id}">${esc(b.title)} · ${money(b.total)}</option>`).join("")); else if (sel) sel.remove(); }));
     preview();
   };
@@ -5328,7 +5337,7 @@ PAGES.offer = async (view, parts, q) => {
     } else d = await api("GET", "/api/offers/" + id);
     const tyName = d.type_name || ((await api("GET", "/api/offer-types")).find(x => x.id === d.type_id) || {}).name || t("offer");
     offerEditor(view, d, { title: (id === "new" ? t("new") + " — " : d.number + " — ") + tyName, back: id === "new" ? "#/offers" : "#/offer/" + id, backLabel: t("m_offers"),
-      extraButtons: can("sales.offers", "add") ? `<button class="btn" data-a="osavetype">${t("save_as_type")}</button>` : "",
+      extraButtons: can("sales.offers", "add") ? `<button class="btn" data-a="osavetype">${t("save_as_type")}</button>` : "", presetKey: id === "new" ? "offer:new" : "",
       onSave: async v => { const r = id === "new" ? await api("POST", "/api/offers", v) : await api("PUT", "/api/offers/" + id, v); toast(t("saved")); location.hash = "#/offer/" + r.id; } });
     S.H.osavetype = async () => { const n = await uiPrompt(t("name")); if (!n) return;
       try { await api("POST", "/api/offer-types", { name: n, ...offerContent(d) }); toast(t("saved")); await refreshBoot(); } catch (e) { fail(e); } };

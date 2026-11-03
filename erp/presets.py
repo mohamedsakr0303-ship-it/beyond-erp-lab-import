@@ -12,7 +12,7 @@ from . import accounting as acc
 from .accounting import ValidationError, text
 
 MAX_PER_FORM = 50
-MAX_VALUES = 15000         # characters of saved values per fill-in (the workbook cell holds 32,767)
+MAX_VALUES = 30000         # characters of saved values per fill-in: the same text the workbook cell holds (at most 32,767)
 KEY_RE = re.compile(r"^[a-z_]+:[a-z_]{1,40}$")
 def _now():
     import datetime as _dt

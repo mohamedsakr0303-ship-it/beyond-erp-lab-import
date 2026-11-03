@@ -127,6 +127,20 @@ class FillIns(unittest.TestCase):
         self.assertEqual(call("POST", "/api/presets", {"key": "invoice:new", "name": "x", "values": {"a": "1"}}, tok=tok_clerk)[0], 200)
         self.assertEqual(call("POST", "/api/presets", {"key": "contract:new", "name": "x", "values": {"a": "1"}}, tok=tok_clerk)[0], 403)
 
+    def test_quotation_sections_travel_whole(self):
+        db = Database(":memory:")
+        call, tok_clerk, clerk = session(db)
+        secs = [{"kind": "text", "heading": "SCOPE", "body": "Supply and install. " * 300},
+                {"kind": "pricing", "heading": "PRICE", "items": [{"desc": "Works", "amount": 1000}], "discount": 0, "vat": 14}]
+        st, r = call("POST", "/api/presets", {"key": "offer:new", "name": "Fit-out offer",
+                                              "values": {"client": "Acme", "title": "Offer", "status": "Draft", "sections": json.dumps(secs)}})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(json.loads(r["preset"]["values"]["sections"]), secs)
+        st, r = call("POST", "/api/presets", {"key": "offer:new", "name": "Too long", "values": {"sections": "x" * 40000}})
+        self.assertEqual(st, 400)                                                           # never past one workbook cell
+        db.x("UPDATE users SET perms=? WHERE id=?", (json.dumps({"sales.offers": "view"}), clerk))
+        self.assertEqual(call("POST", "/api/presets", {"key": "offer:new", "name": "x", "values": {"a": "1"}}, tok=tok_clerk)[0], 403)
+
     def test_order_lines_are_kept(self):
         db = Database(":memory:")
         p = presets.save(db, "po:new", "Diesel", {"supplier": "Fuel Co", "lines": [{"kind": "expense", "description": "Diesel", "qty": "100"}]})
