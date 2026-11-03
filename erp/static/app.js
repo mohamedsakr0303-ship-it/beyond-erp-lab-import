@@ -91,7 +91,7 @@ async function apiSend(method, path, body, raw) {
   if (!r.ok) { const e = new Error((data && data.error) || `HTTP ${r.status}`); e.data = data; e.status = r.status; throw e; }
   return data;
 }
-function staticHeaders() { return { "x-requested-with": "BeyondERP", "x-session": store.get("token", "") || "" }; }
+function staticHeaders() { return { "x-requested-with": "BeyondERP", "x-session": store.get("token", "") || "", "x-lang": S.lang || "en" }; }
 async function staticApi(method, path, body, raw) {
   const h = staticHeaders();
   let payload = null;
@@ -2496,7 +2496,13 @@ function journalForm(e, copy, via) {
     .filter(x => x.item && +x.qty && +x.rate);
   drawer((via ? `${L2("Draft", "مسودة")} #${via.aid}` : e && !copy ? t("edit") : t("new")) + " — " + t("m_journal"), html, async (v, f) => {
     delete v._files;
-    const body = { ...v, lines: collect(f).filter(l => l.account && (+l.debit || +l.credit)), ...(items(f).length ? { items: items(f) } : {}) };
+    const all = collect(f), noAcct = all.findIndex(l => !l.account && (+l.debit || +l.credit));
+    if (noAcct >= 0) throw new Error(L2(`Line ${noAcct + 1} has an amount but no account. Choose the account from the list (type its number or name, then tap it).`,
+      `السطر ${noAcct + 1} فيه مبلغ بدون حساب. اختر الحساب من القائمة (اكتب رقمه أو اسمه ثم اضغط عليه).`));
+    const kept = all.filter(l => l.account && (+l.debit || +l.credit));
+    if (kept.length < 2 && !items(f).length) throw new Error(L2("Enter amounts on at least two lines: a debit on one and a credit on another.",
+      "أدخل المبالغ في سطرين على الأقل: مدين في سطر ودائن في آخر."));
+    const body = { ...v, lines: kept, ...(items(f).length ? { items: items(f) } : {}) };
     if (e && !copy) await attachFrom(f, await sendEntry("PUT", "/api/journal/" + e.id, body, via, t("saved")) || { id: e.id }, e.id);
     else await attachFrom(f, await sendEntry("POST", "/api/journal", { ...body, kind: via ? e.kind || "Journal Voucher" : copy ? (Object.values(tpl).some(x => x.kind === e.kind) ? e.kind : "Journal Voucher") : v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" }, via, t("saved")));
   }, { submitLabel: via ? (via.mode === "approve" ? L2("Approve and post", "اعتماد وترحيل") : L2("Submit for approval", "إرسال للاعتماد")) : undefined, onOpen: f => {
@@ -12387,9 +12393,17 @@ function pickKeys(e, inp) {
   if (e.key === "Escape") { e.stopPropagation(); pickClose(); return true; }
   return false;
 }
+// pickers this page wired itself; a row copied with its HTML (+ Line…) carries a picker that looks the same but is dead
+const PICK_WIRED = new WeakSet();
+function unwrapCopiedPick(sel) {
+  const w = sel.parentElement;
+  if (w && w.classList.contains("pick-w")) w.replaceWith(sel);      // drops the copied, unconnected text box
+  delete sel.dataset.pick; sel.removeAttribute("tabindex");
+}
 function enhanceSelect(sel) {
+  if (sel.dataset.pick && !PICK_WIRED.has(sel)) unwrapCopiedPick(sel);
   if (sel.dataset.pick || sel.multiple || sel.options.length <= PICK_MIN || sel.closest(".no-pick,.pick-w")) return;
-  sel.dataset.pick = "1";
+  sel.dataset.pick = "1"; PICK_WIRED.add(sel);
   const w = document.createElement("span"); w.className = "pick-w";
   const inp = document.createElement("input"); inp.type = "text"; inp.className = "pick-in"; inp.autocomplete = "off"; inp.spellcheck = false;
   inp.setAttribute("role", "combobox"); inp.setAttribute("dir", "auto");
@@ -12409,8 +12423,9 @@ function enhanceSelect(sel) {
   sel.tabIndex = -1;
 }
 function enhanceList(inp) {
+  if (inp.dataset.pick && !PICK_WIRED.has(inp) && inp.dataset.listId) { inp.setAttribute("list", inp.dataset.listId); delete inp.dataset.pick; }   // a copied row
   if (inp.dataset.pick || !inp.getAttribute("list") || inp.closest(".no-pick")) return;
-  const id = inp.getAttribute("list"); inp.dataset.pick = "1"; inp.dataset.listId = id; inp.removeAttribute("list"); inp.autocomplete = "off";
+  const id = inp.getAttribute("list"); inp.dataset.pick = "1"; PICK_WIRED.add(inp); inp.dataset.listId = id; inp.removeAttribute("list"); inp.autocomplete = "off";
   const items = () => { const dl = document.getElementById(id); return dl ? [...dl.options].map(o => ({ v: o.value, l: o.textContent || o.value, h: normAr((o.textContent || "") + " " + o.value) })) : []; };
   const pick = it => { inp.value = it.v; inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true }));
     if (inp.closest("#fbar") && S.H.fapply) S.H.fapply(); };
@@ -12423,7 +12438,7 @@ function enhanceList(inp) {
 }
 function enhancePickers(root) {
   $$("select", root).forEach(enhanceSelect);
-  $$("input[list]", root).forEach(enhanceList);
+  $$("input[list],input[data-list-id]", root).forEach(enhanceList);
   $$(".grid>label.f", root).forEach(wrapLabel);
 }
 // a field label written as bare text gets the same one-line caption as form() fields, so boxes in a row line up
@@ -12445,7 +12460,7 @@ new MutationObserver(muts => {
   if (!pickQueue.size || pickTimer) return;
   pickTimer = requestAnimationFrame(() => {        // only what was just added, once per frame
     pickTimer = 0; const nodes = [...pickQueue]; pickQueue.clear();
-    for (const n of nodes) { if (!n.isConnected) continue; if (n.tagName === "SELECT") enhanceSelect(n); else if (n.tagName === "INPUT") { if (n.hasAttribute("list")) enhanceList(n); } else enhancePickers(n); }
+    for (const n of nodes) { if (!n.isConnected) continue; if (n.tagName === "SELECT") enhanceSelect(n); else if (n.tagName === "INPUT") { if (n.hasAttribute("list") || n.dataset.listId) enhanceList(n); } else enhancePickers(n); }
   });
 }).observe(document.documentElement, { childList: true, subtree: true });
 
