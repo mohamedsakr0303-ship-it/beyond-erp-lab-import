@@ -99,7 +99,71 @@ def get(db, pr_id):
         qt["total_vat"] = round(qt["total"] * (1 + vat), 2)
         pr["quotes"].append(qt)
     pr["comparison"] = compare(pr)
+    # what has been ordered from it so far: per line (orders raised from this request) and the orders themselves
+    ordered = _ordered_qty(db, pr["id"])
+    for ln in pr["lines"]:
+        ln["ordered"] = round(ordered.get(ln["id"], 0), 6)
+        ln["left"] = round(max(ln["qty"] - ln["ordered"], 0), 6)
+    pr["order_list"] = [{"id": r["id"], "code": r["code"], "date": r["date"], "supplier": r["supplier"], "status": r["status"]}
+                        for r in db.q("SELECT id, code, date, supplier, status FROM purchase_orders WHERE pr_id=? ORDER BY id", (pr["id"],))]
+    pr["left_to_order"] = any(ln["left"] > 1e-9 for ln in pr["lines"])
+    from . import custody                      # cash given to someone to buy it, and what came of it
+    pr["custodies"] = [{k: r[k] for k in ("id", "code", "holder", "status", "issued", "spent", "paid", "balance")}
+                       for r in (custody._row(db, c) for c in db.q("SELECT * FROM custodies WHERE for_doc=? ORDER BY id", (pr["code"],)))]
     return pr
+
+
+def _ordered_qty(db, pr_id):
+    """Quantity ordered per request line: open and received orders count in full, a closed order only what arrived,
+    a cancelled one not at all."""
+    out = {}
+    for r in db.q("""SELECT l.pr_line_id, p.status, l.qty,
+                            COALESCE((SELECT SUM(rc.qty) FROM po_receipts rc JOIN journal_entries e ON e.id=rc.entry_id
+                                      WHERE rc.line_id=l.id AND e.status='posted'), 0) AS got
+                     FROM po_lines l JOIN purchase_orders p ON p.id=l.po_id
+                     WHERE p.pr_id=? AND l.pr_line_id IS NOT NULL AND p.status<>'cancelled'""", (pr_id,)):
+        out[r["pr_line_id"]] = out.get(r["pr_line_id"], 0) + (r["got"] if r["status"] == "closed" else r["qty"])
+    return out
+
+
+def refresh_orders(db, pr_id):
+    """After an order raised from a request is saved or cancelled: the request lists its orders and is "ordered" while
+    any is live (back to "approved" when none is). Orders from before links were kept stay listed."""
+    pr = db.one("SELECT id, status, orders FROM purchase_requests WHERE id=?", (pr_id,))
+    if not pr or pr["status"] not in ("approved", "ordered"):
+        return
+    codes = [r["code"] for r in db.q("SELECT code FROM purchase_orders WHERE pr_id=? AND status<>'cancelled' ORDER BY id", (pr_id,))]
+    for c in [x.strip() for x in (pr["orders"] or "").split(",") if x.strip()]:
+        old = db.one("SELECT pr_id, status FROM purchase_orders WHERE code=?", (c,))
+        if old and old["pr_id"] is None and old["status"] != "cancelled" and c not in codes:
+            codes.append(c)
+    db.conn.execute("UPDATE purchase_requests SET orders=?, status=? WHERE id=?",
+                    (", ".join(codes), "ordered" if codes else "approved", pr_id))
+
+
+def po_draft(db, pr_id, quote_id=None):
+    """A purchase order ready to go from an approved request: what is still left to order on each line, at the chosen
+    supplier's quoted prices (the best full offer, else the estimates). Nothing is saved; the buyer edits and saves it."""
+    pr = get(db, pr_id)
+    if pr["status"] not in ("approved", "ordered"):
+        raise ValidationError(f"Purchase request {pr['code']} is {pr['status']}: approve it before ordering")
+    if not pr["left_to_order"]:
+        raise ValidationError(f"Everything on {pr['code']} has been ordered")
+    quotes = {q["id"]: q for q in pr["quotes"]}
+    q = quotes.get(int(quote_id)) if str(quote_id or "").isdigit() else None
+    if not q and pr["comparison"]["best_full_quote"]:
+        q = quotes[pr["comparison"]["best_full_quote"]]
+    if not q and pr["quotes"]:
+        q = max(pr["quotes"], key=lambda x: (x["covers"], -x["total"]))
+    lines = [{"kind": ln["kind"], "description": ln["description"], "item": ln["item"], "account": ln["account"],
+              "qty": ln["left"], "unit": ln["unit"], "pr_line_id": ln["id"],
+              "rate": (q["rates"].get(str(ln["id"])) if q else None) if q and str(ln["id"]) in q["rates"] else ln["est_rate"]}
+             for ln in pr["lines"] if ln["left"] > 1e-9]
+    return {"pr_id": pr["id"], "pr_code": pr["code"], "supplier": q["supplier"] if q else "", "quote_id": q["id"] if q else None,
+            "bu_id": pr["bu_id"] or "", "warehouse_id": pr["warehouse_id"] or "", "expected": pr["needed_by"] or "",
+            "vat_code": q["vat_code"] if q else "", "terms": q["terms"] if q else "", "date": acc.today(),
+            "notes": f"From purchase request {pr['code']}" + (f" (quote of {q['date']})" if q and q.get("date") else ""),
+            "lines": lines, "quotes": [{"id": x["id"], "supplier": x["supplier"], "total": x["total"], "covers": x["covers"]} for x in pr["quotes"]]}
 
 
 def compare(pr):
@@ -170,7 +234,7 @@ def award(db, pr_id, d, user=""):
     """d: {"awards": {line_id: quote_id}} or {"strategy": "lowest" | "best_full"}. Raises one purchase order per
     supplier (draft, for the usual approval) and marks the request ordered."""
     pr = get(db, pr_id)
-    if pr["status"] != "approved":
+    if pr["status"] not in ("approved", "ordered"):
         raise ValidationError("Approve the request before ordering")
     cmp_ = pr["comparison"]
     awards = {}
@@ -191,8 +255,10 @@ def award(db, pr_id, d, user=""):
         raise ValidationError("Award at least one line")
     by_q = {}
     for ln in pr["lines"]:
-        if ln["id"] in awards:
+        if ln["id"] in awards and ln["left"] > 1e-9:
             by_q.setdefault(awards[ln["id"]], []).append(ln)
+    if not by_q:
+        raise ValidationError("The lines awarded have already been ordered")
     codes = []
     with db.tx():
         db.conn.execute("UPDATE pr_quote_lines SET awarded=0 WHERE quote_id IN (SELECT id FROM pr_quotes WHERE pr_id=?)", (pr["id"],))
@@ -201,13 +267,13 @@ def award(db, pr_id, d, user=""):
             po = purchasing.save(db, {"supplier": q["supplier"], "date": d.get("date") or acc.today(), "bu_id": pr["bu_id"],
                                       "warehouse_id": pr["warehouse_id"], "vat_code": q["vat_code"],
                                       "expected": pr["needed_by"] or "", "terms": q["terms"],
-                                      "notes": f"From purchase request {pr['code']} (quote of {q['date']})",
+                                      "notes": f"From purchase request {pr['code']} (quote of {q['date']})", "pr_id": pr["id"],
                                       "lines": [{"kind": ln["kind"], "description": ln["description"], "item": ln["item"],
-                                                 "account": ln["account"], "qty": ln["qty"], "unit": ln["unit"],
-                                                 "rate": q["rates"][str(ln["id"])]} for ln in lines]}, user)
+                                                 "account": ln["account"], "qty": ln["left"] or ln["qty"], "unit": ln["unit"],
+                                                 "rate": q["rates"][str(ln["id"])], "pr_line_id": ln["id"]} for ln in lines]}, user)
             codes.append(db.one("SELECT code FROM purchase_orders WHERE id=?", (po,))["code"])
             db.conn.executemany("UPDATE pr_quote_lines SET awarded=1 WHERE quote_id=? AND line_id=?", [(qid, ln["id"]) for ln in lines])
-        db.conn.execute("UPDATE purchase_requests SET status='ordered', orders=? WHERE id=?", (", ".join(codes), pr["id"]))
+        refresh_orders(db, pr["id"])
     return codes
 
 

@@ -2184,6 +2184,10 @@ class Database:
         self._add_cols("business_units", [("expected_revenue", "INTEGER DEFAULT 0"), ("cost_method", "TEXT DEFAULT 'pct'"),
                                           ("expected_cost_pct", "REAL"), ("expected_cost", "INTEGER DEFAULT 0")])
         self._add_cols("ereceipts", [("bu_id", "INTEGER"), ("account", "TEXT DEFAULT ''")])
+        # linked documents: the request an order was raised from (and each line's request line); what a custody was given for
+        self._add_cols("purchase_orders", [("pr_id", "INTEGER")])
+        self._add_cols("po_lines", [("pr_line_id", "INTEGER")])
+        self._add_cols("custodies", [("for_doc", "TEXT DEFAULT ''")])
         # professional account titles, only where the company still uses the original default wording
         for code, (old_en, new_en, new_ar) in PRO_NAMES.items():
             self.conn.execute("UPDATE accounts SET name=? WHERE code=? AND name=?", (new_en, code, old_en))

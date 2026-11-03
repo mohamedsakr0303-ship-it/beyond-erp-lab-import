@@ -129,6 +129,15 @@ def _my_bus(db, user):
     return [b for b in rows if b["id"] in sc.ids] if sc else rows
 
 
+def _open_custodies(db):
+    """Open custody cards (code, holder): offered as a money source wherever a payment is made."""
+    try:
+        from . import custody
+        return [{k: c[k] for k in ("code", "holder", "account")} for c in custody.open_cards(db)]
+    except Exception:                                      # an older database mid-upgrade: offer none
+        return []
+
+
 def settings_dict(db):
     s = {r["key"]: r["value"] for r in db.q("SELECT key, value FROM settings")}
     out = {k: s.get(k, "") for k in PUBLIC_SETTINGS}
@@ -215,6 +224,7 @@ def bootstrap(ctx):
         "alloc_rules": db.q("SELECT code, name FROM alloc_rules WHERE active=1 ORDER BY priority, id"),
         "stages": [r["name"] for r in db.q("SELECT DISTINCT name FROM project_phases ORDER BY name LIMIT 300")],
         "warehouses": db.q("SELECT * FROM warehouses ORDER BY id"),
+        "custodies": _open_custodies(db),
         "partners": db.q("SELECT * FROM partners ORDER BY id"),
         "items": db.q("SELECT * FROM stock_items ORDER BY name"),
         "tax_codes": db.q("SELECT * FROM tax_codes ORDER BY kind, code"),
@@ -2624,8 +2634,32 @@ def po_delete(ctx, pid):
     po = purchasing.get(ctx.db, pid)
     if po["receipts"]:
         raise acc.ValidationError("Vouchers have been posted against this order. Cancel or close it instead.")
-    ctx.db.x("DELETE FROM purchase_orders WHERE id=?", (po["id"],))
+    with ctx.db.tx():
+        ctx.db.conn.execute("DELETE FROM purchase_orders WHERE id=?", (po["id"],))
+        if po.get("pr_id"):                      # its request's lines are free to order again
+            from . import procurement
+            procurement.refresh_orders(ctx.db, po["pr_id"])
     return ok({})
+
+
+@route("GET", "/api/po-from-request", "purchasing.orders", "add")
+def po_requests(ctx):
+    """Approved purchase requests with something still to order — what a new order can be raised from."""
+    from . import procurement
+    out = []
+    for r in ctx.db.q("SELECT id FROM purchase_requests WHERE status IN ('approved','ordered') ORDER BY date DESC, id DESC LIMIT 300"):
+        pr = procurement.get(ctx.db, r["id"])
+        if pr["left_to_order"]:
+            out.append({k: pr[k] for k in ("id", "code", "date", "requested_by", "bu_code", "bu_name", "needed_by", "status", "estimate")}
+                       | {"lines": len([ln for ln in pr["lines"] if ln["left"] > 1e-9]), "quotes": len(pr["quotes"])})
+    return ok({"rows": out})
+
+
+@route("GET", "/api/po-from-request/<pid>", "purchasing.orders", "add")
+def po_from_request(ctx, pid):
+    """A ready-to-edit order from an approved request (nothing is saved until the buyer saves it)."""
+    from . import procurement
+    return ok(procurement.po_draft(ctx.db, pid, ctx.q.get("quote")))
 
 
 def _att_access(ctx, owner, oid, edit=False):
@@ -6108,6 +6142,7 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
     as_user: run as this username without a session (replaying a change from the shared workspace).
     dry: validation run inside a transaction the caller rolls back (no backups).
     """
+    acc._CU_PAY["c"] = None              # a custody chosen by a request that failed never carries over to the next one
     reply = _handle(app, method, target, headers, raw, as_user, dry)
     lang = headers.get("x-lang") or (parse_qs(urlparse(target).query).get("lang") or [""])[-1]
     if lang == "ar" and isinstance(reply, Reply) and reply.status >= 400 and "json" in (reply.ctype or ""):

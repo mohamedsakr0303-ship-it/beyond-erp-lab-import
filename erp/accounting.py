@@ -103,9 +103,17 @@ def is_cash_method(method):
     return (method or "").strip().lower() == "cash"
 
 
+_CU_PAY = {"c": None}     # set by money_account("CU:<code>"); the next entry posted is tagged to that custody
+
+
 def money_account(db, method=None, explicit=None):
     """Where money goes in/out: an explicit cash/bank account (or the funding partner's account), else by payment
-    method — and when the company has a funding partner, his account is where its money comes from and goes to."""
+    method — and when the company has a funding partner, his account is where its money comes from and goes to.
+    "CU:<code>" (as the account or the method) is money an employee holds as custody: the payment comes out of it."""
+    for v in (explicit, method):
+        if isinstance(v, str) and v.startswith("CU:"):
+            from . import custody
+            return custody.pay_source(db, v[3:])
     if explicit:
         row = db.one("SELECT role FROM accounts WHERE code=?", (text(explicit),))
         from .funders import is_role
@@ -199,6 +207,11 @@ _REPLACE = {"eid": None}
 def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", lines, meta=None,
                   reversal_of=None, user=""):
     """Insert a balanced entry. Caller must hold a transaction (db.tx())."""
+    cu, _CU_PAY["c"] = _CU_PAY["c"], None
+    if cu and not str(ref or "").startswith("CU:") and any(text(l.get("account")) == cu["account"] for l in lines):
+        # paid from (or into) a custody: the holder's line, and the entry belongs on that custody's statement
+        lines = [dict(l, party=l.get("party") or cu["holder"]) if text(l.get("account")) == cu["account"] else l for l in lines]
+        meta = {**(meta or {}), "paid_by_custody": cu["code"]}
     check_open(db, clean_date(date))
     vlines = _validate_lines(db, lines)
     if _REPLACE["eid"]:

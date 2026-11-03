@@ -44,8 +44,10 @@ def _clean_lines(db, lines, bu_id, warehouse_id):
             if not warehouse_id:
                 raise ValidationError(f"Line {i}: stock lines need a receiving warehouse")
             item = text(ln.get("item") or ln.get("description"), f"line {i} item", required=True)
+        prl = ln.get("pr_line_id")
         out.append({"kind": kind, "description": text(ln.get("description")) or item, "item": item, "account": account,
-                    "qty": qty, "unit": text(ln.get("unit")) or "", "rate": rate, "received": float(ln.get("received") or 0)})
+                    "qty": qty, "unit": text(ln.get("unit")) or "", "rate": rate, "received": float(ln.get("received") or 0),
+                    "pr_line_id": int(prl) if str(prl or "").isdigit() else None})
     if not out:
         raise ValidationError("Add at least one line")
     return out
@@ -60,9 +62,12 @@ def save(db, d, user="", po_id=None):
     lines = _clean_lines(db, d.get("lines"), bu_id, wh_id)
     vat_code = acc.tax_code(db, d.get("vat_code"), "vat")[0] if d.get("vat_code") else ""
     wht_code = acc.tax_code(db, d.get("wht_code"), "wht")[0] if d.get("wht_code") else ""
+    pr = _request_for(db, d, lines)
     vals = dict(date=acc.clean_date(d.get("date")), supplier=supplier, bu_id=bu_id, warehouse_id=wh_id,
                 expected=acc.clean_date(d.get("expected"), "expected date") if d.get("expected") else "",
-                vat_code=vat_code, wht_code=wht_code, terms=text(d.get("terms"), maxlen=2000), notes=text(d.get("notes"), maxlen=2000))
+                vat_code=vat_code, wht_code=wht_code, terms=text(d.get("terms"), maxlen=2000), notes=text(d.get("notes"), maxlen=2000),
+                pr_id=pr["id"] if pr else None)
+    po = None
     with db.tx():
         if po_id:
             po = get(db, po_id)
@@ -79,14 +84,38 @@ def save(db, d, user="", po_id=None):
             pid = db.conn.execute(f"INSERT INTO purchase_orders(code, {', '.join(vals)}, status, created_by) VALUES "
                                   f"(?, {', '.join('?' * len(vals))}, 'draft', ?)", [code] + list(vals.values()) + [user]).lastrowid
         for i, ln in enumerate(lines, start=1):
-            db.conn.execute("INSERT INTO po_lines(po_id,seq,kind,description,item,account,qty,unit,rate) VALUES (?,?,?,?,?,?,?,?,?)",
-                            (pid, i, ln["kind"], ln["description"], ln["item"], ln["account"], ln["qty"], ln["unit"], to_minor(ln["rate"])))
+            db.conn.execute("INSERT INTO po_lines(po_id,seq,kind,description,item,account,qty,unit,rate,pr_line_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                            (pid, i, ln["kind"], ln["description"], ln["item"], ln["account"], ln["qty"], ln["unit"], to_minor(ln["rate"]),
+                             ln["pr_line_id"]))
+        from . import procurement
+        for rid in {pr["id"] if pr else None, (po or {}).get("pr_id")} - {None}:
+            procurement.refresh_orders(db, rid)
     return pid
 
 
+def _request_for(db, d, lines):
+    """The purchase request an order is raised from (pr_id or pr_code): it must be approved, and each line taken from
+    it must be one of its lines. Lines may be changed, added or left out — the order is the buyer's to finish."""
+    ref = d.get("pr_id") or d.get("pr_code")
+    if ref in (None, "", 0, "0"):
+        for ln in lines:
+            ln["pr_line_id"] = None
+        return None
+    from . import procurement
+    pr = procurement.get(db, ref)
+    if pr["status"] not in ("approved", "ordered"):
+        raise ValidationError(f"Purchase request {pr['code']} is {pr['status']}: approve it before ordering")
+    mine = {ln["id"] for ln in pr["lines"]}
+    for ln in lines:
+        if ln["pr_line_id"] not in mine:
+            ln["pr_line_id"] = None
+    return pr
+
+
 def get(db, po_id):
-    po = db.one("SELECT p.*, u.code AS bu_code, u.name AS bu_name, w.name AS warehouse FROM purchase_orders p "
+    po = db.one("SELECT p.*, u.code AS bu_code, u.name AS bu_name, w.name AS warehouse, r.code AS pr_code FROM purchase_orders p "
                 "LEFT JOIN business_units u ON u.id=p.bu_id LEFT JOIN warehouses w ON w.id=p.warehouse_id "
+                "LEFT JOIN purchase_requests r ON r.id=p.pr_id "
                 "WHERE p.id=? OR p.code=?", (int(po_id) if str(po_id).isdigit() else -1, str(po_id)))
     if not po:
         raise ValidationError("Purchase order not found")
@@ -113,6 +142,9 @@ def get(db, po_id):
     po["receipts"] = db.q("SELECT r.date, r.qty, r.entry_id, e.kind, e.status, l.description FROM po_receipts r "
                           "JOIN journal_entries e ON e.id=r.entry_id JOIN po_lines l ON l.id=r.line_id WHERE r.po_id=? "
                           "ORDER BY r.date, r.id", (po["id"],))
+    from . import custody                      # cash given to someone to buy it, and what came of it
+    po["custodies"] = [{k: r[k] for k in ("id", "code", "holder", "status", "issued", "spent", "paid", "balance")}
+                       for r in (custody._row(db, c) for c in db.q("SELECT * FROM custodies WHERE for_doc=? ORDER BY id", (po["code"],)))]
     return po
 
 
@@ -152,9 +184,13 @@ def set_status(db, po_id, status, reason=""):
             raise ValidationError("Only an approved order with nothing received can go back to draft")
     else:
         raise ValidationError("Unknown status")
-    db.x("UPDATE purchase_orders SET status=?, notes=CASE WHEN ?<>'' THEN notes || char(10) || ? ELSE notes END, "
-         "approved_by=CASE WHEN ?='draft' THEN '' ELSE approved_by END WHERE id=?",
-         (status, text(reason), f"[{status}] {text(reason)}", status, po["id"]))
+    with db.tx():
+        db.conn.execute("UPDATE purchase_orders SET status=?, notes=CASE WHEN ?<>'' THEN notes || char(10) || ? ELSE notes END, "
+                        "approved_by=CASE WHEN ?='draft' THEN '' ELSE approved_by END WHERE id=?",
+                        (status, text(reason), f"[{status}] {text(reason)}", status, po["id"]))
+        if po.get("pr_id"):                       # a cancelled order frees its request's lines to be ordered again
+            from . import procurement
+            procurement.refresh_orders(db, po["pr_id"])
 
 
 def receive(db, po_id, d, user=""):
@@ -235,7 +271,7 @@ def listing(db, q=None, status=None, supplier=None, bu_id=None):
     for r in db.q(f"SELECT p.id FROM purchase_orders p WHERE {' AND '.join(w)} ORDER BY p.date DESC, p.id DESC", p):
         po = get(db, r["id"])
         rows.append({k: po[k] for k in ("id", "code", "date", "supplier", "bu_code", "bu_name", "expected", "status", "total",
-                                         "vat", "grand_total", "open_value", "received_value", "created_by", "approved_by")}
+                                         "vat", "grand_total", "open_value", "received_value", "created_by", "approved_by", "pr_code")}
                     | {"overdue": bool(po["expected"] and po["expected"] < acc.today() and po["status"] in ("approved", "partial"))})
     commit = {}
     for r in rows:
@@ -249,8 +285,11 @@ def export_rows(db):
     out = []
     for r in db.q("SELECT id FROM purchase_orders ORDER BY id"):
         po = get(db, r["id"])
+        prl = {r["id"]: r["description"] for r in db.q("SELECT id, description FROM pr_lines WHERE pr_id=?", (po["pr_id"],))} if po.get("pr_id") else {}
         out.append({k: po[k] for k in ("code", "date", "supplier", "bu_code", "warehouse", "expected", "vat_code", "wht_code",
                                         "terms", "notes", "status", "created_by", "approved_by")}
+                   | {"pr_code": po.get("pr_code") or "", "pr_lines": {ln["description"]: prl[ln["pr_line_id"]] for ln in po["lines"]
+                                                                        if ln.get("pr_line_id") in prl}}
                    | {"approved_at": db.one("SELECT approved_at FROM purchase_orders WHERE id=?", (r["id"],))["approved_at"] or ""}
                    | {"lines": [{k: ln[k] for k in ("kind", "description", "item", "account", "qty", "unit", "rate")} for ln in po["lines"]],
                       "receipts": [{"line": rc["description"], "date": rc["date"], "qty": rc["qty"]} for rc in po["receipts"]
@@ -264,9 +303,16 @@ def import_rows(db, rows):
     for o in rows or []:
         if db.one("SELECT 1 FROM purchase_orders WHERE code=?", (o.get("code"),)):
             continue
-        pid = save(db, {**o, "bu_code": o.get("bu_code"), "warehouse": o.get("warehouse") or None}, o.get("created_by") or "")
+        pr = db.one("SELECT id FROM purchase_requests WHERE code=? AND status IN ('approved','ordered')", (o.get("pr_code") or "",))
+        prl = {r["description"]: r["id"] for r in db.q("SELECT id, description FROM pr_lines WHERE pr_id=?", (pr["id"],))} if pr else {}
+        lines = [{**ln, "pr_line_id": prl.get((o.get("pr_lines") or {}).get(ln.get("description")))} for ln in o.get("lines") or []]
+        pid = save(db, {**o, "lines": lines, "pr_id": pr["id"] if pr else None, "pr_code": None,
+                        "bu_code": o.get("bu_code"), "warehouse": o.get("warehouse") or None}, o.get("created_by") or "")
         db.conn.execute("UPDATE purchase_orders SET status=?, approved_by=?, approved_at=? WHERE id=?",
                         (o.get("status") or "draft", o.get("approved_by") or "", o.get("approved_at") or "", pid))
+        if pr:                                         # its request lists it only while it is not cancelled
+            from . import procurement
+            procurement.refresh_orders(db, pr["id"])
         lines = {ln["description"]: ln["id"] for ln in db.q("SELECT id, description FROM po_lines WHERE po_id=?", (pid,))}
         used = set()
         for rc in o.get("receipts") or []:

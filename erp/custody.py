@@ -45,20 +45,44 @@ def get(db, cid):
     return c
 
 
+# Payments made in other screens with the custody as the money source ("paid from: custody"): each such entry carries
+# meta.paid_by_custody = <code> and its custody line is the holder's — it shows on the custody's statement and balance.
+PAID_BY = "json_extract(e.meta, '$.paid_by_custody')"
+
+
+def pay_source(db, code):
+    """The custody card a payment is made from (money_account "CU:<code>"): its account, and the entry being posted is
+    tagged to it (see accounting._insert_entry)."""
+    c = get(db, code)
+    if c["status"] != "open":
+        raise ValidationError(f"Custody {c['code']} is closed. Reopen it first, or pay from cash or bank.")
+    acc._CU_PAY["c"] = {"code": c["code"], "account": c["account"], "holder": c["holder"]}
+    return c["account"]
+
+
+def open_cards(db):
+    """Open custody cards, to offer as a money source in payment screens."""
+    return [{"code": c["code"], "holder": c["holder"], "account": c["account"], "balance": to_major(c["opening_balance"] + _moves(db, c))}
+            for c in db.q("SELECT * FROM custodies WHERE status='open' ORDER BY holder, code")]
+
+
 def _entries(db, code):
-    return db.q(f"SELECT e.* FROM journal_entries e WHERE {LIVE_REF} AND (e.ref=? OR e.ref GLOB ?) ORDER BY e.date, e.id",
-                (f"CU:{code}", acc.ref_prefix(f"CU:{code}:")))
+    return db.q(f"SELECT e.* FROM journal_entries e WHERE {LIVE_REF} AND (e.ref=? OR e.ref GLOB ? OR {PAID_BY}=?) ORDER BY e.date, e.id",
+                (f"CU:{code}", acc.ref_prefix(f"CU:{code}:"), code))
 
 
 def _moves(db, c, tag=None):
-    """Signed movement on the custody account (+ = more money with the holder)."""
+    """Signed movement on the custody account (+ = more money with the holder). tag PAY: payments made from it elsewhere."""
     w, p = [LIVE_REF, "l.account=?"], [c["account"]]
-    if tag:
+    if tag == "PAY":
+        w.append(f"{PAID_BY}=?")
+        p.append(c["code"])
+    elif tag:
         w.append("e.ref GLOB ?")
         p.append(acc.ref_prefix(f"CU:{c['code']}:{tag}"))
     else:
-        w.append("(e.ref=? OR e.ref GLOB ?)")
-        p += [f"CU:{c['code']}", acc.ref_prefix(f"CU:{c['code']}:")]
+        w.append(f"(e.ref=? OR e.ref GLOB ? OR {PAID_BY}=?)")
+        p += [f"CU:{c['code']}", acc.ref_prefix(f"CU:{c['code']}:"), c["code"]]
     return db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e "
                   f"ON e.id=l.entry_id WHERE {' AND '.join(w)}", p)["n"]
 
@@ -67,12 +91,13 @@ def status(db, c, today=None):
     today = today or acc.today()
     bal = c["opening_balance"] + _moves(db, c)
     issued, spent, returned, deducted = _moves(db, c, "ISSUE"), -_moves(db, c, "SET"), -_moves(db, c, "RET"), -_moves(db, c, "DED")
+    paid = -_moves(db, c, "PAY")
     ents = _entries(db, c["code"])
     last = ents[-1]["date"] if ents else (c["issued_on"] or "")
     last_settle = max((e["date"] for e in ents if e["ref"].startswith(f"CU:{c['code']}:SET")), default="")
     open_days = (_dt.date.fromisoformat(today) - _dt.date.fromisoformat(c["issued_on"])).days if c["issued_on"] else 0
     overdue = c["status"] == "open" and c["kind"] == "temporary" and bool(c["due_date"]) and c["due_date"] < today and bal > 0
-    return {"balance": to_major(bal), "issued": to_major(issued + c["opening_balance"]), "spent": to_major(spent),
+    return {"balance": to_major(bal), "issued": to_major(issued + c["opening_balance"]), "spent": to_major(spent), "paid": to_major(paid),
             "returned": to_major(returned), "deducted": to_major(deducted), "last_activity": last,
             "last_settlement": last_settle, "days_open": max(open_days, 0), "overdue": overdue,
             "owed_to_holder": to_major(-bal) if bal < 0 else 0,
@@ -152,8 +177,12 @@ def save(db, d, cid=None, user=""):
     opening = old["opening_balance"] if old else 0
     if not old and how == "opening":
         opening = to_minor(num(d.get("opening_balance") or d.get("amount"), "balance with the employee", allow_zero=False))
+    for_doc = text(d.get("for_doc") if "for_doc" in d else (old or {}).get("for_doc"), maxlen=40)
+    if for_doc and not (db.one("SELECT 1 FROM purchase_requests WHERE code=?", (for_doc,))
+                        or db.one("SELECT 1 FROM purchase_orders WHERE code=?", (for_doc,))):
+        raise ValidationError(f"{for_doc} is not a purchase request or order")
     vals = (code, holder, kind, text(d.get("purpose"), maxlen=300), account, limit, issued_on, due, opening,
-            acc.bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), text(d.get("notes"), maxlen=2000))
+            acc.bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), text(d.get("notes"), maxlen=2000), for_doc)
     with db.tx():
         dup = db.one("SELECT id FROM custodies WHERE code=?", (code,))
         if dup and (not old or dup["id"] != old["id"]):
@@ -165,10 +194,10 @@ def save(db, d, cid=None, user=""):
             if has and account != old["account"]:
                 raise ValidationError("Amounts are recorded on the previous custody account; it cannot be changed.")
             db.conn.execute("UPDATE custodies SET code=?, holder=?, kind=?, purpose=?, account=?, float_amount=?, issued_on=?, "
-                            "due_date=?, opening_balance=?, bu_id=?, notes=? WHERE id=?", vals + (old["id"],))
+                            "due_date=?, opening_balance=?, bu_id=?, notes=?, for_doc=? WHERE id=?", vals + (old["id"],))
             return old["id"]
         cid = db.conn.execute("INSERT INTO custodies(code,holder,kind,purpose,account,float_amount,issued_on,due_date,"
-                              "opening_balance,bu_id,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                              "opening_balance,bu_id,notes,for_doc,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                               vals + (acc.now_iso(),)).lastrowid
         amount = d.get("amount") if d.get("amount") not in (None, "") else (to_major(limit) if limit else None)
         if how == "money" and amount not in (None, "", 0, "0"):
@@ -319,7 +348,7 @@ def export_rows(db):
 
 def import_rows(db, rows):
     cols = ("code", "holder", "kind", "purpose", "account", "float_amount", "issued_on", "due_date", "opening_balance",
-            "status", "closed_on", "notes", "created_at")
+            "status", "closed_on", "notes", "created_at", "for_doc")
     nums = {"float_amount", "opening_balance"}
     n = 0
     for r in rows or []:
