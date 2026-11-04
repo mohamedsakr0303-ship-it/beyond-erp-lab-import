@@ -536,6 +536,11 @@ async function route() {
   catch (e) { if (mine === routing) view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
 }
 let afterHooks = [];
+// sliders show their filled part (WebKit has no built-in fill): kept in step with the value wherever a slider appears
+const syncRange = el => { const lo = +el.min || 0, hi = el.max === "" ? 100 : +el.max, v = +el.value;
+  el.style.setProperty("--p", `${hi > lo ? Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100)) : 0}%`); };
+document.addEventListener("input", e => { if (e.target.type === "range") syncRange(e.target); }, true);
+new MutationObserver(() => $$("input[type=range]").forEach(syncRange)).observe(document.documentElement, { childList: true, subtree: true });
 const afterDraw = view => { const h = afterHooks; afterHooks = []; h.forEach(f => f(view)); };
 window.addEventListener("hashchange", route);
 
@@ -713,7 +718,7 @@ PAGES.alerts = async view => {
   S.H.dismissall = async () => { const keys = (view._list || $("#altbl")._list || []).map(a => a.key); if (!keys.length || !await confirmIt(L(`Dismiss ${keys.length} notification(s)?`, `إخفاء ${keys.length} إشعار؟`))) return; await markAlerts(keys, "dismissed"); route(); };
   S.H.mute = async el => { const m = { ...(S.me.notify || {}) }; if (el.checked) delete m[el.dataset.k]; else m[el.dataset.k] = false; S.me.notify = await rpc("console_my_notify", { p: m }); loadAlerts(true); };
   S.H.perm = async () => { if (!("Notification" in window)) return toast(L("This browser cannot show notifications.", "هذا المتصفح لا يدعم الإشعارات."), true); await Notification.requestPermission(); route(); };
-  soundHandlers(view);
+  soundHandlers();
   view.innerHTML = `<div class="split"><div class="card"><div id="altbl"></div></div>
     <div><div class="card"><h2>${esc(L("On this device", "على هذا الجهاز"))}</h2>
       <p class="muted small">${esc(L("While this console is open (even in another tab), new notifications pop up on the screen. Phone and computer notifications for tickets, payments and visits also arrive when it is closed, if notifications are on in the ERP (Profile → Notifications).", "طالما اللوحة مفتوحة (حتى في تبويب آخر) تظهر الإشعارات الجديدة على الشاشة. وتصل إشعارات البلاغات والمدفوعات والزيارات للهاتف والكمبيوتر حتى وهي مغلقة إذا فُعّلت الإشعارات في النظام (الملف الشخصي ← الإشعارات)."))}</p>
@@ -743,17 +748,18 @@ const soundCard = () => { const p = sndPrefs(), own = !!sndOwn();
       ${own ? `<button type="button" class="btn sm danger" data-a="sndownx">${esc(L("Remove my sound", "إزالة صوتي"))}</button>` : ""}
       <button type="button" class="btn sm" data-a="sndtest">▶ ${esc(L("Test", "تجربة"))}</button></div>
     <label class="small" style="display:block;margin-top:8px">${esc(L("Volume", "مستوى الصوت"))} <b id="sndvolv">${p.volume}%</b>
-      <input type="range" min="0" max="100" step="5" value="${p.volume}" data-change="sndvol" data-input="sndvolshow" style="width:100%"></label>
+      <input type="range" min="0" max="100" step="5" value="${p.volume}" data-change="sndvol" data-input="sndvolshow" aria-label="${esc(L("Volume", "مستوى الصوت"))}"></label>
     ${"vibrate" in navigator ? `<label class="chk" style="margin-top:6px"><input type="checkbox" data-change="sndvib" ${p.vibrate ? "checked" : ""}> ${esc(L("Vibrate (phones)", "اهتزاز (الهواتف)"))}</label>` : ""}
     <label class="chk" style="margin-top:6px"><input type="checkbox" data-change="sndquiet" ${p.quiet ? "checked" : ""}> ${esc(L("No sound during quiet hours", "بدون صوت خلال ساعات الهدوء"))}</label>
     <div class="row" style="gap:8px;margin-top:6px;align-items:center"><input type="time" value="${esc(p.quiet_from)}" data-change="sndfrom" style="max-width:130px"> ${S.lang === "ar" ? "←" : "→"} <input type="time" value="${esc(p.quiet_to)}" data-change="sndto" style="max-width:130px"></div>
     <p class="muted small">${esc(L("Kept on this device. Notifications still arrive silently during quiet hours.", "يُحفظ على هذا الجهاز. تصل الإشعارات بصمت خلال ساعات الهدوء."))}</p>`; };
-function soundHandlers(view) {
+// the page is drawn off screen and then moved into #view, so these look things up on the live page, not in `view`
+function soundHandlers() {
   const redraw = () => route();
-  S.H.sndpick = el => { const k = el.dataset.k; if (k === "custom" && !sndOwn()) { $("#sndfile", view).click(); return; } sndSave({ sound: k }); playSound(k, sndPrefs().volume); redraw(); };
+  S.H.sndpick = el => { const k = el.dataset.k; if (k === "custom" && !sndOwn()) { const f = $("#sndfile"); if (f) f.click(); return; } sndSave({ sound: k }); playSound(k, sndPrefs().volume); redraw(); };
   S.H.sndtest = () => playSound(sndPrefs().sound === "none" ? "chime" : sndPrefs().sound, sndPrefs().volume);
   S.H.sndownx = () => { LSset("berp.console.sndfile", null); if (sndPrefs().sound === "custom") sndSave({ sound: "chime" }); redraw(); };
-  S.H.sndvolshow = el => { const v = $("#sndvolv", view); if (v) v.textContent = el.value + "%"; };
+  S.H.sndvolshow = el => { const v = $("#sndvolv"); if (v) v.textContent = el.value + "%"; };
   S.H.sndvol = el => { S.H.sndvolshow(el); sndSave({ volume: +el.value }); playSound(sndPrefs().sound, +el.value); };
   S.H.sndvib = el => sndSave({ vibrate: el.checked });
   S.H.sndquiet = el => sndSave({ quiet: el.checked });
