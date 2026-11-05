@@ -5864,6 +5864,8 @@ class ImprovementsPack(unittest.TestCase):
         mine = [x for x in f["items"] if x["title"] == "Bills soon"]
         self.assertEqual((mine[0]["day"], mine[0]["time"], mine[0]["to"]), ((today + datetime.timedelta(days=3)).isoformat(), "08:00", ["eng"]))
         self.assertEqual(len(mine), 1)                                 # once, on the first day it is true
+        from erp import stockplan
+        stockplan.pushes(db)                                           # the demo's stock already at its minimum: announced before
         st, r = self.call("boss", "POST", "/api/automations/run", {"all": 1, "local": f"{today.isoformat()}T09:00"})
         self.assertTrue(r.get("_nochange"))                            # nothing true today: the shared log records nothing
         # the bill moves closer: the boss's change makes it true now — eng's bell gets it without his app

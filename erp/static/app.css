@@ -2085,3 +2085,11 @@ td.ok,span.ok:not(.chip),small.ok,b.ok{color:var(--good)}td.bad,span.bad:not(.ch
 .preset-bar .pb-l{font-weight:600;font-size:.9em}
 .preset-bar .pb-sel{min-width:180px;max-width:100%;flex:1 1 180px}
 .preset-bar .pb-none{font-size:.85em}
+/* stock at or below its minimum (on screen alerts) and the stock forecast */
+tr.stk-low td{background:color-mix(in srgb,var(--warn) 9%,transparent)}
+tr.stk-low td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+[dir=rtl] tr.stk-low td:first-child{box-shadow:inset -3px 0 0 var(--warn)}
+.sp-hist{display:flex;gap:2px;align-items:flex-end;height:22px;min-width:70px}
+.sp-hist i{display:block;width:6px;background:color-mix(in srgb,var(--accent) 55%,transparent);border-radius:2px 2px 0 0;min-height:1px}
+.sp-hist i.fc{background:color-mix(in srgb,var(--warn) 65%,transparent)}
+.sp-meth{font-size:.75em}

@@ -145,6 +145,7 @@ MESSAGES = {
     'Item has no cost value to issue': 'الصنف بلا قيمة تكلفة للصرف',
     'Pick a different destination warehouse': 'اختر مخزناً مختلفاً للتحويل إليه',
     'Only {} {} in {}': 'المتاح {1} {2} فقط في {3}',
+    '{} received here was later taken out of {} on {} at a cost that includes this receipt. Undo the later issues and transfers first, or correct the quantity with a stock adjustment.': '{1} المستلم في هذا القيد خرج لاحقاً من {2} بتاريخ {3} بتكلفة تشمل هذا الاستلام. ألغِ حركات الصرف والتحويل اللاحقة أولاً، أو صحّح الكمية بتسوية مخزون.',
     'The count matches the books. No adjustment is required.': 'الجرد مطابق للدفاتر. لا يلزم أي تسوية.',
     'Only a super administrator can set up the AI assistant': 'المدير الأعلى فقط يمكنه إعداد المساعد الذكي',
     'The AI assistant is not enabled for you.': 'المساعد الذكي غير مفعّل لك.',

@@ -109,11 +109,21 @@ def sheets(industry=None):
         {"date": d(0, 1), "partner": "Mark Allen", "type": "Capital Contribution", "amount": 600000, "method": "Bank Transfer"},
         {"date": d(4, 28), "partner": "Laura Adams", "type": "Owner Drawing", "amount": 30000, "method": "Bank Transfer",
          "memo": "Interim drawing"}]
-    S["Warehouses"] = [{"name": "Site Store — Villa 7", "location": "East District"}]
-    S["Stock Items"] = [{"name": "Ceramic tiles 60x60", "unit": "m2", "sku": "CT-6060", "reorder_level": 50},
-                        {"name": "Cement bag 50kg", "unit": "bag", "sku": "CEM-50", "reorder_level": 40},
+    S["Warehouses"] = [{"name": "Site Store — Villa 7", "location": "East District"},
+                       {"name": "Yard Store — Business Park", "location": "Business Park"}]
+    # minimums and how each is announced: notification and on screen, on screen only, notification only, none; the
+    # delivery time lets the forecast suggest a minimum, and the cable's minimum follows that suggestion by itself
+    S["Stock Items"] = [{"name": "Ceramic tiles 60x60", "unit": "m2", "sku": "CT-6060", "reorder_level": 50, "lead_days": 10, "alert_mode": "both"},
+                        {"name": "Cement bag 50kg", "unit": "bag", "sku": "CEM-50", "reorder_level": 40, "lead_days": 3, "alert_mode": "both",
+                         "wh_mins": "Site Store — Villa 7: 30"},
                         {"name": "Wall paint 18L", "unit": "drum", "sku": "PNT-18", "reorder_level": 5},
-                        {"name": "Bathroom set (basin + WC)", "unit": "set", "sku": "SAN-01", "reorder_level": 2}]
+                        {"name": "Bathroom set (basin + WC)", "unit": "set", "sku": "SAN-01", "reorder_level": 2, "lead_days": 21, "alert_mode": "both"},
+                        {"name": "Wall putty 20kg", "unit": "bag", "sku": "PUT-20", "reorder_level": 25, "lead_days": 4, "alert_mode": "notify"},
+                        {"name": "Gypsum board 12mm", "unit": "sheet", "sku": "GYP-12", "reorder_level": 60, "lead_days": 7, "alert_mode": "none"},
+                        {"name": "Electrical cable 2.5mm (100 m roll)", "unit": "roll", "sku": "CBL-25", "reorder_level": 6, "lead_days": 7,
+                         "alert_mode": "both", "auto_min": "Yes"},
+                        {"name": "Granite slab 2cm", "unit": "m2", "sku": "GRN-2", "reorder_level": 80, "lead_days": 14, "alert_mode": "both"},
+                        {"name": "Floor primer 20L", "unit": "drum", "sku": "PRM-20", "reorder_level": 5, "lead_days": 5, "alert_mode": "visual"}]
     S["Fixed Assets"] = [
         {"code": "FA-D01", "name": "Site pickup truck", "account": "1420", "acquired": d(0, 5), "cost": 780000, "salvage": 120000,
          "life_months": 60, "location": "Yard", "serial": "DEMO 456"},
@@ -239,8 +249,9 @@ def sheets(industry=None):
         {"date": d(1, 18), "type": "Transfer", "warehouse": "Main Store", "to_warehouse": "Site Store — Villa 7", "item": "Cement bag 50kg", "qty": 80},
         {"date": d(1, 20), "type": "Issue", "warehouse": "Site Store — Villa 7", "item": "Cement bag 50kg", "qty": 60, "bu_code": "PRJ-D01", "account": "5010"},
         {"date": d(2, 10), "type": "Issue", "warehouse": "Main Store", "item": "Wall paint 18L", "qty": 6, "bu_code": "PRJ-D02", "account": "5010"},
-        {"date": d(3, 28), "type": "Adjustment", "warehouse": "Main Store", "item": "Cement bag 50kg", "counted": 115, "qty": 1,
+        {"date": d(3, 28), "type": "Adjustment", "warehouse": "Main Store", "item": "Cement bag 50kg", "counted": -5, "qty": 1,
          "note": "Monthly count — 5 bags damaged"}]
+    S["Stock Moves"] = _stock_history(S["Stock Moves"], d)
     S["Journal Vouchers"] = [
         {"voucher": "JV-D00", "date": d(0, 1), "kind": "Journal Voucher", "memo": "Harbour Residence units completed — held for sale at cost",
          "account": "1210", "debit": 9400000},
@@ -478,7 +489,80 @@ def sheets(industry=None):
          "issue": "Yes"}]
     if industry in PROFILES:
         S = _trim(S, industry, d, eom)
+    # each registered fixed asset's purchase (the register holds the policy; its cost is an entry like any other, so the
+    # balance sheet carries the asset and not only its depreciation)
+    for i, a in enumerate(S.get("Fixed Assets") or []):
+        jv = f"JV-DA{i + 1}"
+        memo = f"Bought {a['name']} ({a['code']})"
+        S.setdefault("Journal Vouchers", []).extend([
+            {"voucher": jv, "date": a["acquired"], "kind": "Journal Voucher", "memo": memo, "account": a["account"], "debit": a["cost"]},
+            {"voucher": jv, "date": a["acquired"], "kind": "Journal Voucher", "memo": memo, "account": "1020", "credit": a["cost"]}])
     return S
+
+
+# monthly stock history for the forecast: regular deliveries and steady use on the projects, ending
+# with a few items at or below their minimum (one per way of announcing it). Items the showroom sells (tiles 60x60,
+# bathroom sets) are left out: their sales are booked after the stock moves with earlier dates, and stock is costed in
+# date order, so a later delivery would change the cost those sales already took.
+_FLOWS = (   # item, unit, supplier, price, (unused), [(warehouse, receipt per month 1..5)], [(warehouse, project, use per month 1..5)]
+    ("Granite slab 2cm", "m2", "Tiles & Ceramics Supplier", 520, .02, [("Main Store", (180, 120, 140, 120, 130))],
+     [("Main Store", "PRJ-D02", (40, 60, 70, 65, 60)), ("Main Store", "PRJ-D03", (0, 30, 40, 45, 40))]),
+    ("Cement bag 50kg", "bag", "Bright Building Materials", 95, .03, [("Main Store", (0, 120, 120, 140, 100)), ("Site Store — Villa 7", (0, 50, 50, 40, 30))],
+     [("Site Store — Villa 7", "PRJ-D01", (0, 40, 42, 45, 40)), ("Main Store", "PRJ-D02", (20, 40, 45, 50, 55)), ("Main Store", "PRJ-D03", (0, 20, 30, 35, 40))]),
+    ("Floor primer 20L", "drum", "Bright Building Materials", 1150, .025, [("Main Store", (10, 8, 6, 6, 6))],
+     [("Main Store", "PRJ-D02", (2, 4, 5, 5, 6)), ("Main Store", "PRJ-D01", (0, 2, 2, 3, 3))]),
+    ("Wall putty 20kg", "bag", "Bright Building Materials", 140, .02, [("Main Store", (80, 0, 60, 0, 40))],
+     [("Main Store", "PRJ-D01", (15, 18, 20, 22, 25)), ("Main Store", "PRJ-D02", (10, 12, 12, 14, 15))]),
+    ("Gypsum board 12mm", "sheet", "Bright Building Materials", 210, .015, [("Yard Store — Business Park", (150, 0, 120, 0, 30))],
+     [("Yard Store — Business Park", "PRJ-D03", (40, 45, 50, 55, 60))]),
+    ("Electrical cable 2.5mm (100 m roll)", "roll", "Spark Electric", 1850, .03, [("Yard Store — Business Park", (14, 12, 8, 14, 12))],
+     [("Yard Store — Business Park", "PRJ-D03", (4, 6, 7, 8, 9)), ("Yard Store — Business Park", "PRJ-D01", (2, 3, 3, 4, 4))]),
+)
+
+
+def _stock_history(rows, d):
+    """The demo's stock moves plus the monthly flows, in date order, each issue no more than is there that day (a count
+    row with a negative 'counted' means that many short of what the books hold)."""
+    rows = list(rows)
+    for item, unit, vendor, price, rise, ins, outs in _FLOWS:
+        for m in range(1, 6):
+            rate = price          # one price per item: the standalone workbook averages all receipts, the app per warehouse
+            for wh, qs in ins:
+                q = qs[m - 1]
+                if q:
+                    rows.append({"date": d(m, 3), "type": "Receipt", "warehouse": wh, "item": item, "unit": unit, "qty": q, "rate": rate,
+                                 "vendor": vendor, "paid": round(q * rate * (1 if m % 2 else 0.6), 2)})
+            for k, (wh, bu, qs) in enumerate(outs):
+                for half, day in ((0, 12), (1, 24)):
+                    q = qs[m - 1] // 2 + (qs[m - 1] % 2 if half else 0)
+                    if q:
+                        rows.append({"date": d(m, day + k), "type": "Issue", "warehouse": wh, "item": item, "qty": q, "bu_code": bu, "account": "5010"})
+    order = {"Receipt": 0, "Transfer": 1, "Issue": 2, "Adjustment": 3}
+    rows.sort(key=lambda r: (r["date"], order.get(r["type"], 9)))
+    have, out = {}, []
+    for r in rows:
+        key = (r["item"], r["warehouse"])
+        if r["type"] == "Receipt":
+            have[key] = have.get(key, 0) + r["qty"]
+        elif r["type"] == "Transfer":
+            q = min(r["qty"], have.get(key, 0))
+            if not q:
+                continue
+            r = {**r, "qty": q}
+            have[key] -= q
+            to = (r["item"], r["to_warehouse"])
+            have[to] = have.get(to, 0) + q
+        elif r["type"] == "Issue":
+            q = min(r["qty"], have.get(key, 0))
+            if not q:
+                continue
+            r = {**r, "qty": q}
+            have[key] -= q
+        elif r["type"] == "Adjustment" and r.get("counted", 0) < 0:
+            r = {**r, "counted": max(0, have.get(key, 0) + r["counted"])}
+            have[key] = r["counted"]
+        out.append(r)
+    return out
 
 
 # ---------------------------------------------------------------- one demo per business type
@@ -674,8 +758,12 @@ def _trim(S, key, d, eom):
         g = _GROUP.get(name)
         bad = {r.get(g) for r in rows if g and r.get("bu_code") and r["bu_code"] not in bus}
         S[name] = [r for r in rows if not (r.get("bu_code") and r["bu_code"] not in bus) and not (g and r.get(g) in bad)]
-    S["Stock Moves"] = [r for r in S.get("Stock Moves", []) if r.get("type") != "Transfer" or r.get("to_warehouse") in
-                        {w["name"] for w in S.get("Warehouses", [])}] if "Stock Moves" in S else None
+    kept_wh = {w["name"] for w in S.get("Warehouses", [])} | {"Main Store"}      # the main store comes with every company
+    S["Stock Moves"] = [r for r in S.get("Stock Moves", []) if r.get("warehouse", "Main Store") in kept_wh and
+                        (r.get("type") != "Transfer" or r.get("to_warehouse") in kept_wh)] if "Stock Moves" in S else None
+    for r in S.get("Stock Items", []):          # a warehouse's own minimum goes with the warehouse
+        if r.get("wh_mins"):
+            r["wh_mins"] = "; ".join(x for x in r["wh_mins"].split("; ") if x.rpartition(":")[0].strip() in kept_wh)
     if S["Stock Moves"] is None:
         S.pop("Stock Moves")
     # whatever pointed at a removed row goes with it (twice: chains such as quotes → requests → units)
@@ -729,6 +817,9 @@ def tr(v, lang):
         return AR[v]
     if v in UNITS:                                    # units of measure
         return UNITS[v]
+    m = re.fullmatch(r"Bought (.+) \((FA-\w+)\)", v)    # a fixed asset's purchase
+    if m:
+        return f"شراء {tr(m.group(1), lang)} ({m.group(2)})"
     m = re.fullmatch(r"(.+?) (\d{4}-\d\d)", v)          # "Office rent 2026-09"
     if m and m.group(1) in AR:
         return f"{AR[m.group(1)]} {m.group(2)}"

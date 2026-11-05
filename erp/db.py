@@ -293,6 +293,20 @@ CREATE TABLE IF NOT EXISTS stock_moves (
     note TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ix_sm_item ON stock_moves(item_id, warehouse_id);
+-- A warehouse's own minimum for an item (otherwise the item's minimum, stock_items.reorder_level, applies where it is held)
+CREATE TABLE IF NOT EXISTS stock_minimums (
+    item_id INTEGER NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+    warehouse_id INTEGER NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+    min_qty REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (item_id, warehouse_id)
+);
+-- Items announced (phone push) as at or below their minimum, until they are back above it (erp/stockplan.py)
+CREATE TABLE IF NOT EXISTS stock_alert_log (
+    item_id INTEGER NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+    warehouse_id INTEGER NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    PRIMARY KEY (item_id, warehouse_id)
+);
 
 -- Item lines of a journal voucher (quantity × unit price): into a warehouse (also a stock move on the same entry) or
 -- used straight on a project. With material issues and direct costs they make the "materials used" history.
@@ -2151,6 +2165,8 @@ class Database:
         # items can carry their standard cost and selling price, so a price list can live here even with nothing in stock
         self._add_cols("stock_items", [("category", "TEXT DEFAULT ''"), ("std_cost", "INTEGER DEFAULT 0"), ("price", "INTEGER DEFAULT 0"),
                                        ("notes", "TEXT DEFAULT ''")])
+        # minimum quantity alerts (both / notify / visual / none), delivery time in days, minimum kept from the forecast
+        self._add_cols("stock_items", [("alert_mode", "TEXT DEFAULT 'both'"), ("lead_days", "INTEGER DEFAULT 0"), ("auto_min", "INTEGER DEFAULT 0")])
         self._add_cols("rent_items", [("life_months", "INTEGER NOT NULL DEFAULT 120"), ("residual_pct", "REAL NOT NULL DEFAULT 0.1")])
         self._add_cols("rent_lots", [("opening_accum", "INTEGER NOT NULL DEFAULT 0"), ("depr_start", "TEXT DEFAULT ''")])
         self._add_cols("rentals", [("min_days", "INTEGER NOT NULL DEFAULT 0"), ("deposit", "INTEGER NOT NULL DEFAULT 0"),

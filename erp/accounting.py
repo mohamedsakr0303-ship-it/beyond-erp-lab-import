@@ -655,6 +655,21 @@ def record_journal(db, d, user=""):
 
 
 # ------------------------------------------------------------- corrections
+def _stock_undo_guard(db, eid):
+    """Stock received on this entry that later issues or transfers already took out at its average cost cannot simply
+    disappear: the books would keep those issues' cost while the store forgets what they drew on, and stock would no
+    longer agree with the inventory accounts. Those later movements are undone first (or the count corrected)."""
+    for m in db.q("SELECT m.id, m.item_id, m.warehouse_id, m.date, i.name, w.name AS wh FROM stock_moves m JOIN stock_items i ON i.id=m.item_id "
+                  "JOIN warehouses w ON w.id=m.warehouse_id WHERE m.entry_id=? AND m.qty>0", (eid,)):
+        later = db.one("SELECT date, kind FROM stock_moves WHERE item_id=? AND warehouse_id=? AND qty<0 AND COALESCE(entry_id,0)<>? "
+                       "AND (date>? OR (date=? AND id>?)) ORDER BY date, id LIMIT 1",
+                       (m["item_id"], m["warehouse_id"], eid, m["date"], m["date"], m["id"]))
+        if later:
+            raise ValidationError(f"{m['name']} received here was later taken out of {m['wh']} on {later['date']} at a cost that "
+                                  "includes this receipt. Undo the later issues and transfers first, or correct the quantity with a "
+                                  "stock adjustment.")
+
+
 def _unlink_documents(db, eid):
     from . import equity
     equity.undo_change(db, entry_id=eid)  # an ownership change booked by this entry goes with it
@@ -676,6 +691,7 @@ def void_entry(db, eid, reason="", user=""):
         check_open(db, e["date"])
         if e["reversed_by"] or e["reversal_of"]:
             raise ValidationError("This entry is part of a reversal pair and cannot be voided")
+        _stock_undo_guard(db, eid)
         meta = json.loads(e["meta"] or "{}")
         meta["void_reason"] = text(reason)
         meta["voided_by"] = user
@@ -692,6 +708,7 @@ def reverse_entry(db, eid, date=None, user=""):
             raise ValidationError("Entry not found")
         if e["status"] != "posted" or e["reversed_by"] or e["reversal_of"]:
             raise ValidationError("Only a live, un-reversed entry can be reversed")
+        _stock_undo_guard(db, eid)
         lines = [{"account": ln["account"], "debit": ln["credit"], "credit": ln["debit"], "party": ln.get("party", "")}
                  for ln in e["lines"]]
         rid = _insert_entry(db, date=date or today(), kind="Reversing Entry", memo=f"Reversal of #{eid}: {e['memo']}",
@@ -987,11 +1004,16 @@ def stock_report(db, warehouse_id=None, q=None):
                 "FROM stock_levels l JOIN stock_items i ON i.id=l.item_id "
                 "JOIN warehouses w ON w.id=l.warehouse_id" + (" WHERE " + " AND ".join(w) if w else "") +
                 " ORDER BY i.name, w.name", p)
+    from . import stockplan
+    mins = {(m["item_id"], m["warehouse_id"]): m for m in stockplan.levels(db, warehouse_id)} if rows else {}
     for r in rows:
         r["value"] = to_major(r["qty"] * r["avg_cost"])
         r["avg_cost"] = to_major(r["avg_cost"])
         r["last_rate"] = to_major(r["last_rate"]) if r["last_rate"] is not None else None
-        r["low"] = bool(r["reorder_level"]) and r["qty"] <= r["reorder_level"]
+        m = mins.get((r["item_id"], r["warehouse_id"]))     # the warehouse's own minimum, else the item's (stockplan)
+        r["min"] = m["min"] if m else 0
+        r["alert_mode"] = m["alert_mode"] if m else "both"
+        r["low"] = bool(m and m["below"])
     return rows
 
 
@@ -2136,6 +2158,29 @@ def audit(db):
     ]
 
 
+def _fixed_asset_tie(db):
+    """(book value in the register, the same accounts in the books) — or None with an empty register. The rental fleet's
+    own accounts are left out (it has its own register); an asset whose purchase was never booked shows up here."""
+    from . import assets
+    regs = db.q("SELECT * FROM fixed_assets")
+    if not regs:
+        return None
+    pol = assets.policy(db)
+    book = 0.0
+    for a in regs:
+        st = assets.status(db, a, pol=pol)
+        book += 0 if st["disposed"] else st["book_value"]          # a sold or scrapped asset has left the books
+    book = round(book, 2)
+    codes = {a["account"] for a in regs} | {a["accum_account"] or db.acct("accum_depreciation") for a in regs}
+    for role in ("rental_fleet", "rental_accum"):
+        r = db.one("SELECT code FROM accounts WHERE role=?", (role,))
+        if r:
+            codes.discard(r["code"])
+    codes.discard(None)
+    net = to_major(sum(r["net"] for r in account_totals(db) if r["code"] in codes))
+    return book, net
+
+
 
 def review_flags(db, date_from=None, date_to=None, partners=None):
     """Reasonableness flags: not errors in the books, but figures someone should look at. Each links to its record.
@@ -2182,6 +2227,12 @@ def review_flags(db, date_from=None, date_to=None, partners=None):
                 f"came in — record where it came from", f"رصيد {acct['name_ar'] or acct['name']} أصبح بالسالب من {first} (أدنى رصيد "
                 f"{to_major(low):,.2f} في {low_on}): صُرف مبلغ قبل وروده — سجّل مصدره", acct["code"],
                 "#/ledger?account=" + quote(acct["code"]))
+    fa = _fixed_asset_tie(db) if not date_to else None     # the register as it stands, against the same accounts
+    if fa and abs(fa[0] - fa[1]) >= 0.05:
+        add(f"The fixed asset register's book value ({fa[0]:,.2f}) differs from the asset accounts net of depreciation ({fa[1]:,.2f}): "
+            "an asset's purchase may not be booked, or was booked to another account",
+            f"القيمة الدفترية في سجل الأصول الثابتة ({fa[0]:,.2f}) تختلف عن حسابات الأصول بعد مجمع الإهلاك ({fa[1]:,.2f}): ربما لم يُسجل "
+            "شراء أصل، أو سُجل على حساب آخر", "", "#/assets")
     from . import settlement
     f = settlement.facility(db, date_to)
     if f and f["state"] in ("approaching", "near", "over"):     # the full picture (fronted, peak, weeks) is on the linked screen

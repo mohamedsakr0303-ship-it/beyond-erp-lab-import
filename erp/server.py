@@ -1436,6 +1436,12 @@ def automations_run(ctx):
         done = automations.run(ctx.db, local=ctx.body.get("local"), pushes=pushes, viewer=ctx.user)
     else:
         done = automations.run(ctx.db, only=only, owner=None if only else ctx.user["username"], local=ctx.body.get("local"), pushes=pushes)
+    if ctx.body.get("all") and not only:      # stock that newly fell to its minimum: a phone push, once per fall
+        from . import stockplan
+        n = len(pushes)
+        pushes += stockplan.pushes(ctx.db)
+        if len(pushes) > n:
+            done.append({"rule": "stock minimum", "acted": len(pushes) - n})
     if not only and not any(x.get("acted") or x.get("error") for x in done):
         return ok({"_nochange": True, "done": done})      # (the shared workspace then records nothing)
     return ok(push_hint({"done": done}, *pushes))
@@ -2298,6 +2304,49 @@ def item_edit(ctx, iid):
     ctx.db.x("UPDATE stock_items SET name=?, unit=?, sku=?, reorder_level=?, category=?, std_cost=?, price=?, notes=? WHERE id=?",
              (*_item_vals(b), int(iid)))
     return ok()
+
+
+# stock planning: minimum quantities and their alerts, and the forecast from history (erp/stockplan.py)
+@route("GET", "/api/items/<iid>/stock-settings", "stock.balances")
+def item_stock_settings(ctx, iid):
+    from . import stockplan
+    return ok({**stockplan.item_settings(ctx.db, iid), "warehouses_all": ctx.db.q("SELECT id, name FROM warehouses WHERE active=1 ORDER BY name")})
+
+
+@route("PUT", "/api/items/<iid>/stock-settings", "stock.balances", "edit")
+def item_stock_settings_put(ctx, iid):
+    from . import stockplan
+    r = stockplan.save_settings(ctx.db, iid, ctx.body)
+    ctx.log("item.minimum", r["name"])
+    return ok(r)
+
+
+@route("GET", "/api/stock-plan", "stock.balances")
+def stock_plan(ctx):
+    """The forecast per item and warehouse (what comes in and goes out), and the minimums with what is below them."""
+    from . import stockplan
+    q = ctx.q
+    f = stockplan.forecast(ctx.db, q.get("back") or 12, q.get("horizon") or 3, q.get("warehouse_id"), q.get("item_id"))
+    return ok({**f, "levels": stockplan.levels(ctx.db, q.get("warehouse_id")),
+               "warehouses": ctx.db.q("SELECT id, name FROM warehouses ORDER BY name")})
+
+
+@route("GET", "/api/stock-plan/projects", "stock.balances")
+def stock_plan_projects(ctx):
+    """Per project: the materials it received each month and what it is expected to need next."""
+    from . import stockplan
+    q = ctx.q
+    return ok(stockplan.project_forecast(ctx.db, q.get("back") or 12, q.get("horizon") or 3, q.get("bu_id")))
+
+
+@route("POST", "/api/stock-plan/apply", "stock.balances", "edit")
+def stock_plan_apply(ctx):
+    """Set minimums to the forecast's suggestions (all items with a delivery time, or the ones given)."""
+    from . import stockplan
+    ids = [int(i) for i in (ctx.body.get("items") or [])] or None
+    n = stockplan.apply_suggestions(ctx.db, ids)
+    ctx.log("item.minimum", f"{n} suggested minimums applied")
+    return ok({"applied": n})
 
 
 # duplicate items (Stock → Check duplicates)
@@ -3707,6 +3756,9 @@ def alerts(ctx):
             out.insert(0, {"level": "bad" if late else "warn", "en": f"Subscriptions & bills due: {len(bills)}" + (f" ({late} overdue)" if late else ""),
                            "ar": f"اشتراكات وفواتير مستحقة: {len(bills)}" + (f" ({late} متأخرة)" if late else ""), "href": "#/bills",
                            "count": len(bills), "kind": "bills"})
+    if ctx.can("stock.balances"):          # items at or below their minimum, announced by notification
+        from . import stockplan
+        out += stockplan.bell_rows(ctx.db)
     feed = ctx.db.q("SELECT id, title, body, href FROM alert_feed WHERE username=? AND read_at IS NULL ORDER BY id DESC LIMIT 20",
                     (ctx.user["username"],)) if ctx.can("team.alerts") else []
     for f in reversed(feed):
@@ -3761,7 +3813,7 @@ def alert_access_put(ctx):
 
 _BELL_GROUPS = {"approvals": "entries", "approvals_back": "entries", "review": "review", "feed": "mine", "checkin_self": "team",
                 "checkin_idle": "team", "checkin_flags": "team", "hr_requests": "team", "followups": "team", "desk": "team",
-                "desk_err": "team", "bills": "due"}
+                "desk_err": "team", "bills": "due", "stock_low": "due"}
 
 
 def _bell_group(r):
@@ -5581,10 +5633,17 @@ def cash_forecast(ctx):
 @route("GET", "/api/forecast", "reports.forecast")
 def forecast_get(ctx):
     from . import forecast
-    d = forecast.build(ctx.db)
+    return ok(_forecast_visible(ctx, forecast.build(ctx.db)))
+
+
+def _forecast_visible(ctx, d):
     if isinstance(d, dict) and isinstance(d.get("sections"), list):   # each part of the forecast is a tab with its own permission
         d["sections"] = [x for x in d["sections"] if ctx.can(f"reports.forecast.{x.get('key')}")]
-    return ok(d)
+    return d
+
+
+_FC_KEYS = {"prices": ("rate:",), "items": ("item:",), "expenses": ("acct:",), "payroll": ("emp:",), "depreciation": ("asset:",),
+            "loans": ("loan:",), "sales": ("rev:", "prod:")}
 
 
 @route("GET", "/api/forecast/outlook", "reports.forecast")
@@ -5601,9 +5660,16 @@ def forecast_outlook(ctx):
 @route("PUT", "/api/forecast", "reports.forecast", "edit")
 def forecast_put(ctx):
     from . import forecast
-    forecast.save(ctx.db, ctx.body)
+    body = dict(ctx.body)
+    if isinstance(body.get("overrides"), dict):     # edits in parts this person cannot see are kept, not wiped
+        hidden = tuple(p for k, ps in _FC_KEYS.items() if not ctx.can(f"reports.forecast.{k}") for p in ps)
+        if hidden:
+            cur = forecast.assumptions(ctx.db)["overrides"]
+            body["overrides"] = {**{k: v for k, v in cur.items() if k.startswith(hidden)},
+                                 **{k: v for k, v in body["overrides"].items() if not k.startswith(hidden)}}
+    forecast.save(ctx.db, body)
     ctx.log("forecast.assumptions", "")
-    return ok(forecast.build(ctx.db))
+    return ok(_forecast_visible(ctx, forecast.build(ctx.db)))
 
 
 # ================================================================= help & support
@@ -5837,7 +5903,7 @@ def offer_type_del(ctx, tid):
 
 # ============================================================ erase all data
 ERASE_TRANSACTIONS = ("entry_tags", "workdays", "hr_requests", "presence", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
-                      "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
+                      "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_alert_log", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("kb_pages", "automation_log", "automations", "care_services", "care_patients", "parties", "stock_items", "boq_lines", "boqs", "partner_stage_shares", "partner_shares", "partners", "rates", "alloc_rules",
@@ -6437,6 +6503,8 @@ class ERPServer(ThreadingHTTPServer):
                     continue
                 try:
                     automations.run(self.db, local=_dt.datetime.now().isoformat(timespec="minutes"))
+                    from . import stockplan
+                    stockplan.pushes(self.db)       # keeps the once-per-fall record current
                 except Exception:      # noqa: BLE001 — try again next time
                     traceback.print_exc()
         threading.Thread(target=loop, name="alert-checks", daemon=True).start()

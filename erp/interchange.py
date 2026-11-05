@@ -233,10 +233,17 @@ SHEETS = [
               C("account", "Inventory Account", "حساب المخزون", kind="acct", width=12)]},
     {"name": "Stock Items", "ar": "الأصناف", "module": "stock", "title": "Item master",
      "cols": [C("name", "Item", "الصنف", width=30, required=True), C("unit", "Unit", "الوحدة", width=9),
-              C("sku", "SKU", "كود الصنف", width=10), C("reorder_level", "Reorder Level", "حد إعادة الطلب", kind="num", width=10),
+              C("sku", "SKU", "كود الصنف", width=10), C("reorder_level", "Minimum Quantity", "الحد الأدنى للكمية", kind="num", width=10,
+                note="in every warehouse that holds it, unless the warehouse has its own (next columns)"),
               C("category", "Category", "التصنيف", width=16), C("std_cost", "Standard Cost", "التكلفة المعيارية", kind="money", width=12,
                 note="the usual buying cost per unit — kept even with no stock"),
-              C("price", "Selling Price", "سعر البيع", kind="money", width=12), C("notes", "Notes", "ملاحظات", width=24)]},
+              C("price", "Selling Price", "سعر البيع", kind="money", width=12), C("notes", "Notes", "ملاحظات", width=24),
+              C("wh_mins", "Minimum per Warehouse", "الحد الأدنى لكل مخزن", width=24, note="Warehouse: qty; Warehouse: qty"),
+              C("alert_mode", "Minimum Alert", "تنبيه الحد الأدنى", width=10, choices=["", "both", "notify", "visual", "none"],
+                note="both (blank) = notification and on screen; notify; visual = on screen only; none"),
+              C("lead_days", "Delivery Time (days)", "مدة التوريد (أيام)", kind="num", width=9, note="for the suggested minimum"),
+              C("auto_min", "Automatic Minimum", "حد أدنى تلقائي", width=9, choices=["", "Yes", "No"],
+                note="Yes = the minimum follows the forecast's suggestion")]},
     {"name": "Products", "ar": "المنتجات والوحدات", "module": "shop",
      "title": "Showroom catalog — items, units (apartments, villas, cars…) and services; photos are added in the app",
      "cols": [C("code", "Code", "الكود", width=10, note="blank = automatic; an existing code is updated"),
@@ -583,9 +590,13 @@ def export_data(db):
         out["Warehouses"].append({"name": w["name"], "location": w["location"], "account": w["account"] or ""})
     items = {i["id"]: i for i in db.q("SELECT * FROM stock_items ORDER BY name")}
     for i in items.values():
+        wm = "; ".join(f"{m['name']}: {m['min_qty']:g}" for m in db.q("SELECT w.name, m.min_qty FROM stock_minimums m JOIN warehouses w "
+                                                                     "ON w.id=m.warehouse_id WHERE m.item_id=? ORDER BY w.name", (i["id"],)))
         out["Stock Items"].append({"name": i["name"], "unit": i["unit"], "sku": i["sku"], "reorder_level": i["reorder_level"],
                                    "category": i.get("category") or "", "std_cost": to_major(i.get("std_cost") or 0),
-                                   "price": to_major(i.get("price") or 0), "notes": i.get("notes") or ""})
+                                   "price": to_major(i.get("price") or 0), "notes": i.get("notes") or "", "wh_mins": wm,
+                                   "alert_mode": i.get("alert_mode") or "both", "lead_days": i.get("lead_days") or 0,
+                                   "auto_min": "Yes" if i.get("auto_min") else "No"})
     bus_ = {b["id"]: b["code"] for b in db.q("SELECT id, code FROM business_units")}
     for p in db.q("SELECT * FROM products ORDER BY code"):
         out["Products"].append({k: p[k] for k in ("code", "name", "name_ar", "kind", "category", "unit", "vat_code", "status",
@@ -1693,7 +1704,7 @@ def to_csv(db, sheet_name, template=False):
 WIPE_ORDER = ("year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", "hr_requests", "presence", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
-              "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
+              "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_alert_log", "stock_minimums", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_stage_shares", "partner_shares", "partners", "rates", "alloc_rules", "business_units")
 
 
@@ -2134,6 +2145,29 @@ def _imp_item(db, r):
                      acc.num(r.get("reorder_level"), "reorder level"), acc.text(r.get("category")),
                      to_minor(acc.num(r.get("std_cost"), "standard cost")), to_minor(acc.num(r.get("price"), "selling price")),
                      acc.text(r.get("notes"), maxlen=1000)))
+    # the minimum's alert, delivery time and per-warehouse minimums: only what the sheet states (an older file keeps them)
+    from . import stockplan
+    iid = db.one("SELECT id FROM stock_items WHERE name=?", (acc.text(r.get("name")),))["id"]
+    st = {}
+    if str(r.get("alert_mode") or "").strip():
+        st["alert_mode"] = str(r["alert_mode"]).strip().lower()
+    if r.get("lead_days") not in (None, ""):
+        st["lead_days"] = r["lead_days"]
+    if str(r.get("auto_min") or "").strip():
+        st["auto_min"] = str(r["auto_min"]).strip().lower() in ("yes", "y", "1", "true", "نعم")
+    if str(r.get("wh_mins") or "").strip():
+        whs = {}
+        for part in str(r["wh_mins"]).split(";"):
+            name, _, q = part.rpartition(":")
+            if not name.strip():
+                continue
+            w = db.one("SELECT id FROM warehouses WHERE name=?", (name.strip(),))
+            if not w:
+                raise acc.ValidationError(f"Unknown warehouse: {name.strip()}")
+            whs[w["id"]] = q.strip()
+        st["warehouses"] = whs
+    if st:
+        stockplan.save_settings(db, iid, st)
 
 
 def _imp_rate(db, r):

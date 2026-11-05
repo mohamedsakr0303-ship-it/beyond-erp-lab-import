@@ -1136,6 +1136,12 @@ function approvalNotices(d) {
   store.set(akey, (d.feed || []));
   if (anew.length && !afirst) alertPerson({ title: anew.length === 1 ? anew[0].en.split(": ")[0] : L2(`${anew.length} new alerts`, `${anew.length} تنبيه جديد`),
     body: anew.length === 1 ? anew[0].en.split(": ").slice(1).join(": ") : anew.map(x => x.en.split(": ")[0]).join(" · "), href: anew[0].href || "#/alerts", tag: "berp-alert", force: true, kind: "alert", cat: "reminders" });
+  // stock at or below its minimum (items announced by notification): a pop-up when one newly appears
+  const skey = "stkSeen:" + uid, sfirst = store.get(skey, null) === null, sseen = new Set(store.get(skey, [])),
+    srows = (d.rows || []).filter(r => r.kind === "stock_low" && !r.ignored), snew = srows.filter(r => !sseen.has(r.key));
+  store.set(skey, srows.map(r => r.key));
+  if (snew.length && !sfirst) alertPerson({ title: L2("Stock at or below its minimum", "مخزون عند حده الأدنى أو أقل"),
+    body: snew.length === 1 ? L2(snew[0].en, snew[0].ar) : snew.map(r => L2(r.en, r.ar).split(" is at")[0].split(" وصل")[0]).join(" · "), href: "#/stock?low=1", tag: "berp-stock", force: true, kind: "alert" });
   const fkey = "fuSeen:" + uid, ffirst = store.get(fkey, null) === null, fseen = new Set(store.get(fkey, [])), fnew = (d.followups || []).filter(id => !fseen.has(id));
   store.set(fkey, d.followups || []);
   if (fnew.length && !ffirst) alertPerson({ title: L2("Follow-ups due", "متابعات مستحقة"), body: L2(`${fnew.length} due today`, `${fnew.length} مستحقة اليوم`),
@@ -3818,30 +3824,54 @@ PAGES.stock = async (view, parts, q) => {
   for (const ty of ["Receipt", "Issue", "Transfer", "Adjustment"]) S.H["sm" + ty] = el => openDoc("stock_move", { type: ty, item: el && el.dataset && el.dataset.item, warehouse_id: el && el.dataset && el.dataset.wh });
   S.H.itemdel = el => confirmDelete(el.dataset.n, "/api/items/" + el.dataset.id, refreshBoot);
   // the item list with prices — items can be kept for their price alone, with nothing in stock
-  const itemForm = it => drawer(it.id ? it.name : L2("New item", "صنف جديد"), form([
+  const itemForm = async it => {
+    // the minimum, how it is announced, the delivery time and each warehouse's own minimum (erp/stockplan.py)
+    let st = { alert_mode: "both", lead_days: 0, auto_min: 0, warehouses: [], warehouses_all: d.warehouses || [] };
+    if (it.id) { try { st = await api("GET", `/api/items/${it.id}/stock-settings`); } catch (e) { return fail(e); } }
+    const whMin = Object.fromEntries((st.warehouses || []).map(w => [w.warehouse_id, w.min_qty]));
+    const whs = (st.warehouses_all || []).filter(w => w.active !== 0);
+    drawer(it.id ? it.name : L2("New item", "صنف جديد"), form([
       { k: "name", l: t("item"), v: it.name || "", req: 1 }, { k: "category", l: L2("Category", "التصنيف"), v: it.category || "", list: "itcats" },
       { k: "unit", l: t("unit"), v: it.unit || "pcs", list: "units" }, { k: "sku", l: "SKU", v: it.sku || "" },
       { k: "std_cost", l: L2("Standard unit cost", "التكلفة المعيارية للوحدة"), type: "number", v: it.std_cost || "" },
       { k: "price", l: L2("Unit selling price", "سعر بيع الوحدة"), type: "number", v: it.price || "" },
-      { k: "reorder_level", l: t("reorder"), type: "number", v: it.reorder_level || "" }, { k: "notes", l: t("notes"), v: it.notes || "", span: "spanall" }]) +
+      { k: "notes", l: t("notes"), v: it.notes || "", span: "spanall" },
+      { html: `<h3 style="margin:6px 0 0">${esc(L2("Minimum quantity and alerts", "الحد الأدنى للكمية والتنبيهات"))}</h3>`, span: "spanall" },
+      { k: "reorder_level", l: t("reorder"), type: "number", v: it.reorder_level || "", help: L2("In every warehouse that holds the item, unless a warehouse has its own below.", "في كل مخزن به الصنف، ما لم يكن للمخزن حد خاص أدناه.") },
+      { k: "alert_mode", l: L2("When it is reached", "عند الوصول إليه"), type: "select", v: st.alert_mode || "both", opts: STOCK_ALERT_MODES() },
+      { k: "lead_days", l: L2("Delivery time (days)", "مدة التوريد (أيام)"), type: "number", v: st.lead_days || "", help: L2("From ordering to receiving. Used to suggest a minimum from past use.", "من الطلب حتى الاستلام. تُستخدم لاقتراح حد أدنى من الاستهلاك السابق.") },
+      { k: "auto_min", l: L2("Keep the minimum automatic (follow the forecast's suggestion)", "حد أدنى تلقائي (يتبع اقتراح التوقعات)"), type: "checkbox", v: !!st.auto_min },
+      ...(whs.length > 1 || (whs.length === 1 && whMin[whs[0].id] != null) ? [{ html: `<div class="muted" style="font-size:.85em">${esc(L2("A warehouse's own minimum (blank = the item's minimum):", "حد أدنى خاص بالمخزن (فارغ = الحد الأدنى للصنف):"))}</div>`, span: "spanall" },
+        ...whs.map(w => ({ k: "whmin_" + w.id, l: w.name, type: "number", v: whMin[w.id] ?? "" }))] : [])]) +
       datalist("itcats", (d.catalog || []).map(x => x.category).filter(Boolean)) + unitsList() +
       `<p class="muted" style="font-size:.85em">${esc(L2("Quantities and stock value change only through receipts, issues, transfers and counts, keeping stock and the books in agreement.", "تتغير الكميات وقيمة المخزون فقط بالاستلام والصرف والتحويل والجرد، فيبقى المخزون متطابقاً مع الدفاتر."))}</p>`,
     async v => {
       if (!it.id) { const sim = (await api("GET", "/api/items/similar?" + qs({ name: v.name }))).rows;
         if (sim.length && !await uiConfirm(L2("Similar items already exist:", "توجد أصناف مشابهة:") + "\n• " + sim.map(s => s.name + (s.sku ? " (" + s.sku + ")" : "")).join("\n• ") + "\n\n" + L2("Add as a new item?", "هل تريد إضافته صنفاً جديداً؟"))) return false; }
-      if (it.id) await api("PUT", "/api/items/" + it.id, v); else await api("POST", "/api/items", v); await refreshBoot(); toast(t("saved")); });
+      const warehouses = {}; whs.forEach(w => { if (("whmin_" + w.id) in v) warehouses[w.id] = v["whmin_" + w.id]; delete v["whmin_" + w.id]; });
+      const set = { alert_mode: v.alert_mode, lead_days: v.lead_days, auto_min: !!v.auto_min, warehouses }; ["alert_mode", "lead_days", "auto_min"].forEach(k => delete v[k]);
+      const id = it.id ? (await api("PUT", "/api/items/" + it.id, v), it.id) : (await api("POST", "/api/items", v)).id;
+      if (can("stock.balances", "edit")) await api("PUT", `/api/items/${id}/stock-settings`, set); await refreshBoot(); toast(t("saved")); });
+  };
   S.H.itemnew = () => itemForm({});
   S.H.itemdupes = () => itemDupes();
   S.H.itemedit = el => itemForm((d.catalog || []).find(x => String(x.id) === el.dataset.id) || {});
+  // minimum quantity on screen: highlighted rows, a banner and "only these" — for items announced on screen (both / visual)
+  const lowShown = d.levels.filter(r => r.low && ["both", "visual"].includes(r.alert_mode));
+  if (q.low === "1") d.levels = d.levels.filter(r => r.low);
+  S.H.stklow = () => setQ({ ...q, low: q.low === "1" ? "" : "1" });
   const SLV = capRows(d.levels, "stocklv"), CT = capRows(d.catalog || [], "stockcat");
-  view.innerHTML = `<div class="toolbar">${ed ? ["Receipt", "Issue", "Transfer", "Adjustment"].map(ty => `<button class="btn ${ty === "Receipt" ? "pri" : ""}" data-a="sm${ty}">${tl(ty)}</button>`).join("") : ""}${can("stock.balances", "add") ? `<button class="btn" data-a="itemnew">+ ${esc(L2("Item", "صنف"))}</button>` : ""}<button class="btn" data-a="itemdupes" title="${esc(L2("Find items recorded more than once under different names or codes", "البحث عن أصناف مسجلة أكثر من مرة بأسماء أو أكواد مختلفة"))}">${svg("search")} ${esc(L2("Find duplicates", "البحث عن المكرر"))}</button><span class="spacer"></span>${exportMenu("stock", q)}</div>` +
+  view.innerHTML = `<div class="toolbar">${ed ? ["Receipt", "Issue", "Transfer", "Adjustment"].map(ty => `<button class="btn ${ty === "Receipt" ? "pri" : ""}" data-a="sm${ty}">${tl(ty)}</button>`).join("") : ""}${can("stock.balances", "add") ? `<button class="btn" data-a="itemnew">+ ${esc(L2("Item", "صنف"))}</button>` : ""}<button class="btn" data-a="itemdupes" title="${esc(L2("Find items recorded more than once under different names or codes", "البحث عن أصناف مسجلة أكثر من مرة بأسماء أو أكواد مختلفة"))}">${svg("search")} ${esc(L2("Find duplicates", "البحث عن المكرر"))}</button><a class="btn" href="#/stock-plan">↗ ${t("m_stockplan")}</a><span class="spacer"></span>${exportMenu("stock", q)}</div>` +
+    (lowShown.length || q.low === "1" ? `<div class="banner ${lowShown.length ? "warn" : "info"} row" style="gap:8px">${lowShown.length ? esc(L2(`${lowShown.length} item(s) at or below their minimum quantity`, `${lowShown.length} صنف عند حده الأدنى أو أقل`)) + ": " + lowShown.slice(0, 4).map(r => `<b>${esc(r.name)}</b> (${esc(r.warehouse)}: ${numf(r.qty)} / ${numf(r.min)})`).join(" · ") + (lowShown.length > 4 ? " …" : "") : esc(L2("Showing items at or below their minimum.", "عرض الأصناف عند حدها الأدنى أو أقل."))}
+      <span class="spacer"></span><button class="btn sm" data-a="stklow">${esc(q.low === "1" ? L2("Show all", "عرض الكل") : L2("Show only these", "عرض هذه فقط"))}</button><a class="btn sm" href="#/stock-plan">${esc(L2("Forecast", "التوقعات"))}</a></div>` : "") +
     filterBar(q, ["warehouse", ["q", "stkq", L2("Name, code or category", "الاسم أو الكود أو التصنيف")]]) +
     `<datalist id="stkq">${(d.items || []).map(x => { const more = [x.sku, x.category].filter(Boolean).join(" · ");
       return `<option value="${esc(x.name)}">${esc(x.name + (more ? " — " + more : ""))}</option>`; }).join("")}</datalist>` +
-    `<div class="card"><h2>${t("inventory")} — ${money(tot)} ${cur()}</h2>${d.levels.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${t("avg_cost")}</th><th class="num">${esc(L2("Last purchase price", "آخر سعر شراء"))}</th><th class="num">${t("value")}</th><th></th></tr></thead><tbody>
-      ${SLV.rows.map(r => `<tr><td>${esc(r.name)} ${r.low ? `<span class="chip warn">${t("reorder")}</span>` : ""}${r.sku ? `<div class="lines">${esc(r.sku)}</div>` : ""}</td><td>${esc(r.warehouse)}</td><td>${esc(r.unit)}</td><td class="num ${r.qty < 0 ? "neg" : ""}">${numf(r.qty)}</td><td class="num">${money(r.avg_cost)}</td>
+    `<div class="card"><h2>${t("inventory")} — ${money(tot)} ${cur()}</h2>${d.levels.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${esc(L2("Minimum", "الحد الأدنى"))}</th><th class="num">${t("avg_cost")}</th><th class="num">${esc(L2("Last purchase price", "آخر سعر شراء"))}</th><th class="num">${t("value")}</th><th></th></tr></thead><tbody>
+      ${SLV.rows.map(r => { const vis = r.low && ["both", "visual"].includes(r.alert_mode);
+        return `<tr class="${vis ? "stk-low" : ""}"><td>${esc(r.name)} ${vis ? `<span class="chip ${r.qty <= 0 ? "bad" : "warn"}">${esc(r.qty <= 0 ? L2("Out of stock", "نفد") : L2("At or below minimum", "عند الحد الأدنى أو أقل"))}</span>` : ""}${r.sku ? `<div class="lines">${esc(r.sku)}</div>` : ""}</td><td>${esc(r.warehouse)}</td><td>${esc(r.unit)}</td><td class="num ${r.qty < 0 || vis ? "neg" : ""}">${numf(r.qty)}</td><td class="num">${r.min ? numf(r.min) : "—"}</td><td class="num">${money(r.avg_cost)}</td>
       <td class="num">${r.last_rate != null ? money(r.last_rate) + `<div class="lines">${fd(r.last_date)}</div>` : "—"}</td><td class="num">${money(r.value)}</td>
-      <td>${can("stock.balances", "edit") && !r.qty && !r.value ? `<button class="btn sm danger" data-a="itemdel" data-id="${r.item_id}" data-n="${esc(r.name)}" title="${S.lang === "ar" ? "حذف صنف بدون حركات" : "Delete an item with no movements"}">✕</button> ` : ""}${ed ? `<button class="btn sm" data-a="smIssue" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Issue")}</button> <button class="btn sm" data-a="smAdjustment" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Adjustment")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>${SLV.foot}` : `<div class="empty">${t("nothing")}</div>`}</div>`;
+      <td>${can("stock.balances", "edit") && !r.qty && !r.value ? `<button class="btn sm danger" data-a="itemdel" data-id="${r.item_id}" data-n="${esc(r.name)}" title="${S.lang === "ar" ? "حذف صنف بدون حركات" : "Delete an item with no movements"}">✕</button> ` : ""}${ed ? `<button class="btn sm" data-a="smIssue" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Issue")}</button> <button class="btn sm" data-a="smAdjustment" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Adjustment")}</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>${SLV.foot}` : `<div class="empty">${t("nothing")}</div>`}</div>`;
   const cat = d.catalog || [];
   if (cat.length) view.insertAdjacentHTML("beforeend", `<div class="card"><h2>${esc(L2("Items and prices", "الأصناف والأسعار"))} <span class="chip">${cat.length}</span></h2>
     <p class="muted" style="margin-top:0">${esc(L2("All items, with standard cost, selling price and last purchase price.", "جميع الأصناف مع التكلفة المعيارية وسعر البيع وآخر سعر شراء."))}</p>
@@ -4546,6 +4576,7 @@ let autoLast = 0, autoSoon = null, fcLast = 0;
 function autoSweep() {
   if (!S.boot || !S.boot.user) return;
   autoLast = Date.now();
+  if (Date.now() - fcAutoTried > 6 * 3600e3 && can("reports.forecast", "edit")) { fcAutoTried = Date.now(); forecastAutoRun(false).catch(() => {}); }
   api("POST", "/api/automations/run", { local: localStamp(), all: 1 }).then(r => { if ((r.done || []).some(x => x.acted)) loadAlerts(true); }).catch(() => {});
   if (STATIC && cloudOn() && Date.now() - fcLast > 2 * 60e3) { fcLast = Date.now();
     apiCall("GET", "/api/automations/forecast?" + qs({ local: localStamp() }))
@@ -11874,6 +11905,74 @@ PAGES["purchase-request"] = async (view, parts) => {
 };
 
 // ------------------------------------------------------------ stocktakes
+// Stock forecast & minimums (erp/stockplan.py): what each warehouse is expected to receive and send out, what each project
+// is expected to need, days of cover, the day stock runs out, and every minimum with how it is announced — from history,
+// with nothing to fill in. A suggested minimum needs the item's delivery time.
+const SP_METH = () => ({ holt: L2("Trend", "اتجاه"), croston: L2("Occasional use", "استخدام متقطع"), average: L2("Average", "متوسط"), none: "—" });
+const spN = v => numf(Math.abs(v) >= 10 ? Math.round(v) : Math.round(v * 10) / 10);   // a forecast is not that precise
+const spMonth = m => { const d = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1, 1); return d.toLocaleDateString(S.lang === "ar" ? "ar-EG" : "en-GB", { month: "short", year: "2-digit" }); };
+const spBars = (hist, fc) => { const all = [...hist, ...(fc || [])], mx = Math.max(1, ...all);
+  return `<div class="sp-hist" aria-hidden="true">${hist.map(v => `<i style="height:${Math.round(v / mx * 100)}%"></i>`).join("")}${(fc || []).map(v => `<i class="fc" style="height:${Math.round(v / mx * 100)}%"></i>`).join("")}</div>`; };
+PAGES["stock-plan"] = async (view, parts, q) => {
+  const tab = q.tab || "warehouses", horizon = +q.horizon || 3, back = +q.back || 12;
+  const ed = can("stock.balances", "edit");
+  const top = `<div class="toolbar"><a class="btn" href="#/stock">← ${t("m_stock")}</a><span class="spacer"></span></div>
+    <p class="muted" style="margin-top:0">${esc(L2("Calculated automatically from your stock movements; nothing needs to be entered. Count corrections are left out because they are not usage. Updated each time this page opens.", "تُحسب تلقائياً من حركات المخزون، ولا يلزم إدخال أي شيء. تُستبعد تسويات الجرد لأنها ليست استهلاكاً. تتحدث في كل مرة تُفتح فيها الصفحة."))}</p>
+    <div class="tabs">${[["warehouses", L2("Warehouses: in and out", "المخازن: الوارد والصادر")], ["projects", L2("Projects: materials needed", "المشروعات: الخامات المطلوبة")], ["minimums", L2("Minimum quantities", "الحدود الدنيا")]]
+      .map(([k, l]) => `<a href="#/stock-plan?${qs({ ...q, tab: k })}" class="${k === tab ? "on" : ""}">${esc(l)}</a>`).join("")}</div>
+    <div class="row" style="gap:10px;margin:8px 0">${tab !== "minimums" ? `<label class="f" style="flex:none">${esc(L2("Months ahead", "الشهور القادمة"))}<select data-change="spset" data-k="horizon">${[1, 3, 6, 12].map(n => `<option ${n === horizon ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+      <label class="f" style="flex:none">${esc(L2("History used", "الفترة المستخدمة"))}<select data-change="spset" data-k="back">${[6, 12, 24].map(n => `<option value="${n}" ${n === back ? "selected" : ""}>${esc(L2(`${n} months`, `${n} شهراً`))}</option>`).join("")}</select></label>` : ""}</div>`;
+  S.H.spset = el => setQ({ ...q, [el.dataset.k]: el.value });
+  if (tab === "projects") {
+    const d = await api("GET", "/api/stock-plan/projects?" + qs({ horizon, back, bu_id: q.bu_id || "" }));
+    const tot = d.projects.reduce((a, p) => a + p.fc_value, 0);
+    view.innerHTML = top + `<div class="kpis">${kpiBox(L2(`Materials expected over the next ${horizon} month(s)`, `الخامات المتوقعة خلال ${horizon} شهر`), tot)}${kpiBox(L2("Projects", "المشروعات"), String(d.projects.length))}</div>
+      ${d.projects.length ? `<div class="card"><h2>${esc(L2("By project", "حسب المشروع"))}</h2><div class="tbl"><table><thead><tr><th>${t("bu")}</th><th class="num">${esc(L2("Items", "الأصناف"))}</th><th class="num">${esc(L2("Expected material cost", "تكلفة الخامات المتوقعة"))}</th></tr></thead><tbody>
+        ${d.projects.map(p => `<tr class="click" data-href="#/bu/${p.bu_id}"><td><b>${esc(p.bu_code)}</b> ${esc(p.bu)}</td><td class="num">${p.items}</td><td class="num">${money(p.fc_value)}</td></tr>`).join("")}</tbody></table></div></div>
+      <div class="card"><h2>${esc(L2("By project and item", "حسب المشروع والصنف"))}</h2><div class="tbl stack"><table><thead><tr><th>${t("bu")}</th><th>${t("item")}</th><th>${esc(L2("Received per month", "المستلم شهرياً"))}</th>${d.ahead.map(m => `<th class="num">${esc(spMonth(m))}</th>`).join("")}<th class="num">${esc(L2("Unit cost", "تكلفة الوحدة"))}</th><th class="num">${esc(L2("Expected cost", "التكلفة المتوقعة"))}</th><th>${esc(L2("Method", "الطريقة"))}</th></tr></thead><tbody>
+        ${d.rows.map(r => `<tr><td><b>${esc(r.bu_code)}</b></td><td>${esc(r.item)} <span class="muted">${esc(r.unit)}</span></td><td>${spBars(r.hist, r.fc)}</td>${r.fc.map(v => `<td class="num">${spN(v)}</td>`).join("")}<td class="num">${money(r.unit_cost)}</td><td class="num"><b>${money(r.fc_value)}</b></td>
+          <td><span class="chip sp-meth">${esc(SP_METH()[r.method])}</span> <span class="muted" style="font-size:.8em">${esc(L2(`${r.months} mo.`, `${r.months} شهر`))}</span></td></tr>`).join("")}</tbody></table></div>
+        <p class="muted" style="font-size:.85em">${esc(L2("What each project received: issued from a store, or bought directly for it on a journal voucher's item lines. The coloured bars on the right are the forecast.", "ما استلمه كل مشروع: منصرف من مخزن، أو مشترى مباشرة له في بنود أصناف قيد اليومية. الأعمدة الملونة على اليمين هي التوقع."))}</p></div>`
+      : `<div class="card empty">${esc(L2("No materials have been issued or bought for a project in this period.", "لم تُصرف أو تُشترَ خامات لأي مشروع في هذه الفترة."))}</div>`}`;
+    $$("tr[data-href]", view).forEach(tr => tr.addEventListener("click", () => { location.hash = tr.dataset.href; }));
+    return;
+  }
+  const d = await api("GET", "/api/stock-plan?" + qs({ horizon, back, warehouse_id: q.warehouse_id || "" }));
+  const whSel = `<label class="f" style="flex:none">${t("warehouse")}<select data-change="spset" data-k="warehouse_id"><option value="">${esc(L2("All", "الكل"))}</option>${d.warehouses.map(w => `<option value="${w.id}" ${String(w.id) === String(q.warehouse_id || "") ? "selected" : ""}>${esc(w.name)}</option>`).join("")}</select></label>`;
+  if (tab === "minimums") {
+    const lv = d.levels, low = lv.filter(r => r.below);
+    const SRC = { item: L2("Item", "الصنف"), warehouse: L2("Warehouse", "المخزن"), auto: L2("Automatic", "تلقائي") };
+    view.innerHTML = top.replace(`<div class="row" style="gap:10px;margin:8px 0">`, `<div class="row" style="gap:10px;margin:8px 0">${whSel}`) +
+      `<div class="kpis">${kpiBox(L2("Minimums set", "حدود دنيا محددة"), String(lv.length))}${kpiBox(L2("At or below minimum", "عند الحد الأدنى أو أقل"), String(low.length), low.length ? "neg" : "")}${kpiBox(L2("Out of stock", "نفد"), String(low.filter(r => r.qty <= 0).length), low.some(r => r.qty <= 0) ? "neg" : "")}</div>
+      <div class="card">${lv.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th class="num">${t("on_hand")}</th><th class="num">${esc(L2("Minimum", "الحد الأدنى"))}</th><th>${esc(L2("Set on", "محدد على"))}</th><th>${esc(L2("Alert", "التنبيه"))}</th><th>${t("status")}</th></tr></thead><tbody>
+        ${lv.map(r => `<tr class="${r.below && ["both", "visual"].includes(r.alert_mode) ? "stk-low" : ""} click" data-href="#/stock?q=${encodeURIComponent(r.name)}"><td><b>${esc(r.name)}</b></td><td>${esc(r.warehouse)}</td><td class="num">${numf(r.qty)} <span class="muted">${esc(r.unit)}</span></td><td class="num">${spN(r.min)}</td><td>${esc(SRC[r.source])}</td>
+          <td>${esc((STOCK_ALERT_MODES().find(m => m[0] === r.alert_mode) || ["", r.alert_mode])[1])}</td><td>${r.below ? chipS(r.qty <= 0 ? "bad" : "warn", r.qty <= 0 ? L2("Out of stock", "نفد") : L2(`Short by ${spN(r.short)}`, `ينقص ${spN(r.short)}`)) : chipS("ok", L2("OK", "سليم"))}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty">${esc(L2("No minimums yet. Open an item on the Stock page to set its minimum and how it is announced.", "لا توجد حدود دنيا بعد. افتح صنفاً من صفحة المخزون لتحديد حده الأدنى وطريقة التنبيه."))}</div>`}
+        <p class="muted" style="font-size:.85em">${esc(L2("Notification: the bell, a pop-up on this device and a push to phones (once each time an item falls to its minimum). On screen: highlighted on the Stock page with a banner and a filter.", "الإشعار: الجرس، ونافذة منبثقة على هذا الجهاز، وإشعار على الهواتف (مرة واحدة كلما وصل الصنف إلى حده الأدنى). على الشاشة: تمييز في صفحة المخزون مع شريط تنبيه وفلتر."))}</p></div>`;
+    $$("tr[data-href]", view).forEach(tr => tr.addEventListener("click", () => { location.hash = tr.dataset.href; }));
+    return;
+  }
+  const rows = d.rows, soon = rows.filter(r => r.cover_days != null && r.cover_days <= 30), fall = rows.filter(r => r.below_after);
+  const sug = rows.filter(r => r.suggested_min != null && Math.abs(r.suggested_min - (r.min || 0)) > 0.05);
+  const outVal = rows.reduce((a, r) => a + r.out_value, 0);
+  S.H.spapply = async () => { if (!await uiConfirm(L2(`Set ${sug.length} minimum(s) to the suggested quantity?`, `ضبط ${sug.length} حد أدنى على الكمية المقترحة؟`))) return;
+    try { const r = await api("POST", "/api/stock-plan/apply", { items: [...new Set(sug.map(x => x.item_id))] }); toast(L2(`${r.applied} minimum(s) updated.`, `تم تحديث ${r.applied} حد أدنى.`)); route(); } catch (e) { fail(e); } };
+  view.innerHTML = top.replace(`<div class="row" style="gap:10px;margin:8px 0">`, `<div class="row" style="gap:10px;margin:8px 0">${whSel}`) +
+    `<div class="kpis">${kpiBox(L2("Items forecast", "أصناف متوقعة"), String(rows.length))}${kpiBox(L2("Run out within 30 days", "تنفد خلال 30 يوماً"), String(soon.length), soon.length ? "neg" : "")}
+      ${kpiBox(L2(`Fall to their minimum within ${horizon} month(s)`, `تصل إلى حدها الأدنى خلال ${horizon} شهر`), String(fall.length), fall.length ? "neg" : "")}${kpiBox(L2(`Expected to go out (${horizon} month(s), at average cost)`, `الصادر المتوقع (${horizon} شهر، بمتوسط التكلفة)`), outVal)}</div>
+    ${sug.length && ed ? `<div class="banner info row" style="gap:8px">${esc(L2(`${sug.length} suggested minimum(s) differ from the ones set (based on past use and delivery time).`, `${sug.length} حد أدنى مقترح يختلف عن المحدد (بناءً على الاستهلاك السابق ومدة التوريد).`))}<span class="spacer"></span><button class="btn sm pri" data-a="spapply">${esc(L2("Apply suggestions", "تطبيق المقترحات"))}</button></div>` : ""}
+    <div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th class="num">${t("on_hand")}</th><th>${esc(L2("Out per month", "الصادر شهرياً"))}</th>
+      ${d.ahead.map(m => `<th class="num">${esc(spMonth(m))}<div class="lines">${esc(L2("in / out", "وارد / صادر"))}</div></th>`).join("")}<th class="num">${esc(L2("Balance after", "الرصيد بعدها"))}</th><th class="num">${esc(L2("Days of cover", "أيام التغطية"))}</th><th class="num">${esc(L2("Minimum", "الحد الأدنى"))}<div class="lines">${esc(L2("set / suggested", "محدد / مقترح"))}</div></th><th>${esc(L2("Method", "الطريقة"))}</th></tr></thead><tbody>
+      ${rows.map(r => { const end = r.balance[r.balance.length - 1], risk = r.cover_days != null && r.cover_days <= 30;
+        return `<tr class="${risk || r.below_after ? "stk-low" : ""}"><td><b>${esc(r.item)}</b> <span class="muted">${esc(r.unit)}</span></td><td>${esc(r.warehouse)}</td><td class="num">${numf(r.qty)}</td><td>${spBars(r.hist_out, r.fc_out)}</td>
+        ${r.fc_in.map((v, i) => `<td class="num" style="white-space:nowrap"><span class="pos">+${spN(v)}</span> / <span class="neg">−${spN(r.fc_out[i])}</span></td>`).join("")}
+        <td class="num ${end <= (r.min || 0) ? "neg" : ""}">${spN(end)}${r.below_after ? `<div class="lines">${esc(L2("At minimum in", "يصل للحد الأدنى في"))} ${esc(spMonth(r.below_after))}</div>` : ""}</td>
+        <td class="num">${r.cover_days == null ? "—" : `<b class="${risk ? "neg" : ""}">${r.cover_days}</b><div class="lines">${r.runs_out ? esc(L2("runs out", "ينفد")) + " " + fd(r.runs_out) : ""}</div>`}</td>
+        <td class="num">${r.min ? numf(r.min) : "—"} / ${r.suggested_min != null ? `<b>${spN(r.suggested_min)}</b>` : `<span class="muted" title="${esc(L2("Set the item's delivery time to get a suggestion", "حدد مدة توريد الصنف للحصول على اقتراح"))}">—</span>`}</td>
+        <td><span class="chip sp-meth">${esc(SP_METH()[r.method_out])}</span> <span class="muted" style="font-size:.8em">${esc(L2(`${r.months_out} mo.`, `${r.months_out} شهر`))}</span></td></tr>`; }).join("")}</tbody></table></div>
+      <p class="muted" style="font-size:.85em">${esc(L2("Bars: monthly quantity out over the history used, with the forecast in colour. Trend: smoothing with a damped trend. Occasional use: average size of a movement over the average gap between movements. Days of cover: on hand ÷ expected daily use, if nothing more is received. Suggested minimum: use during the delivery time plus safety stock for a 95% service level.", "الأعمدة: الكمية الصادرة شهرياً خلال الفترة المستخدمة، والتوقع بالألوان. الاتجاه: تمهيد مع اتجاه متخامد. الاستخدام المتقطع: متوسط حجم الحركة على متوسط الفترة بين الحركات. أيام التغطية: الرصيد ÷ الاستهلاك اليومي المتوقع إن لم يُستلم المزيد. الحد الأدنى المقترح: الاستهلاك خلال مدة التوريد مع مخزون أمان لمستوى خدمة 95%."))}</p>`
+      : `<div class="empty">${esc(L2("No stock movements in this period.", "لا توجد حركات مخزون في هذه الفترة."))}</div>`}</div>`;
+};
 PAGES["stock-counts"] = async (view, parts, q) => {
   const rows = await api("GET", "/api/stock-counts?" + qs(q));
   S.H.scnew = () => drawer(L2("Start stock count", "بدء الجرد"), form([{ k: "warehouse_id", l: t("warehouse") + " *", type: "select", opts: whOpts() }, { k: "date", l: t("date"), type: "date", v: today() },
@@ -13389,8 +13488,38 @@ PAGES["cash-forecast"] = async (view, parts, q) => {
   $$("tr[data-href]", view).forEach(tr => tr.addEventListener("click", () => { location.hash = tr.dataset.href; }));
   chartTips(view);
 };
+// Automatic forecasting: when it is on and the drivers are older than its interval, they are refreshed without anyone
+// opening the page — official figures (World Bank open data: inflation, the pound against the dollar, world prices),
+// or, when those cannot be reached, the company's own purchase prices. A driver someone typed in is never replaced.
+const FC_AUTO_SRC = /^(World Bank|Your purchases|Assumed equal to inflation|مفترض مساوٍ للتضخم|مشترياتك)/;
+async function forecastAutoRun(force, d0) {
+  if (!can("reports.forecast", "edit")) return null;
+  let d = d0; if (!d) { try { d = await api("GET", "/api/forecast"); } catch { return null; } }
+  if (!force && !(d.auto && d.auto.due)) return null;
+  const n = d.periods.length, q = a => Math.pow(1 + a, 0.25) - 1, drivers = {}, today_ = today();
+  d.drivers.forEach(x => { drivers[x.key] = { rates: x.rates.slice(0, n), source: x.source || "", as_of: x.as_of || "" }; });
+  const mine = k => drivers[k].rates.some(Boolean) && drivers[k].source && !FC_AUTO_SRC.test(drivers[k].source);  // typed in: kept
+  const set = (k, perQ, src) => { if (!mine(k)) drivers[k] = { rates: Array(n).fill(perQ), source: src, as_of: today_ }; };
+  let source = "none";
+  try {
+    const wb = (c, ind) => fetch(`https://api.worldbank.org/v2/country/${c}/indicator/${ind}?format=json&mrnev=2`).then(r => r.json()).then(j => (j[1] || []).filter(x => x.value != null));
+    const [cpi, fx, wld] = await Promise.all([wb("EGY", "FP.CPI.TOTL.ZG"), wb("EGY", "PA.NUS.FCRF"), wb("WLD", "FP.CPI.TOTL.ZG")]);
+    if (cpi[0]) { set("cpi", q(cpi[0].value / 100), `World Bank (WDI): Egypt consumer-price inflation ${cpi[0].date} = ${cpi[0].value.toFixed(1)}% a year`); source = "worldbank"; }
+    if (fx.length > 1) { const a = fx[0].value / fx[1].value - 1; set("fx", q(a), `World Bank (WDI): EGP per USD ${fx[1].date} ${fx[1].value.toFixed(2)} → ${fx[0].date} ${fx[0].value.toFixed(2)} (${(a * 100).toFixed(1)}% a year)`); }
+    if (wld[0]) set("global", q(wld[0].value / 100), `World Bank (WDI): world inflation ${wld[0].date} = ${wld[0].value.toFixed(1)}% a year`);
+  } catch { /* offline or blocked: the company's own prices below */ }
+  if (source === "none" && d.own && d.own.rate != null) {
+    set("cpi", d.own.rate, `Your purchases: median change in the price paid per quarter, ${d.own.items} item(s), last two years`); source = "own"; }
+  if (source !== "none") ["wages", "fuel"].forEach(k => { if (!mine(k)) drivers[k] = { rates: drivers.cpi.rates.slice(), source: "Assumed equal to inflation. Adjust if a different rate is expected.", as_of: today_ }; });
+  const mixes = {}; d.categories.forEach(c => { if (c.set) mixes[c.name] = c.mix; });
+  const overrides = {}; d.sections.forEach(sec => sec.rows.forEach(r => { if (r.edited.length) overrides[r.key] = Object.fromEntries(r.edited.map(i => [i, r.values[i]])); }));
+  try { return await api("PUT", "/api/forecast", { horizon: d.horizon, drivers: source === "none" ? undefined : drivers, mixes, overrides,
+    auto: { ...d.auto, last: today_, source } }); } catch { return null; }
+}
+let fcAutoTried = 0;
 PAGES.forecast = async (view) => {
   let d = await api("GET", "/api/forecast");
+  if (d.auto && d.auto.due) { const r = await forecastAutoRun(false, d); if (r) d = r; }
   const ed = can("reports.forecast", "edit"), pct = v => (+(v * 100).toFixed(2)), n = () => d.periods.length;
   let tab = store.get("fcTab", "prices"), dirty = false;
   const st = { drivers: {}, mixes: {}, assign: {}, overrides: {} };
@@ -13400,6 +13529,12 @@ PAGES.forecast = async (view) => {
     view.innerHTML = `<div class="toolbar"><span class="muted">${esc(L2("No import is required; the forecast projects your books forward.", "لا يلزم أي استيراد؛ تستند التوقعات إلى دفاترك وتمدها مستقبلاً."))}</span><span class="spacer"></span>
         <label class="f" style="flex:none">${esc(L2("Quarters", "الأرباع"))}<select id="fch" ${ed ? "" : "disabled"}>${[4, 8, 12].map(k => `<option ${k === d.horizon ? "selected" : ""}>${k}</option>`).join("")}</select></label>
         ${ed ? `<button class="btn" data-a="fcfetch">↻ ${esc(L2("Fetch latest data (World Bank)", "جلب أحدث البيانات (البنك الدولي)"))}</button><button class="btn pri" data-a="fcsave" ${dirty ? "" : "disabled"}>${t("save")}</button>` : ""}</div>
+      <div class="card row" style="gap:12px;align-items:center"><label class="tgl" title="${esc(L2("Automatic forecasting", "التنبؤ التلقائي"))}"><input type="checkbox" role="switch" data-change="fcauto" ${d.auto.on ? "checked" : ""} ${ed ? "" : "disabled"}><span class="sw-ui" aria-hidden="true"><i></i><b class="sw-on">${esc(L2("On", "مفعّل"))}</b><b class="sw-off">${esc(L2("Off", "متوقف"))}</b></span></label>
+        <div style="flex:1;min-width:220px"><b>${esc(L2("Automatic forecasting", "التنبؤ التلقائي"))}</b><div class="muted" style="font-size:.85em">${esc(L2("Refreshes the drivers by itself from official data (World Bank), or from your own purchase prices when that cannot be reached. Figures typed in by hand are kept.", "يحدّث المحركات تلقائياً من البيانات الرسمية (البنك الدولي)، أو من أسعار مشترياتك عند تعذر الوصول إليها. تبقى الأرقام المُدخلة يدوياً كما هي."))}
+          ${d.auto.last ? `<br>${esc(L2("Last refreshed", "آخر تحديث"))}: <b>${fd(d.auto.last)}</b> · ${esc({ worldbank: L2("World Bank", "البنك الدولي"), own: L2("your purchase prices", "أسعار مشترياتك"), none: L2("no source reachable, figures unchanged", "تعذر الوصول لأي مصدر، لم تتغير الأرقام") }[d.auto.source] || "")}` : ""}
+          ${d.own ? `<br>${esc(L2(`Your purchase prices moved ${(d.own.rate * 100).toFixed(2)}% per quarter (median of ${d.own.items} item(s)).`, `تغيرت أسعار مشترياتك ${(d.own.rate * 100).toFixed(2)}% في الربع (وسيط ${d.own.items} صنف).`))}` : ""}</div></div>
+        <label class="f" style="flex:none">${esc(L2("Refresh every", "التحديث كل"))}<select data-change="fcevery" ${ed && d.auto.on ? "" : "disabled"}>${[7, 30, 90].map(k => `<option value="${k}" ${k === d.auto.every_days ? "selected" : ""}>${esc(L2(`${k} days`, `${k} يوماً`))}</option>`).join("")}</select></label>
+        ${ed && d.auto.on ? `<button class="btn sm" data-a="fcautonow">↻ ${esc(L2("Refresh now", "تحديث الآن"))}</button>` : ""}</div>
       <div class="card"><h2>${esc(L2("1 · Drivers (% change per quarter)", "1 · المحركات (نسبة التغير لكل ربع)"))}</h2>
         <div class="tbl"><table><thead><tr><th>${esc(L2("Driver", "المحرك"))}</th>${head}<th>${esc(L2("Source / basis", "المصدر / الأساس"))}</th></tr></thead><tbody>
         ${d.drivers.map(x => `<tr><td><b>${esc(L2(x.en, x.ar))}</b></td>${d.periods.map((p, i) => `<td class="num"><input class="num fc-in" type="number" step="0.01" ${ed ? "" : "disabled"} data-input="fcdrv" data-k="${x.key}" data-i="${i}" value="${pct(x.rates[i] || 0)}"></td>`).join("")}
@@ -13440,6 +13575,9 @@ PAGES.forecast = async (view) => {
     fcov: el => { const o = (st.overrides[el.dataset.k] = st.overrides[el.dataset.k] || {}); o[el.dataset.i] = el.value === "" ? null : +el.value; el.classList.add("fc-ed"); changed(); },
     fcassign: el => { st.assign[el.dataset.k] = el.value.trim(); changed(); },
     fcsave: async () => { try { d = await api("PUT", "/api/forecast", body()); Object.assign(st, { drivers: {}, mixes: {}, assign: {}, overrides: {} }); dirty = false; toast(t("saved")); draw(); } catch (e) { fail(e); } },
+    fcauto: async el => { try { d = await api("PUT", "/api/forecast", { ...body(), auto: { ...d.auto, on: el.checked } }); if (d.auto.on && d.auto.due) { const r = await forecastAutoRun(false, d); if (r) d = r; } Object.assign(st, { drivers: {}, mixes: {}, assign: {}, overrides: {} }); dirty = false; toast(t("saved")); draw(); } catch (e) { fail(e); } },
+    fcevery: async el => { try { d = await api("PUT", "/api/forecast", { ...body(), auto: { ...d.auto, every_days: +el.value } }); draw(); } catch (e) { fail(e); } },
+    fcautonow: async el => { el.disabled = true; const r = await forecastAutoRun(true, d); if (r) { d = r; toast(L2("Forecast refreshed.", "تم تحديث التوقعات.")); } draw(); },
     // official figures from the World Bank's open data: Egypt's consumer-price inflation, the pound against the dollar,
     // and world inflation for global prices — the latest year published, spread evenly over the quarters
     fcfetch: async el => { el.disabled = true; const wb = (c, ind) => fetch(`https://api.worldbank.org/v2/country/${c}/indicator/${ind}?format=json&mrnev=2`).then(r => r.json()).then(j => (j[1] || []).filter(x => x.value != null));
@@ -13457,6 +13595,8 @@ PAGES.forecast = async (view) => {
   view.addEventListener("change", e => { if (e.target.id === "fch") { changed(); S.H.fcsave(); } });
   draw();
 };
+const STOCK_ALERT_MODES = () => [["both", L2("Notify me and show it on screen", "إشعار وعرض على الشاشة")], ["notify", L2("Notification only", "إشعار فقط")],
+  ["visual", L2("On screen only", "على الشاشة فقط")], ["none", L2("No alert", "بدون تنبيه")]];
 const FC_PRESET = () => ({ general: L2("General (inflation)", "عام (التضخم)"), local_materials: L2("Local materials", "مواد محلية"), imported_materials: L2("Imported materials", "مواد مستوردة"),
   labour: L2("Labour", "عمالة"), works: L2("Works (mixed)", "أعمال (مختلطة)"), energy: L2("Energy and transport", "الطاقة والنقل") });
 

@@ -34,7 +34,7 @@ def start(db, d, user=""):
                               (code, acc.clean_date(d.get("date")), wh["id"], "counting", text(d.get("counted_by")) or user,
                                text(d.get("notes"), maxlen=2000))).lastrowid
         db.conn.executemany("INSERT INTO stock_count_lines(count_id,item_id,system_qty,unit_cost) VALUES (?,?,?,?)",
-                            [(cid, r["item_id"], r["qty"], r["avg_cost"]) for r in items])
+                            [(cid, r["item_id"], r["qty"], round(r["avg_cost"])) for r in items])   # to the cent, as it is kept in files
     return cid
 
 
@@ -81,7 +81,7 @@ def save_counts(db, cid, d):
                                 (counted, text(ln.get("note")), by_id[it["id"]]["id"]))
             else:
                 lvl = acc._level(db, it["id"], c["warehouse_id"])
-                cost = lvl["avg_cost"] or acc.to_minor(num(ln.get("unit_cost") or 0, "unit cost"))
+                cost = round(lvl["avg_cost"]) or acc.to_minor(num(ln.get("unit_cost") or 0, "unit cost"))
                 db.conn.execute("INSERT INTO stock_count_lines(count_id,item_id,system_qty,counted,unit_cost,note) VALUES (?,?,?,?,?,?)",
                                 (c["id"], it["id"], lvl["qty"], counted, cost, text(ln.get("note"))))
 

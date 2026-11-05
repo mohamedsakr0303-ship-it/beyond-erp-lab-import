@@ -55,12 +55,16 @@ def assumptions(db):
     a.setdefault("assign", {})
     a.setdefault("overrides", {})
     a.setdefault("horizon", 4)
+    a.setdefault("auto", {"on": False, "every_days": 30, "last": "", "source": ""})
     return a
 
 
 def save(db, d):
     cur = assumptions(db)
     out = {"horizon": max(2, min(12, int(d.get("horizon") or cur["horizon"] or 4)))}
+    au = d.get("auto") if isinstance(d.get("auto"), dict) else cur["auto"]
+    out["auto"] = {"on": bool(au.get("on")), "every_days": max(1, min(365, int(au.get("every_days") or 30))),
+                   "last": acc.text(au.get("last"), maxlen=20), "source": acc.text(au.get("source"), maxlen=40)}
     drv = {}
     for k, _en, _ar in DRIVERS:
         x = (d.get("drivers") or cur["drivers"]).get(k) or {}
@@ -83,6 +87,50 @@ def save(db, d):
     out["overrides"] = ov
     db.set_setting("forecast", json.dumps(out, ensure_ascii=False))
     return out
+
+
+def auto_due(a, today=None):
+    """Automatic forecasting is on and the drivers are older than its interval (or were never refreshed)."""
+    au = a.get("auto") or {}
+    if not au.get("on"):
+        return False
+    if not au.get("last"):
+        return True
+    try:
+        last = _dt.date.fromisoformat(au["last"][:10])
+    except ValueError:
+        return True
+    t = today if isinstance(today, _dt.date) else _dt.date.fromisoformat(today or acc.today())
+    return (t - last).days >= int(au.get("every_days") or 30)
+
+
+def own_price_trend(db, today=None):
+    """How much the company's own purchase prices moved per quarter, from what it paid for the same items: for each item
+    bought in at least two different quarters of the last two years, the change between the average price of its first
+    and last quarter, spread over the quarters between; the median of those. None without enough purchases."""
+    d = today.isoformat() if isinstance(today, _dt.date) else (today or acc.today())
+    since = (_dt.date.fromisoformat(d) - _dt.timedelta(days=730)).isoformat()
+    per = {}
+    for r in db.q("SELECT item_id, date, qty, rate FROM stock_moves WHERE kind='Receipt' AND qty>0 AND rate>0 AND date>=? AND date<=?", (since, d)):
+        y, m = int(r["date"][:4]), int(r["date"][5:7])
+        k = y * 4 + (m - 1) // 3
+        q = per.setdefault(r["item_id"], {}).setdefault(k, [0.0, 0.0])
+        q[0] += r["qty"] * r["rate"]
+        q[1] += r["qty"]
+    changes = []
+    for qs_ in per.values():
+        ks = sorted(qs_)
+        if len(ks) < 2 or ks[-1] == ks[0]:
+            continue
+        first, last = qs_[ks[0]][0] / qs_[ks[0]][1], qs_[ks[-1]][0] / qs_[ks[-1]][1]
+        if first > 0:
+            changes.append((last / first) ** (1 / (ks[-1] - ks[0])) - 1)
+    if not changes:
+        return None
+    changes.sort()
+    mid = len(changes) // 2
+    med = changes[mid] if len(changes) % 2 else (changes[mid - 1] + changes[mid]) / 2
+    return {"rate": round(med, 5), "items": len(changes)}
 
 
 def _driver_rates(a, n):
@@ -328,4 +376,5 @@ def build(db, today=None):
     return {"periods": per, "drivers": [{"key": k, "en": en, "ar": ar, **(a["drivers"].get(k) or {}), "rates": dr[k]} for k, en, ar in DRIVERS],
             "blocks": blocks, "categories": [{"name": c, "mix": a["mixes"].get(c) or PRESETS.get(c) or PRESETS["general"],
                                               "rates": cat_rates(a, blocks, c, n), "set": c in a["mixes"] or c in PRESETS} for c in cats],
-            "presets": PRESETS, "horizon": n, "sections": sections}
+            "presets": PRESETS, "horizon": n, "sections": sections, "auto": {**a["auto"], "due": auto_due(a, today)},
+            "own": own_price_trend(db, today)}

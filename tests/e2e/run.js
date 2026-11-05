@@ -255,7 +255,8 @@ async function budget(page) {
   expect(near(now - before, 6000), `actual cost moved by ${now - before}, not 6,000`);
 
   await go(page, `#/budget-report?year=${year}&bu_id=${bu}`);
-  const fmt = v => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = v => { const t = Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return v < 0 ? `(${t})` : t; };                                       // money: negatives in brackets, as the report shows them
   const one = v => String(+v.toFixed(1));                                 // percentages: one decimal, as the report rounds them
   // columns: budget to date (January to this month), actual to date, variance (+ = under budget for a cost), variance %,
   // used %, full-year budget

@@ -98,7 +98,9 @@ AR = {
     "Primer 18L": "سيلر 18 لتر", "Wall paint 18L (white)": "دهان حوائط 18 لتر (أبيض)",
     "Aluminium & glass": "ألوميتال وزجاج", "Ceramics & porcelain": "سيراميك وبورسلين", "Truck — DEMO 123": "نقل — DEMO 123",
     # ---- stock, products
-    "Main Store": "المخزن الرئيسي", "Site Store — Villa 7": "مخزن الموقع — فيلا 7",
+    "Main Store": "المخزن الرئيسي", "Site Store — Villa 7": "مخزن الموقع — فيلا 7", "Yard Store — Business Park": "مخزن الساحة — بيزنس بارك", "Granite slab 2cm": "رخام جرانيت 2 سم", "Floor primer 20L": "برايمر أرضيات 20 لتر",
+    "Wall putty 20kg": "معجون حوائط 20 كجم", "Gypsum board 12mm": "ألواح جبس بورد 12 مم",
+    "Electrical cable 2.5mm (100 m roll)": "كابل كهرباء 2.5 مم (لفة 100 م)",
     "Cement bag 50kg": "شكارة أسمنت 50 كجم", "Ceramic tiles 60x60": "سيراميك 60×60", "Bathroom set (basin + WC)": "طقم حمام (حوض + قاعدة)",
     "Wall paint 18L": "دهان حوائط 18 لتر", "Examination gloves (pair)": "جوانتي فحص (زوج)", "Syringe 5 ml": "سرنجة 5 مل",
     "IV cannula 22G": "كانيولا 22G", "Sterile dressing pack": "عبوة غيار معقمة", "Monthly count — 5 bags damaged": "جرد شهري — 5 شكائر تالفة",

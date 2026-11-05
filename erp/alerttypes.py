@@ -34,6 +34,7 @@ CATALOG = [
     ("sub_certificates", "projects", "Subcontractor certificates to approve or post", "مستخلصات مقاولي باطن للاعتماد أو الترحيل"),
     ("retention_due", "projects", "Retention due for release", "محتجزات مستحقة الرد"),
     ("stock_counts", "operations", "Stock counts open", "جرد مفتوح"),
+    ("stock_low", "operations", "Stock at or below its minimum", "مخزون عند حده الأدنى أو أقل"),
     ("maintenance", "operations", "Equipment maintenance due or overdue", "صيانة معدات مستحقة أو متأخرة"),
     ("hr_requests", "team", "Employee requests awaiting approval", "طلبات موظفين بانتظار الاعتماد"),
     ("checkin_self", "team", "I am online without checking in", "أنا متصل دون تسجيل الحضور"),
