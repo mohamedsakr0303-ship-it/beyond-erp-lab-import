@@ -1057,13 +1057,14 @@ function renderShell() {
       <button class="icbtn langbtn" data-a="lang" title="${esc(L2("Language: العربية", "اللغة: English"))}">${svg("globe")}${ar ? "<span>EN</span>" : `<span lang="ar">عربي</span>`}</button>
       <div class="dd newdd"><button class="btn pri newbtn" aria-label="${esc(t("new"))}">${svg("plus")}<span class="lbl">${t("new")}</span></button><div class="dd-menu" id="newmenu"></div></div>
     </header><div class="etabs" id="etabs" hidden></div><div id="billbar"></div><main class="content" id="view"></main></div>
-    <nav class="bottombar">
-      <a href="#/dashboard" class="bb-home">${svg("home")}<span>${esc(t("m_dashboard"))}</span></a>
-      <button data-a="palette">${svg("search")}<span>${esc(t("search").replace("…", ""))}</span></button>
-      <div class="dd newdd bb-new"><button class="btn pri" aria-label="${esc(t("new"))}">${svg("plus")}</button><div class="dd-menu" id="newmenu2"></div></div>
-      <button data-a="bellopen">${svg("bell")}<b class="badge" id="bellc2" hidden></b><span>${esc(L2("Alerts", "التنبيهات"))}</span></button>
-      <button data-a="menu">${svg("menu")}<span>${esc(L2("Menu", "القائمة"))}</span></button>
+    <nav class="bottombar" aria-label="${esc(L2("Quick navigation", "تنقل سريع"))}">${DOCK_LAYERS}
+      <a href="#/dashboard" class="bb-home" data-bi="0">${svg("home")}<span>${esc(t("m_dashboard"))}</span></a>
+      <button data-a="palette" data-bi="1">${svg("search")}<span>${esc(t("search").replace("…", ""))}</span></button>
+      <div class="dd newdd bb-new" data-bi="2"><button class="btn pri" aria-label="${esc(t("new"))}">${svg("plus")}<span>${esc(t("new"))}</span></button><div class="dd-menu" id="newmenu2"></div></div>
+      <button data-a="bellopen" data-bi="3">${svg("bell")}<b class="badge" id="bellc2" hidden></b><span>${esc(L2("Alerts", "التنبيهات"))}</span></button>
+      <button data-a="menu" data-bi="4">${svg("menu")}<span>${esc(L2("Menu", "القائمة"))}</span></button>
     </nav></div>`;
+  applyDock();
   // "+ New": the items chosen in Settings → Menus, in that order, that this user may add
   const items = newMenuItems().filter(i => i.show && i.ok);
   const html = items.map(i => `<button data-a="quicknew" data-doc="${esc(i.key)}">${esc(i.label)}</button>`).join("") || `<div class="muted" style="padding:8px">${t("view_only")}</div>`;
@@ -1337,8 +1338,46 @@ function renderNav(active) {
   const inMenu = effectiveMenu().some(([, items]) => items.some(i => i[1].split("?")[0] === active));
   const back = $(".top-back"); if (back) back.style.display = inMenu ? "none" : "";
   $$(".bottombar .bb-home").forEach(a => a.classList.toggle("on", active === "dashboard"));
+  dockSync();
   loadAlerts();
 }
+// The bottom bar's look (Profile, and My appearance): a glass bar whose marker glides to the tab in use — a glowing wave,
+// a spotlight, a floating bubble or a liquid drop — or the classic bar. On phones, or on computers too.
+const DOCK_LAYERS = `<span class="bb-bg" aria-hidden="true"><b class="bb-drop"></b></span><span class="bb-ind" aria-hidden="true"><i></i></span>
+  <svg class="bb-defs" width="0" height="0" aria-hidden="true" focusable="false"><filter id="bbgoo"><feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/>
+  <feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -8" result="g"/><feComposite in="SourceGraphic" in2="g" operator="atop"/></filter></svg>`;
+const DOCKS = () => [["wave", L2("Glass: glowing wave", "زجاجي: موجة مضيئة")], ["spot", L2("Glass: spotlight", "زجاجي: ضوء مسلّط")],
+  ["bubble", L2("Glass: floating bubble", "زجاجي: فقاعة عائمة")], ["liquid", L2("Glass: liquid drop", "زجاجي: قطرة سائلة")], ["classic", L2("Classic", "كلاسيكي")]];
+const dockPref = () => { const p = ((S.boot || {}).profile || {}).prefs || {};
+  return { style: DOCKS().some(d => d[0] === p.dock_style) ? p.dock_style : "wave", where: p.dock_where === "all" ? "all" : "phone" }; };
+function applyDock() {
+  const d = dockPref(), h = document.documentElement;
+  DOCKS().forEach(([k]) => h.classList.toggle("dock-" + k, k === d.style));
+  h.classList.toggle("dock-all", d.where === "all");
+  dockSync();
+}
+function saveDock(patch) {
+  const p = S.boot.profile || (S.boot.profile = { prefs: {} }); p.prefs = { ...(p.prefs || {}), ...patch }; applyDock();
+  api("PUT", "/api/me/profile", { prefs: patch }).then(r => { S.boot.profile = r; applyDock(); }).catch(fail);
+}
+const dockSelect = () => { const d = dockPref();
+  return `<label class="f">${esc(L2("Bottom bar", "الشريط السفلي"))}<select data-change="dockset" data-k="dock_style">${DOCKS().map(([v, l]) => `<option value="${v}" ${d.style === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+    <label class="f">${esc(L2("Show the bottom bar", "إظهار الشريط السفلي"))}<select data-change="dockset" data-k="dock_where">${[["phone", L2("On phones", "على الهواتف")], ["all", L2("On phones and computers", "على الهواتف والكمبيوتر")]].map(([v, l]) => `<option value="${v}" ${d.where === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`; };
+S.H.dockset = el => saveDock({ [el.dataset.k]: el.value });
+function dockSync() {
+  const bar = $(".bottombar"); if (!bar) return;
+  const app = $(".app"), page = (location.hash || "").replace(/^#\/?/, "").split(/[/?]/)[0];
+  const i = $(".pal-bg") ? 1 : $(".bb-new.open") ? 2 : $(".bell.open") ? 3 : app && app.classList.contains("menu") ? 4 : (!page || page === "dashboard") ? 0 : -1;
+  const on = i >= 0 ? bar.querySelector(`[data-bi="${i}"]`) : null;
+  bar.classList.toggle("bb-none", !on);
+  if (on) { const b = bar.getBoundingClientRect(), r = on.getBoundingClientRect();
+    bar.style.setProperty("--bi", i); bar.style.setProperty("--bx", Math.round(r.left - b.left + r.width / 2) + "px"); }
+  $$("[data-bi]", bar).forEach(el => el.classList.toggle("on", el === on));
+}
+document.addEventListener("click", () => { setTimeout(dockSync, 30); setTimeout(dockSync, 320); }, true);
+addEventListener("hashchange", () => setTimeout(dockSync, 40));
+addEventListener("keydown", e => { if (e.key === "Escape") setTimeout(dockSync, 40); });
+addEventListener("resize", () => dockSync());
 
 // ------------------------------------------------------------- auth pages
 // ------------------------------------------------ shared workspace (Supabase) — same calls in both editions
@@ -5906,7 +5945,7 @@ PAGES.settings = async (view, parts, q) => {
         <label class="f">${t("density")}<select id="my_density" data-change="mysave">${[["", t("default")], ["comfortable", t("d_comfortable")], ["compact", t("d_compact")]].map(([v, l]) => `<option value="${v}" ${(mine.density || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         <label class="f">${t("corners")}<select id="my_corners" data-change="mysave">${[["", t("default")], ["rounded", t("cr_rounded")], ["square", t("cr_square")]].map(([v, l]) => `<option value="${v}" ${(mine.corners || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         <label class="f">${L2("Open menu groups on", "فتح مجموعات القائمة عند")}<select id="my_navmode" data-change="mysave">${[["hover", L2("Hover", "المرور بالمؤشر")], ["click", L2("Click", "النقر")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
-        ${phoneMenuSelect('id="my_phonemenu" data-change="mysave"')}</div>
+        ${phoneMenuSelect('id="my_phonemenu" data-change="mysave"')}${dockSelect()}</div>
         <div class="row" style="margin-top:10px"><button class="btn" data-a="myreset">${esc(L2("Use company appearance", "استخدام مظهر الشركة"))}</button>
           <a class="btn" href="#/settings?tab=theme">🎨 ${esc(L2("Colours and background images", "الألوان وصور الخلفية"))}</a>
           ${isSup ? `<button class="btn" data-a="mycompany">${esc(L2("Apply as company appearance", "اعتماد كمظهر للشركة"))}</button>` : ""}</div></div>
@@ -10031,7 +10070,7 @@ PAGES.profile = async view => {
           <div class="row" style="margin-top:10px"><button class="btn pri" type="submit">${t("save")}</button></div></form></div>
       <div class="card"><h2>${esc(L2("Menu", "القائمة"))}</h2>
         <div class="grid g2"><label class="f">${esc(L2("Open menu groups on", "فتح مجموعات القائمة عند"))}<select data-change="pnav">${[["click", L2("Click", "النقر")], ["hover", L2("Hover", "المرور بالمؤشر")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
-        ${phoneMenuSelect('data-change="ppm"')}
+        ${phoneMenuSelect('data-change="ppm"')}${dockSelect()}
         <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select data-change="pmode">${[["auto", L2("Device setting", "حسب الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${modeNow() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
         <div class="muted" style="margin-top:6px">${esc(L2("Colours and saved themes: Settings → Theme.", "الألوان والسمات المحفوظة: الإعدادات ← السمات."))} <a href="#/settings?tab=theme">${esc(L2("Open", "فتح"))}</a></div></div>
       <div class="card" id="tscard"><h2>${esc(L2("Two-step sign-in", "التحقق بخطوتين"))}</h2><div class="muted">${t("loading")}</div></div>

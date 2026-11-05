@@ -75,6 +75,10 @@ def save_profile(db, uid, d):
             prefs["nav_mode"] = new["nav_mode"]
         if new.get("phone_menu") in ("overlay", "rail"):     # on a phone: the menu over the screen, or a slim strip of icons
             prefs["phone_menu"] = new["phone_menu"]
+        if new.get("dock_style") in ("wave", "spot", "bubble", "liquid", "classic"):   # the bottom bar's look
+            prefs["dock_style"] = new["dock_style"]
+        if new.get("dock_where") in ("phone", "all"):           # the bottom bar on phones, or on computers too
+            prefs["dock_where"] = new["dock_where"]
         if isinstance(new.get("views"), dict):    # saved filter views: {screen: [{name, q}]}
             views = {}
             for route_, lst in list(new["views"].items())[:80]:

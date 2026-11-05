@@ -289,9 +289,58 @@ function shell() {
       <button class="btn icon" data-a="mode" title="${esc(L("Light / dark", "فاتح / داكن"))}">${ICON.mode}</button>
       <button class="btn" data-a="lang">${S.lang === "ar" ? "English" : "عربي"}</button>
       <button class="btn icon" data-a="signout" title="${esc(L("Sign out", "تسجيل الخروج"))}">${ICON.out}</button></header>
-      <main class="content" id="view"></main></div></div>`;
-  drawBell();
+      <main class="content" id="view"></main></div>${dockBar(badge)}</div>`;
+  drawBell(); applyDock();
 }
+// ================================================================== the bottom bar (phones; computers too if chosen on this device)
+// A glass bar whose marker glides to the page in use — a glowing wave, a spotlight, a floating bubble or a liquid drop —
+// or the classic bar; the same looks as the ERP's. Kept per device (On this device, on the Notifications page).
+const DI = p => `<svg class="i" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const DOCK_IC = { overview: DI('<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>'), payments: DI('<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h3"/>'),
+  queue: DI('<path d="M4 4h16v12H8l-4 4z"/><path d="M8 9h8M8 12h5"/>'), support: DI('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>'),
+  customers: DI('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>'),
+  alerts: DI('<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>'), menu: DI('<path d="M4 6h16M4 12h16M4 18h16"/>') };
+const DOCK_LAYERS = `<span class="bb-bg" aria-hidden="true"><b class="bb-drop"></b></span><span class="bb-ind" aria-hidden="true"><i></i></span>
+  <svg class="bb-defs" width="0" height="0" aria-hidden="true" focusable="false"><filter id="bbgoo"><feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/>
+  <feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -8" result="g"/><feComposite in="SourceGraphic" in2="g" operator="atop"/></filter></svg>`;
+const dockItems = () => {
+  const all = NAV().flatMap(([, it]) => it), want = DESK ? ["queue", "support", "customers", "alerts"] : ["overview", "payments", "queue", "alerts"];
+  return want.map(k => all.find(i => i[0] === k)).filter(i => i && navOk(i[3])).slice(0, 4);
+};
+function dockBar(badge) {
+  const items = dockItems();
+  return `<nav class="bottombar" style="--n:${items.length + 1}" aria-label="${esc(L("Quick navigation", "تنقل سريع"))}">${DOCK_LAYERS}
+    ${items.map(([k, , l], i) => `<a href="#/${k}" data-bi="${i}" data-dk="${k}" title="${esc(l)}">${DOCK_IC[k] || DOCK_IC.overview}<span>${esc(DOCK_SHORT()[k] || l)}</span><span class="cnt-slot" data-badge="${k}">${badge(k)}</span></a>`).join("")}
+    <button type="button" data-a="menu" data-bi="${items.length}">${DOCK_IC.menu}<span>${esc(L("Menu", "القائمة"))}</span></button></nav>`;
+}
+const DOCK_SHORT = () => ({ overview: L("Overview", "نظرة عامة"), payments: L("Payments", "المدفوعات"), queue: L("Queue", "الانتظار"),
+  support: L("Tickets", "البلاغات"), customers: L("Customers", "العملاء"), alerts: L("Alerts", "الإشعارات") });
+const DOCKS = () => [["wave", L("Glass: glowing wave", "زجاجي: موجة مضيئة")], ["spot", L("Glass: spotlight", "زجاجي: ضوء مسلّط")],
+  ["bubble", L("Glass: floating bubble", "زجاجي: فقاعة عائمة")], ["liquid", L("Glass: liquid drop", "زجاجي: قطرة سائلة")], ["classic", L("Classic", "كلاسيكي")]];
+const dockPref = () => { const d = LS("berp.console.dock", {}) || {};
+  return { style: DOCKS().some(x => x[0] === d.style) ? d.style : "wave", where: d.where === "all" ? "all" : "phone" }; };
+function applyDock() {
+  const d = dockPref(), h = document.documentElement;
+  DOCKS().forEach(([k]) => h.classList.toggle("dock-" + k, k === d.style));
+  h.classList.toggle("dock-all", d.where === "all");
+  dockSync();
+}
+function dockSync() {
+  const bar = $(".bottombar"); if (!bar) return;
+  const page = parse().parts[0] || (DESK ? "queue" : "overview"), app = $("#app");
+  const key = { company: "customers", ticket: "queue", visit: "queue" }[page] || page;
+  const on = app && app.classList.contains("menu") ? bar.querySelector("button[data-a=menu]") : bar.querySelector(`[data-dk="${key}"]`);
+  bar.classList.toggle("bb-none", !on);
+  if (on) { const b = bar.getBoundingClientRect(), r = on.getBoundingClientRect();
+    bar.style.setProperty("--bi", on.dataset.bi); bar.style.setProperty("--bx", Math.round(r.left - b.left + r.width / 2) + "px"); }
+  $$("[data-bi]", bar).forEach(el => el.classList.toggle("on", el === on));
+}
+const dockSelect = () => { const d = dockPref();
+  return `<div class="grid g2" style="gap:8px;margin-top:10px"><label class="f">${esc(L("Bottom bar", "الشريط السفلي"))}<select data-change="dockset" data-k="style">${DOCKS().map(([v, l]) => `<option value="${v}" ${d.style === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+    <label class="f">${esc(L("Show the bottom bar", "إظهار الشريط السفلي"))}<select data-change="dockset" data-k="where">${[["phone", L("On phones", "على الهواتف")], ["all", L("On phones and computers", "على الهواتف والكمبيوتر")]].map(([v, l]) => `<option value="${v}" ${d.where === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>`; };
+document.addEventListener("click", () => { setTimeout(dockSync, 30); setTimeout(dockSync, 320); }, true);
+addEventListener("hashchange", () => setTimeout(dockSync, 40));
+addEventListener("resize", () => dockSync());
 const unreadCount = () => S.alerts.filter(a => !a.read).length;
 function drawBell() {
   const n = unreadCount(), c = $("#bellcnt"); if (c) c.innerHTML = n ? `<span class="cnt">${n > 99 ? "99+" : n}</span>` : "";
@@ -526,6 +575,7 @@ async function route() {
   S.H = {};
   $("#app") && $("#app").classList.remove("menu");
   $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.nav === page || (page === "company" && a.dataset.nav === "customers") || (page === "ticket" && a.dataset.nav === "queue") || (page === "visit" && a.dataset.nav === "visits")));
+  dockSync();
   const view = $("#view"), mine = ++routing;
   if (item && !navOk(item[3])) { view.innerHTML = `<div class="banner err">${esc(L("Your team account does not have access to this.", "لا يملك حساب فريقك صلاحية الوصول إلى هذا."))}</div>`; return; }
   $("#ttl").textContent = item ? item[2] : ""; $("#crumb").textContent = "";
@@ -719,11 +769,12 @@ PAGES.alerts = async view => {
   S.H.mute = async el => { const m = { ...(S.me.notify || {}) }; if (el.checked) delete m[el.dataset.k]; else m[el.dataset.k] = false; S.me.notify = await rpc("console_my_notify", { p: m }); loadAlerts(true); };
   S.H.perm = async () => { if (!("Notification" in window)) return toast(L("This browser cannot show notifications.", "هذا المتصفح لا يدعم الإشعارات."), true); await Notification.requestPermission(); route(); };
   soundHandlers();
+  S.H.dockset = el => { LSset("berp.console.dock", { ...dockPref(), [el.dataset.k]: el.value }); applyDock(); };
   view.innerHTML = `<div class="split"><div class="card"><div id="altbl"></div></div>
     <div><div class="card"><h2>${esc(L("On this device", "على هذا الجهاز"))}</h2>
       <p class="muted small">${esc(L("While this console is open (even in another tab), new notifications pop up on the screen. Phone and computer notifications for tickets, payments and visits also arrive when it is closed, if notifications are on in the ERP (Profile → Notifications).", "طالما اللوحة مفتوحة (حتى في تبويب آخر) تظهر الإشعارات الجديدة على الشاشة. وتصل إشعارات البلاغات والمدفوعات والزيارات للهاتف والكمبيوتر حتى وهي مغلقة إذا فُعّلت الإشعارات في النظام (الملف الشخصي ← الإشعارات)."))}</p>
       ${"Notification" in window ? (Notification.permission === "granted" ? chip(L("Screen notifications on", "إشعارات الشاشة مفعّلة"), "ok") : `<button class="btn pri" data-a="perm">${esc(L("Turn on screen notifications", "تفعيل إشعارات الشاشة"))}</button>`) : ""}
-      ${soundCard()}</div>
+      ${soundCard()}${dockSelect()}</div>
     <div class="card"><h2>${esc(L("Tell me about", "أبلغني عن"))}</h2><div class="grid" style="gap:6px">${Object.entries(kinds).map(([k, [l, ic]]) => `<label class="chk"><input type="checkbox" data-change="mute" data-k="${k}" ${mute[k] === false ? "" : "checked"}> ${ic} ${esc(l)}</label>`).join("")}</div>
       <p class="muted small">${esc(L("Only what your access covers is shown. Warning times are set in Rules & switches.", "يظهر فقط ما تشمله صلاحياتك. تُضبط أوقات التنبيه من القواعد والمفاتيح."))}</p></div></div></div>`;
   afterHooks.push(v => table($("#altbl", v), "alerts", S.alerts, {
