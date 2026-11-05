@@ -19,6 +19,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+import urllib.parse
 
 from . import assets, bankrec, custody, entries, industries, payroll, equity, loans, recurring, rental_docs, rentals, sales, sales_docs, __version__
 from . import accounting as acc
@@ -1881,7 +1882,7 @@ def list_docs(ctx, dtype):
 
 KIND_MODULE = {"Revenue Recognition": "shop.subscriptions", "Supplier Discount": "purchasing.payments", "Direct Cost": "purchasing.costs", "Operating Expense": "purchasing.expenses",
                "Payment Voucher": "purchasing.payments", "Salary Advance": "payroll.requests", "Payroll Accrual": "payroll", "Receipt Voucher": "sales.receipts",
-               "Sales Invoice": "sales.invoices", "Capital Contribution": "partners.transactions",
+               "Sales Invoice": "sales.invoices", "Credit Note": "sales.invoices", "Debit Note": "sales.invoices", "Capital Contribution": "partners.transactions",
                "Owner Drawing": "partners.transactions", "Capital Withdrawal": "partners.transactions",
                "Partner Loan": "partners.transactions", "Partner Loan Repayment": "partners.transactions",
                "Partner Loan Interest": "partners.transactions", "Profit Distribution": "partners.transactions",
@@ -4177,6 +4178,8 @@ def eta_settings_save(ctx):
             raise acc.ValidationError("environment must be preprod or prod")
         if k == "eta_doc_version" and v not in ("0.9", "1.0"):
             raise acc.ValidationError("document version must be 0.9 or 1.0")
+        if k == "eta_connection" and v not in ("signer", "direct"):
+            raise acc.ValidationError("The connection is the BeyondERP Signer or direct from this server")
         ctx.db.set_setting(k, acc.text(v, maxlen=500))
     ctx.log("eta.settings")
     return ok(einvoice.public_settings(ctx.db))
@@ -5672,6 +5675,131 @@ def forecast_put(ctx):
     return ok(_forecast_visible(ctx, forecast.build(ctx.db)))
 
 
+
+# ---- e-invoicing through the BeyondERP Signer (the browser talks to the Signer on its own computer; the books keep the
+# results) and the parts both connections share: templates, credit / debit notes, received documents
+@route("POST", "/api/einvoice/prepare", "tax.einvoice", "add")
+def einvoice_prepare(ctx):
+    from . import einvoice
+    ids = [int(i) for i in (ctx.body.get("ids") or [])][:100]
+    if not ids:
+        raise acc.ValidationError("Choose the invoices")
+    return ok({"documents": einvoice.prepare(ctx.db, ids)})
+
+
+@route("POST", "/api/einvoice/record-signed", "tax.einvoice", "add")
+def einvoice_record_signed(ctx):
+    from . import einvoice
+    return ok(einvoice.record_signed(ctx.db, ctx.body.get("documents") or [], ctx.user["username"]))
+
+
+@route("POST", "/api/einvoice/record-submission", "tax.einvoice", "add")
+def einvoice_record_submission(ctx):
+    from . import einvoice
+    return ok(einvoice.record_submission(ctx.db, ctx.body.get("submission") or {}, ctx.body.get("documents") or [], ctx.user["username"]))
+
+
+@route("POST", "/api/einvoice/<xid>/record-status", "tax.einvoice")
+def einvoice_record_status(ctx, xid):
+    from . import einvoice
+    return ok(einvoice.record_status(ctx.db, int(xid), ctx.body.get("details") or {}))
+
+
+@route("POST", "/api/einvoice/<xid>/record-cancel", "tax.einvoice", "edit")
+def einvoice_record_cancel(ctx, xid):
+    from . import einvoice
+    return ok(einvoice.record_state(ctx.db, int(xid), "cancelled", ctx.body.get("reason"), ctx.user["username"]))
+
+
+@route("GET", "/api/einvoice/<xid>/signed", "tax.einvoice")
+def einvoice_signed(ctx, xid):
+    x = ctx.db.one("SELECT number, eta_signed, eta_signed_at FROM extracts WHERE id=?", (int(xid),))
+    if not x or not x["eta_signed"]:
+        raise acc.ValidationError("This invoice has not been signed")
+    if ctx.q.get("format") == "json":
+        return download(x["eta_signed"].encode("utf-8"), f"e-invoice-{x['number']}-signed.json", "application/json")
+    return ok({"document": json.loads(x["eta_signed"]), "signed_at": x["eta_signed_at"]})
+
+
+@route("GET", "/api/einvoice-templates", "tax.einvoice|sales.invoices")
+def einvoice_templates(ctx):
+    from . import einvoice
+    return ok({"rows": einvoice.templates(ctx.db)})
+
+
+@route("POST", "/api/einvoice-templates", "tax.einvoice", "add")
+def einvoice_template_add(ctx):
+    from . import einvoice
+    r = einvoice.save_template(ctx.db, ctx.body)
+    ctx.log("einvoice.template", r["code"])
+    return ok(r)
+
+
+@route("PUT", "/api/einvoice-templates/<code>", "tax.einvoice", "edit")
+def einvoice_template_edit(ctx, code):
+    from . import einvoice
+    r = einvoice.save_template(ctx.db, ctx.body, urllib.parse.unquote(code))
+    ctx.log("einvoice.template", r["code"])
+    return ok(r)
+
+
+@route("DELETE", "/api/einvoice-templates/<code>", "tax.einvoice", "edit")
+def einvoice_template_del(ctx, code):
+    from . import einvoice
+    einvoice.delete_template(ctx.db, urllib.parse.unquote(code))
+    return ok()
+
+
+@route("GET", "/api/einvoice-received", "tax.einvoice")
+def einvoice_received(ctx):
+    from . import einvoice
+    return ok({"rows": einvoice.received_list(ctx.db, ctx.q.get("q"))})
+
+
+@route("POST", "/api/einvoice-received", "tax.einvoice", "add")
+def einvoice_received_save(ctx):
+    from . import einvoice
+    return ok(einvoice.save_received(ctx.db, ctx.body.get("rows") or []))
+
+
+@route("POST", "/api/einvoice-received/fetch", "tax.einvoice", "add")
+def einvoice_received_fetch(ctx):
+    """The direct connection: the server asks the tax authority itself."""
+    from . import einvoice
+    return ok(einvoice.direct_received(ctx.db, ctx.body.get("page") or 1, ctx.body.get("size") or 50))
+
+
+@route("GET", "/api/einvoice-received/<uuid>", "tax.einvoice")
+def einvoice_received_one(ctx, uuid):
+    from . import einvoice
+    return ok(einvoice.received_doc(ctx.db, urllib.parse.unquote(uuid)))
+
+
+@route("POST", "/api/einvoice-received/<uuid>/raw", "tax.einvoice", "add")
+def einvoice_received_raw(ctx, uuid):
+    from . import einvoice
+    return ok(einvoice.save_received_raw(ctx.db, urllib.parse.unquote(uuid), ctx.body.get("raw") or {}))
+
+
+@route("POST", "/api/einvoice-received/<uuid>/record-reject", "tax.einvoice", "edit")
+def einvoice_received_reject(ctx, uuid):
+    from . import einvoice
+    return ok(einvoice.received_state(ctx.db, urllib.parse.unquote(uuid), "rejected", ctx.body.get("reason"), ctx.user["username"]))
+
+
+@route("POST", "/api/einvoice-received/<uuid>/book", "tax.einvoice", "add")
+def einvoice_received_book(ctx, uuid):
+    from . import einvoice
+    need = "purchasing.costs" if ctx.body.get("bu_id") or ctx.body.get("bu_code") else "purchasing.expenses"
+    if not ctx.can(need, "add"):
+        raise PermissionError("Recording it needs add rights on " + ("direct costs" if need.endswith("costs") else "expenses"))
+    return ok(einvoice.record_received(ctx.db, urllib.parse.unquote(uuid), ctx.body, ctx.user["username"]))
+
+
+@route("GET", "/api/extracts/<xid>/credit-left", "sales.invoices")
+def extract_credit_left(ctx, xid):
+    return ok({"left": acc.credit_left(ctx.db, int(xid))})
+
 # ================================================================= help & support
 @route("GET", "/api/support/tickets")
 def support_list(ctx):
@@ -5903,11 +6031,11 @@ def offer_type_del(ctx, tid):
 
 # ============================================================ erase all data
 ERASE_TRANSACTIONS = ("entry_tags", "workdays", "hr_requests", "presence", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
-                      "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_alert_log", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
+                      "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_alert_log", "einv_received", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("kb_pages", "automation_log", "automations", "care_services", "care_patients", "parties", "stock_items", "boq_lines", "boqs", "partner_stage_shares", "partner_shares", "partners", "rates", "alloc_rules",
-                                  "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
+                                  "fixed_assets", "einv_templates", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
                                   "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets", "attachments", "service_plans",
                                   "variation_orders", "contract_lines", "contracts", "maintenance_plans", "equipment", "project_tasks", "project_phases")
 
@@ -6437,10 +6565,11 @@ class Handler(BaseHTTPRequestHandler):
         body = target.read_bytes()
         r = Reply(body, 200, ctype)
         # product media: photos / clips / 3D models are data, blob or https links; players (YouTube, Vimeo, Sketchfab,
-        # Drive, virtual tours) are https frames. Scripts stay same-origin only.
+        # Drive, virtual tours) are https frames. Scripts stay same-origin only. The BeyondERP Signer answers on this
+        # computer (http://127.0.0.1:47321 by default), so the page may call this computer's own addresses.
         r.headers["Content-Security-Policy"] = ("default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; "
                                                 "img-src 'self' data: blob: https:; font-src 'self' data: blob:; media-src 'self' data: blob: https:; "
-                                                "connect-src 'self' data: blob: https:; frame-src https:; worker-src 'self' blob:; "
+                                                "connect-src 'self' data: blob: https: http://127.0.0.1:* http://localhost:*; frame-src https:; worker-src 'self' blob:; "
                                                 "frame-ancestors 'self'")
         self.send(r)
 

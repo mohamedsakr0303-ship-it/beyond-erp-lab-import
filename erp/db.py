@@ -293,6 +293,25 @@ CREATE TABLE IF NOT EXISTS stock_moves (
     note TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ix_sm_item ON stock_moves(item_id, warehouse_id);
+-- E-invoice templates: the tax-authority details of a kind of document, for certain customers or a certain reason
+CREATE TABLE IF NOT EXISTS einv_templates (
+    code TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    doc_type TEXT NOT NULL DEFAULT 'I' CHECK (doc_type IN ('I','C','D')),
+    customers TEXT DEFAULT '',          -- one name per line; blank = any customer
+    reason TEXT DEFAULT '',             -- credit / debit notes: the reason given to the tax authority
+    activity_code TEXT DEFAULT '', branch_id TEXT DEFAULT '', item_code TEXT DEFAULT '', unit TEXT DEFAULT '',
+    po_ref TEXT DEFAULT '', po_desc TEXT DEFAULT '', so_desc TEXT DEFAULT '', notes TEXT DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1
+);
+-- E-invoices other companies issued to this one, fetched from the tax authority
+CREATE TABLE IF NOT EXISTS einv_received (
+    uuid TEXT PRIMARY KEY,
+    internal_id TEXT DEFAULT '', doc_type TEXT DEFAULT 'I', issuer_id TEXT DEFAULT '', issuer_name TEXT DEFAULT '',
+    issued TEXT DEFAULT '', received TEXT DEFAULT '', net INTEGER DEFAULT 0, vat INTEGER DEFAULT 0, total INTEGER DEFAULT 0,
+    status TEXT DEFAULT '', raw TEXT DEFAULT '', entry_id INTEGER REFERENCES journal_entries(id) ON DELETE SET NULL,
+    reason TEXT DEFAULT '', fetched_at TEXT DEFAULT ''
+);
 -- A warehouse's own minimum for an item (otherwise the item's minimum, stock_items.reorder_level, applies where it is held)
 CREATE TABLE IF NOT EXISTS stock_minimums (
     item_id INTEGER NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
@@ -2049,14 +2068,14 @@ ETA_SETTINGS = {
     "eta_env": "preprod", "eta_client_id": "", "eta_client_secret": "", "eta_signer_url": "",
     "eta_doc_version": "1.0", "eta_activity_code": "", "eta_branch_id": "0", "eta_governate": "",
     "eta_region": "", "eta_street": "", "eta_building": "", "eta_postal_code": "", "eta_item_prefix": "EG",
-    "eta_default_item_code": "", "eta_default_unit": "EA",
+    "eta_default_item_code": "", "eta_default_unit": "EA", "eta_connection": "signer", "eta_signer_key": "",
     # e-receipts (B2C point of sale): the POS registered with ETA, its own login, and where the sales post
     "eta_pos_serial": "", "eta_pos_os_version": "", "eta_pos_model": "", "eta_pos_client_id": "", "eta_pos_client_secret": "",
     "eta_pos_presharedkey": "", "eta_pos_branch_code": "0", "eta_receipt_prefix": "R-", "eta_receipt_vat_code": "",
     "eta_receipt_account": "", "eta_receipt_method": "cash",
 }
 # never sent to the browser, exported, or imported over the stored value
-ETA_SECRETS = ("eta_client_secret", "eta_pos_client_secret", "eta_pos_presharedkey")
+ETA_SECRETS = ("eta_client_secret", "eta_pos_client_secret", "eta_pos_presharedkey", "eta_signer_key")
 
 
 class Database:
@@ -2159,9 +2178,20 @@ class Database:
         self._add_cols("extract_lines", [("pct", "REAL DEFAULT 1")])
         # cost-plus billing: a fee % on top of each section's work ({"section": 0.1, "*": 0.12} — "*" = every other section)
         self._add_cols("extracts", [("fees", "TEXT DEFAULT ''")])
+        # e-invoicing: the kind of document (I invoice, C credit note, D debit note), the invoice a note corrects, its reason,
+        # the e-invoice template it follows, the signed document kept for checking, and what the tax authority returned
+        self._add_cols("extracts", [("doc_type", "TEXT DEFAULT 'I'"), ("ref_id", "INTEGER"), ("eta_reason", "TEXT DEFAULT ''"),
+                                    ("einv_template", "TEXT DEFAULT ''"), ("eta_signed", "TEXT DEFAULT ''"), ("eta_signed_at", "TEXT DEFAULT ''"),
+                                    ("eta_long_id", "TEXT DEFAULT ''"), ("eta_submitted_at", "TEXT DEFAULT ''"), ("eta_checked_at", "TEXT DEFAULT ''")])
         self._add_cols("employees", [("username", "TEXT DEFAULT ''")])     # the app user who is this employee (My day → attendance)
         # loans are active or closed; an older workbook import wrote 'open', which the totals did not count
         self.conn.execute("UPDATE loans SET status='active' WHERE status NOT IN ('active','closed')")
+        # books that already connect to the tax authority from the server keep doing so; new books use the Signer
+        if not self.conn.execute("SELECT 1 FROM settings WHERE key='eta_connection_set'").fetchone():
+            cid = self.conn.execute("SELECT value FROM settings WHERE key='eta_client_id'").fetchone()
+            if cid and (cid[0] or "").strip():
+                self.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('eta_connection','direct')")
+            self.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('eta_connection_set','1')")
         # items can carry their standard cost and selling price, so a price list can live here even with nothing in stock
         self._add_cols("stock_items", [("category", "TEXT DEFAULT ''"), ("std_cost", "INTEGER DEFAULT 0"), ("price", "INTEGER DEFAULT 0"),
                                        ("notes", "TEXT DEFAULT ''")])

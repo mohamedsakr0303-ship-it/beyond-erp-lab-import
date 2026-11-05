@@ -146,6 +146,13 @@ AR = {
     "Care coordinator (dispatch)": "منسق الرعاية (التوزيع)", "Electrician": "كهربائي", "Mason": "بنّاء", "Plasterer": "مبيض محارة",
     "Execution / Site": "التنفيذ / الموقع", "Block work": "أعمال طوب", "Electrical second fix": "تشطيب الكهرباء", "Plaster": "بياض",
     # ---- money in and out
+    "Design fee reduced after the design review": "تخفيض أتعاب التصميم بعد مراجعة التصميم",
+    "Design fee: discount agreed after the review": "أتعاب التصميم: خصم متفق عليه بعد المراجعة",
+    "Standard invoice": "فاتورة عادية", "Used for every customer without a template of their own.": "تُستخدم لكل عميل ليس له قالب خاص.",
+    "Delta Tech: invoices with their PO": "دلتا تك: فواتير برقم أمر الشراء", "Fit-out of the Delta Tech office": "تشطيب مكتب دلتا تك",
+    "Credit note: discount after invoicing": "إشعار دائن: خصم بعد الفاتورة", "Discount agreed after the invoice": "خصم متفق عليه بعد الفاتورة",
+    "Credit note: returns": "إشعار دائن: مرتجعات", "Returned goods or cancelled work": "بضاعة مرتجعة أو أعمال ملغاة",
+    "Debit note: additional charges": "إشعار مدين: رسوم إضافية", "Additional quantities or charges after the invoice": "كميات أو رسوم إضافية بعد الفاتورة",
     "Advance payment": "دفعة مقدمة", "Design consultation": "استشارة تصميم", "Design & supervision fee (cash basis)": "أتعاب التصميم والإشراف (أساس نقدي)",
     "Invoice INV-D001": "فاتورة INV-D001", "Invoice INV-D002 (5% withheld … 1% WHT)": "فاتورة INV-D002 (خصم 5% … 1% ضريبة منبع)",
     "Invoice INV-D004": "فاتورة INV-D004", "On account": "تحت الحساب", "Masonry balance — part": "رصيد المباني — جزء", "Interim drawing": "مسحوبات مؤقتة",

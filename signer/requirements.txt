@@ -1,0 +1,4 @@
+# BeyondERP Signer: the token (PKCS#11), the signature (CMS / CAdES-BES) and its check
+PyKCS11>=1.5.12
+asn1crypto>=1.5
+cryptography>=41

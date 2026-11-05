@@ -107,6 +107,24 @@ SHEETS = [
               C("kind", "Kind", "النوع", width=7, required=True, choices=["vat", "wht"]),
               C("rate", "Rate", "النسبة", kind="pct", width=8), C("eta_type", "ETA Tax Type", "نوع الضريبة (المنظومة)", width=10),
               C("eta_subtype", "ETA Sub-type", "النوع الفرعي", width=10), C("active", "Active", "نشط", width=7, choices=["Yes", "No"])]},
+    {"name": "E-Invoice Templates", "ar": "قوالب الفواتير الإلكترونية", "module": "tax",
+     "title": "E-invoice templates: the tax-authority details of a kind of document, for certain customers or a certain reason",
+     "cols": [C("code", "Code", "الكود", width=10, required=True), C("name", "Name", "الاسم", width=26, required=True),
+              C("doc_type", "Document", "المستند", width=11, choices=["Invoice", "Credit Note", "Debit Note"]),
+              C("customers", "Customers", "العملاء", width=30, note="names separated by ; — blank = any customer"),
+              C("reason", "Reason (notes)", "السبب (الإشعارات)", width=24), C("activity_code", "Activity Code", "كود النشاط", width=9),
+              C("branch_id", "Branch ID", "كود الفرع", width=8), C("item_code", "Item Code", "كود الصنف", width=16), C("unit", "Unit", "الوحدة", width=7),
+              C("po_ref", "Customer PO No.", "رقم أمر شراء العميل", width=14), C("po_desc", "PO Description", "وصف أمر الشراء", width=20),
+              C("so_desc", "Sales Order Description", "وصف أمر البيع", width=20), C("notes", "Notes", "ملاحظات", width=20),
+              C("active", "Active", "نشط", width=7, choices=["Yes", "No"])]},
+    {"name": "E-Invoices Received", "ar": "الفواتير الإلكترونية الواردة", "module": "tax",
+     "title": "E-invoices other companies issued to this one (fetched from the tax authority; kept here for backups)",
+     "cols": [C("uuid", "UUID", "المعرّف", width=20, required=True), C("internal_id", "Their Number", "رقمهم", width=12),
+              C("doc_type", "Document", "المستند", width=8), C("issuer_id", "Supplier Tax ID", "الرقم الضريبي للمورد", width=12),
+              C("issuer_name", "Supplier", "المورد", width=24), C("issued", "Issued", "تاريخ الإصدار", width=12),
+              C("received", "Received", "تاريخ الاستلام", width=12), C("net", "Net", "الصافي", kind="money"), C("vat", "VAT", "الضريبة", kind="money"),
+              C("total", "Total", "الإجمالي", kind="money"), C("status", "Status", "الحالة", width=10), C("reason", "Rejection Reason", "سبب الرفض", width=20),
+              C("raw", "Full Document", "المستند الكامل", width=10, note="filled in by the app")]},
     {"name": "Business Units", "ar": "وحدات الأعمال", "module": "business_units",
      "title": "Business units (cost centres / projects). Overhead % = manual share of shared indirect costs",
      "cols": [C("code", "Code", "الكود", width=14, required=True), C("name", "Name / Client", "الاسم / العميل", width=34, required=True),
@@ -387,9 +405,18 @@ SHEETS = [
               C("notes", "Extract Notes", "ملاحظات المستخلص", width=30),
               C("fees", "Fee % by Section", "نسبة الأتعاب لكل باب", width=30,
                 note="cost-plus: a fee on top of each section's work, e.g. Electrical=10%; HVAC=8%; *=12% (* = every other section)"),
+              C("doc_type", "Document", "المستند", width=11, choices=["", "Invoice", "Credit Note", "Debit Note"],
+                note="blank = invoice; a credit / debit note names its original invoice and reason"),
+              C("original", "Original Invoice", "الفاتورة الأصلية", width=14), C("reason", "Reason (notes)", "السبب (الإشعارات)", width=24),
+              C("einv_template", "E-Invoice Template", "قالب الفاتورة الإلكترونية", width=12, note="a code from 'E-Invoice Templates'; blank = by customer"),
+              C("eta_uuid", "E-Invoice UUID", "معرّف الفاتورة الإلكترونية", width=16, note="filled in by the app"),
+              C("eta_status", "E-Invoice Status", "حالة الفاتورة الإلكترونية", width=12, note="filled in by the app"),
+              C("eta_long_id", "E-Invoice Long ID", "المعرّف الطويل", width=12, note="filled in by the app"),
+              C("eta_signed", "Signed E-Invoice", "الفاتورة الموقّعة", width=10, note="filled in by the app (the signed document)"),
+              C("x_sign", "credit note: −1", "إشعار دائن: −1", kind="calc", width=6, calc='=IF(LEFT({doc_type}&"",1)="C",-1,1)'),
               C("amount", "Net Amount", "صافي المبلغ", kind="calc",
                 calc="=SUMIFS([[Invoice Lines.amount]],[[Invoice Lines.number]],{number})"),
-              C("posted_amount", "Posted Amount", "المبلغ المرحّل", kind="calc", calc='=IF({status}="Draft",0,{amount})'),
+              C("posted_amount", "Posted Amount", "المبلغ المرحّل", kind="calc", calc='=IF({status}="Draft",0,{x_sign}*{amount})'),
               C("x_rest", "to the invoice's revenue account", "لحساب إيراد الفاتورة", kind="calc", width=10,
                 calc="={posted_amount}-SUMIFS([[Invoice Lines.x_own]],[[Invoice Lines.number]],{number})"),
               C("vat_amt", "Output VAT", "ض.ق.م المخرجات", kind="calc", calc="=ROUND({posted_amount}*" + TAXRATE("{vat_code}") + ",2)"),
@@ -412,7 +439,8 @@ SHEETS = [
               C("bu_code", "invoice business unit", "وحدة الأعمال", kind="calc", width=10, calc='=IFERROR(INDEX([[Sales Invoices.bu_code]],MATCH({number},[[Sales Invoices.number]],0))&"","")'),
               C("x_acct", "own revenue account", "حساب البند", kind="calc", width=8, calc='={account}&""'),
               C("x_own", "booked to its own account", "المرحل لحساب البند", kind="calc", width=10,
-                calc='=IF(OR({account}="",{date}=""),0,IF(IFERROR(INDEX([[Sales Invoices.status]],MATCH({number},[[Sales Invoices.number]],0))&"","")="Draft",0,{amount}))'),
+                calc='=IF(OR({account}="",{date}=""),0,IF(IFERROR(INDEX([[Sales Invoices.status]],MATCH({number},[[Sales Invoices.number]],0))&"","")="Draft",0,'
+                     'IFERROR(INDEX([[Sales Invoices.x_sign]],MATCH({number},[[Sales Invoices.number]],0)),1)*{amount}))'),
               # the Extract Print sheet: 1 = this line is on the extract chosen there (running: the site's earlier issued ones too)
               C("x_xp", "on the printed extract", "في المستخلص المطبوع", kind="calc", width=8,
                 calc='=IF({number}&""="",0,IF({number}&""=\'Extract Print\'!$J$2&"",1,IF(AND(\'Extract Print\'!$J$3="running",'
@@ -529,6 +557,15 @@ def _num(v):
 def export_data(db):
     """Everything in the books as {sheet name: [row dicts]} (input columns only)."""
     out = {s["name"]: [] for s in SHEETS}
+    for t in db.q("SELECT * FROM einv_templates ORDER BY code"):
+        out["E-Invoice Templates"].append({**{k: t[k] for k in ("code", "name", "reason", "activity_code", "branch_id", "item_code", "unit", "po_ref",
+                                                                 "po_desc", "so_desc", "notes")},
+                                           "doc_type": {"I": "Invoice", "C": "Credit Note", "D": "Debit Note"}[t["doc_type"]],
+                                           "customers": "; ".join((t["customers"] or "").split("\n")).strip("; "), "active": "Yes" if t["active"] else "No"})
+    for r in db.q("SELECT * FROM einv_received ORDER BY issued, uuid"):
+        out["E-Invoices Received"].append({**{k: r[k] for k in ("uuid", "internal_id", "doc_type", "issuer_id", "issuer_name", "issued", "received", "status", "reason")},
+                                           **{k: to_major(r[k] or 0) for k in ("net", "vat", "total")},
+                                           "raw": r["raw"] if len(r["raw"] or "") < 30000 else ""})
     period_from = db.setting("report_from") or f"{_dt.date.today().year}-01-01"
     period_to = db.setting("report_to") or f"{_dt.date.today().year}-12-31"
     out["Settings"] = [{"key": "report_from", "value": period_from}, {"key": "report_to", "value": period_to}]
@@ -628,6 +665,10 @@ def export_data(db):
             crs = [ln for ln in e["lines"] if ln["credit"] and roles_.get(ln["account"]) != "vat_output"]
             cr = next((ln for ln in crs if types_.get(ln["account"]) == "Revenue"), None)   # none when all billed in advance
             status, ar_acc, rev_acc = "Posted", dr["account"], cr["account"] if cr else ""
+            if (x.get("doc_type") or "I") == "C":           # a credit note: the customer is credited, revenue debited
+                ar_ln = next((ln for ln in e["lines"] if ln["credit"] and types_.get(ln["account"]) == "Asset"), None)
+                rv_ln = next((ln for ln in e["lines"] if ln["debit"] and types_.get(ln["account"]) == "Revenue"), None)
+                ar_acc, rev_acc = (ar_ln or {}).get("account", ""), (rv_ln or {}).get("account", "")
         else:
             status, ar_acc, rev_acc = "Draft", "", ""
         out["Sales Invoices"].append({"number": x["number"], "date": x["date"], "bu_code": code(x["bu_id"]),
@@ -639,7 +680,12 @@ def export_data(db):
                                       "deductions": to_major(x.get("deductions") or 0) or "", "final": "Yes" if x.get("final") else "",
                                       "notes": x.get("notes") or "",
                                       "fees": "; ".join(f"{k}={v * 100:g}%" for k, v in sorted(json.loads(x["fees"]).items()))
-                                      if x.get("fees") else ""})
+                                      if x.get("fees") else "",
+                                      "doc_type": {"C": "Credit Note", "D": "Debit Note"}.get(x.get("doc_type") or "I", ""),
+                                      "original": (db.one("SELECT number FROM extracts WHERE id=?", (x["ref_id"],)) or {}).get("number", "") if x.get("ref_id") else "",
+                                      "reason": x.get("eta_reason") or "", "einv_template": x.get("einv_template") or "",
+                                      "eta_uuid": x.get("eta_uuid") or "", "eta_status": x.get("eta_status") or "", "eta_long_id": x.get("eta_long_id") or "",
+                                      "eta_signed": x.get("eta_signed") if len(x.get("eta_signed") or "") < 30000 else ""})
         for ln in db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (x["id"],)):
             pct = ln.get("pct")
             out["Invoice Lines"].append({"number": x["number"], "category": ln["category"], "sub": ln["sub"],
@@ -1704,7 +1750,7 @@ def to_csv(db, sheet_name, template=False):
 WIPE_ORDER = ("year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", "hr_requests", "presence", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
-              "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_alert_log", "stock_minimums", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
+              "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "einv_received", "einv_templates", "stock_alert_log", "stock_minimums", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_stage_shares", "partner_shares", "partners", "rates", "alloc_rules", "business_units")
 
 
@@ -1713,7 +1759,7 @@ WIPE_ORDER = ("year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", 
 # lines, an order and its items) come in or stay out together. Other sheets compare the whole row.
 ONLY_NEW_KEYS = {
     "Chart of Accounts": ("code",), "Tax Codes": ("code",), "Business Units": ("code",), "Parties": ("name",), "Partners": ("name",),
-    "Fixed Assets": ("code",), "Warehouses": ("name",), "Stock Items": ("name",), "Products": ("code",), "Employees": ("code",),
+    "Fixed Assets": ("code",), "E-Invoice Templates": ("code",), "E-Invoices Received": ("uuid",), "Warehouses": ("name",), "Stock Items": ("name",), "Products": ("code",), "Employees": ("code",),
     "Loans": ("code",), "Cash Custody": ("code",), "Rental Equipment": ("code",), "Rental Contracts": ("ref",), "Sales Contracts": ("code",),
     "Service Plans": ("code",), "Service Subscriptions": ("code",), "Purchase Orders": ("code",), "Contracts": ("code",),
     "Purchase Requests": ("code",), "Sales Invoices": ("number",), "Invoice Lines": ("number",), "E-Receipts": ("number",),
@@ -1912,6 +1958,8 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
             from . import allocation
             run("Allocation Rules", lambda r: allocation.import_rows(db, [r]))
             run("Forecast Mixes", lambda r: _imp_mix(db, r))
+            run("E-Invoice Templates", lambda r: _imp_einv_template(db, r))
+            run("E-Invoices Received", lambda r: _imp_einv_received(db, r))
             run("Fixed Assets", lambda r: _imp_asset(db, r))
             run("Warehouses", lambda r: _imp_wh(db, r))
             run("Stock Items", lambda r: _imp_item(db, r))
@@ -2116,6 +2164,42 @@ def _imp_stage_share(db, r):
                     (p["id"], acc.bu_id_or_none(db, r.get("bu_code"), required=True), stage, _pct(r.get("share"))))
 
 
+def _doc_type(v):
+    """'Invoice' / 'Credit Note' / 'Debit Note' (or I / C / D, or the Arabic names) → I, C or D; blank → ''."""
+    v = str(v or "").strip()
+    if not v:
+        return ""
+    if "دائن" in v:
+        return "C"
+    if "مدين" in v:
+        return "D"
+    if "فاتورة" in v:
+        return "I"
+    d = v[:1].upper()
+    if d not in ("I", "C", "D"):
+        raise acc.ValidationError(f"Document '{v}': an Invoice, a Credit Note or a Debit Note")
+    return d
+
+
+def _imp_einv_template(db, r):
+    from . import einvoice
+    code = acc.text(r.get("code"), "code", required=True)
+    old = db.one("SELECT code FROM einv_templates WHERE code=?", (code,))
+    active = str(r.get("active") or "Yes").strip().lower() not in ("no", "n", "0", "false", "لا")
+    einvoice.save_template(db, {**r, "doc_type": _doc_type(r.get("doc_type")) or "I", "active": 1 if active else 0,
+                                "customers": str(r.get("customers") or "").replace(";", "\n")}, code if old else None)
+
+
+def _imp_einv_received(db, r):
+    from . import einvoice
+    uuid = acc.text(r.get("uuid"), "UUID", required=True)
+    einvoice.save_received(db, [{"uuid": uuid, "internalId": r.get("internal_id"), "typeName": r.get("doc_type") or "I", "issuerId": r.get("issuer_id"),
+                                 "issuerName": r.get("issuer_name"), "dateTimeIssued": r.get("issued"), "dateTimeReceived": r.get("received"),
+                                 "netAmount": r.get("net") or 0, "total": r.get("total") or 0, "status": r.get("status")}])
+    db.x("UPDATE einv_received SET vat=?, reason=?, raw=? WHERE uuid=?", (to_minor(acc.num(r.get("vat") or 0, "VAT")), acc.text(r.get("reason"), maxlen=500),
+                                                                       str(r.get("raw") or "")[:2_000_000], uuid))
+
+
 def _imp_asset(db, r):
     from . import assets
     old = db.one("SELECT id FROM fixed_assets WHERE code=?", (acc.text(r.get("code")),))
@@ -2237,8 +2321,11 @@ def _imp_invoices(db, data, errors, counts, user, stats):
     for num_ in [k for k in lines if k and k not in heads]:   # only the lines of an invoice already in the books
         if not db.one("SELECT 1 FROM extracts WHERE number=?", (num_,)):
             errors.append({"sheet": "Invoice Lines", "row": FIRST_DATA_ROW, "error": f"Invoice {num_} is not in 'Sales Invoices' or in the books"})
-    rows = list(data.get("Sales Invoices") or []) + [{"number": k, "_lines_only": True} for k in lines if k and k not in heads
-                                                      and db.one("SELECT 1 FROM extracts WHERE number=?", (k,))]
+    # invoices first, then the credit / debit notes that name them
+    heads_rows = sorted(data.get("Sales Invoices") or [], key=lambda r: "دائن" in str(r.get("doc_type") or "") or "مدين" in str(r.get("doc_type") or "")
+                        or str(r.get("doc_type") or "").strip()[:1].upper() in ("C", "D"))
+    rows = heads_rows + [{"number": k, "_lines_only": True} for k in lines if k and k not in heads
+                         and db.one("SELECT 1 FROM extracts WHERE number=?", (k,))]
     for i, r in enumerate(rows, start=FIRST_DATA_ROW):
         sheet = "Invoice Lines" if r.get("_lines_only") else "Sales Invoices"
         try:
@@ -2266,6 +2353,15 @@ def _imp_invoices(db, data, errors, counts, user, stats):
                  "project": r.get("project"), "work": r.get("work"), "prev_paid": r.get("prev_paid"), "deductions": r.get("deductions"),
                  "final": r.get("final"), "notes": r.get("notes"),
                  "fees": r.get("fees") if r.get("fees") not in (None, "") else (old or {}).get("fees") or ""}
+            dt = _doc_type(r.get("doc_type"))
+            if dt in ("C", "D") or (old and (old.get("doc_type") or "I") != "I"):
+                d.update(doc_type=dt or old["doc_type"], eta_reason=r.get("reason") or (old or {}).get("eta_reason") or "")
+                if r.get("original"):
+                    d["ref_number"] = r["original"]
+                elif old:
+                    d["ref_id"] = old["ref_id"]
+            if r.get("einv_template") not in (None, ""):
+                d["einv_template"] = acc.text(r["einv_template"])
             want_posted = str(r.get("status") or "Posted").lower() != "draft"
             if old:                        # what the file leaves blank stays as it was
                 for k, ok_ in (("customer", "customer"), ("vat_code", "vat_code"), ("wht_code", "wht_code"), ("seq_no", "seq_no"),
@@ -2297,6 +2393,11 @@ def _imp_invoices(db, data, errors, counts, user, stats):
             if want_posted:
                 acc.post_extract(db, xid, user=user, ar_account=r.get("ar_account") or None,
                                  revenue_account=r.get("revenue_account") or None)
+            eta = {k: acc.text(r.get(k), maxlen=60 if k != "eta_long_id" else 120) for k in ("eta_uuid", "eta_status", "eta_long_id") if r.get(k)}
+            if r.get("eta_signed"):
+                eta["eta_signed"] = str(r["eta_signed"])[:30000]
+            if eta:                       # the e-invoice as the tax authority has it (a backup brought back)
+                db.conn.execute("UPDATE extracts SET " + ", ".join(f"{k}=?" for k in eta) + " WHERE id=?", (*eta.values(), xid))
             n += 1
         except (acc.ValidationError, LookupError) as e:
             errors.append({"sheet": sheet, "row": i, "error": str(e)})

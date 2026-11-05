@@ -195,7 +195,7 @@ function uiDialog(msg, o = {}) {
     bg.className = "dlg-bg";
     bg.innerHTML = `<div class="dlg${danger ? " danger" : ""}" role="${input ? "dialog" : "alertdialog"}" aria-modal="true">
       ${o.title ? `<h3>${esc(o.title)}</h3>` : ""}<div class="dlg-msg">${esc(String(msg == null ? "" : msg))}</div>
-      ${input ? `<input class="dlg-in" value="${esc(String(o.input))}" dir="auto">` : ""}
+      ${input ? `<input class="dlg-in" value="${esc(String(o.input))}" dir="auto" ${o.password ? 'type="password" autocomplete="off"' : ""}>` : ""}
       <div class="dlg-foot">${o.cancel === false ? "" : `<button type="button" class="btn" data-r="0">${esc(o.cancel || L("Cancel", "إلغاء"))}</button>`}${o.alt ? `<button type="button" class="btn" data-r="2">${esc(o.alt)}</button>` : ""}
         <button type="button" class="btn ${danger ? "danger" : "pri"}" data-r="1">${esc(o.ok || (danger && !input && /\bdelete\b|حذف/i.test(msg) ? L("Delete", "حذف") : L("OK", "موافق")))}</button></div></div>`;
     const inp = $(".dlg-in", bg);
@@ -3413,7 +3413,7 @@ PAGES.invoices = async (view, parts, q) => {
     <div class="dd"><button class="btn">${t("m_einv")} ▾</button><div class="dd-menu"><a href="/api/einvoice-batch?${qs({ ...q, format: "json" })}">${t("eta_batch_json")}</a><a href="/api/einvoice-batch?${qs({ ...q, format: "xlsx" })}">${t("eta_batch_xlsx")}</a></div></div></div>` +
     filterBar(q, ["dates", "bu", ["select", "status", t("status"), [["draft", t("draft")], ["posted", t("invoiced")]]]]) +
     `<div class="card">${rows.length ? `<div class="tbl"><table><thead><tr><th>${t("invoice_no")}</th><th>${t("bu")}</th><th>${t("boq")}</th><th>${t("date")}</th><th class="num">${t("amount")}</th><th>${t("status")}</th></tr></thead><tbody>
-    ${rows.map(x => `<tr class="click" data-href="#/invoice/${x.id}"><td><b>${esc(x.number)}</b><div class="lines">${esc(x.customer || "")}</div></td><td>${esc(x.bu_code)}</td><td>${esc(x.boq_title || t("standalone"))}</td><td>${fd(x.date)}</td><td class="num">${money(x.total)}</td><td><span class="chip ${x.status === "posted" ? "ok" : ""}">${x.status === "posted" ? t("invoiced") : t("draft")}</span> ${x.eta_status ? `<span class="chip">${esc(x.eta_status)}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
+    ${rows.map(x => `<tr class="click" data-href="#/invoice/${x.id}"><td><b>${esc(x.number)}</b><div class="lines">${esc(x.customer || "")}</div></td><td>${esc(x.bu_code)}</td><td>${esc(x.boq_title || t("standalone"))}</td><td>${fd(x.date)}</td><td class="num">${money(x.total)}</td><td><span class="chip ${x.status === "posted" ? "ok" : ""}">${x.status === "posted" ? t("invoiced") : t("draft")}</span> ${(x.doc_type || "I") !== "I" ? chipS("warn", ETA_TYPE()[x.doc_type]) : ""} ${x.eta_status ? etaChip(x.eta_status) : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
   bulkify(bulkTable(view, 'tr[data-href^="#/invoice/"]'), BULKS.invoices());
 };
 // a line's look, as on the BOQ / invoice files: bold, italic, underline, text colour, fill, alignment
@@ -3641,7 +3641,15 @@ PAGES.invoice = async (view, parts, q) => {
     x = { ...x, bu_id: src.bu_id, boq_id: src.boq_id || "", customer: src.customer || "", vat_code: src.vat_code || "", wht_code: src.wht_code || "", fees_map: src.fees_map || {},
       lines: (src.lines || []).map(({ id, extract_id, ...l }) => l) }; }
   if (isNew && q.boq_id) { const b = await api("GET", "/api/boqs/" + q.boq_id); x.bu_id = b.bu_id; x.lines = b.lines.map(l => ({ ...l, contract_qty: l.qty, qty: 0 })); }
+  if (isNew && (q.credit_of || q.debit_of)) {      // a credit / debit note on an invoice: its customer, project and taxes (a credit note its lines too)
+    const src = await api("GET", "/api/extracts/" + (q.credit_of || q.debit_of)), credit = !!q.credit_of;
+    x = { ...x, doc_type: credit ? "C" : "D", ref_id: src.id, ref_number: src.number, bu_id: src.bu_id, customer: src.customer || "", vat_code: src.vat_code || "", wht_code: src.wht_code || "",
+      number: `${credit ? "CN" : "DN"}-${today().slice(0, 7)}-`, lines: credit ? (src.lines || []).map(({ id, extract_id, contract_qty, billed_before, ...l }) => l) : [] };
+    if (credit) x.credit_left = (await api("GET", `/api/extracts/${src.id}/credit-left`).catch(() => ({}))).left; }
   const boqs = can("estimating.boqs") ? await api("GET", "/api/boqs") : [];
+  const einvTpls = (can("tax.einvoice") || can("sales.invoices")) ? ((await api("GET", "/api/einvoice-templates").catch(() => ({ rows: [] }))).rows || []).filter(t2 => t2.active) : [];
+  const postedInv = (await api("GET", "/api/extracts?status=posted").catch(() => [])).filter(i => (i.doc_type || "I") === "I");
+  if (x.ref_id && !x.ref_number) x.ref_number = (postedInv.find(i => i.id === x.ref_id) || {}).number || "";
   const locked = x.status === "posted" || !can("sales.invoices", isNew ? "add" : "edit");
   // fee % per section on top of the work (cost-plus) — on by default where the country bills this way
   const prof = S.boot.settings.country_profile || {};
@@ -3653,11 +3661,20 @@ PAGES.invoice = async (view, parts, q) => {
     view.innerHTML = `<div class="toolbar"><a class="btn" href="#/invoices">← ${t("m_invoices")}</a><span class="spacer"></span>
         ${!isNew ? docMenu(`/api/extracts/${x.id}/file`, [["xlsx", "excel_doc"], ["pdf", "pdf_print"]], `<a href="/api/reports/vouchers?${qs({ q: x.number, kinds: "Sales Invoice", format: "pdf", lang: S.lang })}" target="_blank" rel="noopener">${S.lang === "ar" ? "السند المحاسبي (طباعة)" : "Accounting voucher (print)"}</a>`) : ""}
         ${!isNew && can("sales.invoices", "add") ? `<a class="btn" href="#/invoice/new?dup=${x.id}">${t("duplicate")}</a>` : ""}
+        ${!isNew && x.status === "posted" && (x.doc_type || "I") === "I" && can("sales.invoices", "add") ? `<a class="btn" href="#/invoice/new?credit_of=${x.id}">− ${esc(L2("Credit note", "إشعار دائن"))}</a><a class="btn" href="#/invoice/new?debit_of=${x.id}">+ ${esc(L2("Debit note", "إشعار مدين"))}</a>` : ""}
+        ${!isNew && (x.doc_type || "I") !== "I" ? chipS("warn", ETA_TYPE()[x.doc_type]) : ""}
         ${!locked ? `${!isNew ? `<button class="btn danger" data-a="xdel">${t("delete")}</button>` : ""}<button class="btn" data-a="xsave">${t("save")}</button><button class="btn pri" data-a="xpost">${t("save_post")}</button>` : `<span class="chip ok">${t("invoiced")}</span>${x.status === "posted" && can("sales.invoices", "edit") ? `<button class="btn" data-a="xreopen" title="${esc(L2("Its entry is voided (retained in the audit trail) and the invoice returns to draft for editing and reposting.", "يُلغى قيدها (ويبقى في سجل المراجعة) وتعود الفاتورة مسودة للتعديل وإعادة الترحيل."))}">↺ ${esc(L2("Reopen for editing", "إعادة فتح للتعديل"))}</button>` : ""}`}</div>
       <div class="card">${form([{ k: "bu_id", l: t("bu"), type: "select", opts: buOpts(), v: x.bu_id, dis: locked }, { k: "number", l: t("invoice_no"), v: x.number || `INV-${today().slice(0, 7)}-`, dis: locked },
         { k: "date", l: t("date"), type: "date", v: x.date, dis: locked }, { k: "boq_id", l: t("boq"), type: "select", opts: [["", t("standalone")], ...boqs.map(b => [b.id, `${b.title} (${b.bu_code || ""})`])], v: x.boq_id, dis: locked, change: "xboq" },
         { k: "customer", l: t("customer"), v: x.customer, list: "custs", dis: locked, change: "xcust" }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: x.vat_code, dis: locked, change: "letot" },
-        { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), v: x.wht_code, dis: locked, change: "letot" }], 4)}${datalist("custs", (S.boot.parties || []).filter(p => p.type !== "supplier").map(p => p.name))}</div>
+        { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), v: x.wht_code, dis: locked, change: "letot" },
+        { k: "doc_type", l: L2("Document", "المستند"), type: "select", opts: Object.entries(ETA_TYPE()), v: x.doc_type || "I", dis: locked, change: "xdtype" },
+        ...((x.doc_type || "I") !== "I" ? [{ k: "ref_number", l: L2("Original invoice", "الفاتورة الأصلية"), v: x.ref_number || "", list: "postinv", dis: locked, req: 1 },
+          { k: "eta_reason", l: L2("Reason", "السبب"), v: x.eta_reason || "", dis: locked, req: 1, span: "span2" }] : []),
+        ...(einvTpls.length ? [{ k: "einv_template", l: L2("E-invoice template", "قالب الفاتورة الإلكترونية"), type: "select", dis: locked,
+          opts: [["", L2("Automatic (by customer)", "تلقائي (حسب العميل)")], ...einvTpls.filter(t2 => t2.doc_type === (x.doc_type || "I")).map(t2 => [t2.code, t2.name])], v: x.einv_template || "" }] : [])], 4)}${datalist("custs", (S.boot.parties || []).filter(p => p.type !== "supplier").map(p => p.name))}
+        ${datalist("postinv", postedInv.map(i => i.number))}
+        ${x.credit_left != null && (x.doc_type || "I") === "C" ? `<p class="muted" style="margin:6px 0 0">${esc(L2(`The invoice still holds ${money(x.credit_left)} (with VAT) for credit notes.`, `المتبقي في الفاتورة للإشعارات الدائنة ${money(x.credit_left)} (شاملاً الضريبة).`))}</p>` : ""}</div>
       ${locked ? "" : `<div class="card">${priceSearchBox()}</div>`}
       <div class="card"><h2>${t("lines")}</h2>${locked ? "" : gridBar("invoice")}${linesEditor(x.lines, false, withContract, true)}
         <div class="row" style="margin-top:10px">${locked ? "" : `<button class="btn sm" data-a="leadd">${t("add_line")}</button>`}<span class="spacer"></span><b id="letot"></b></div></div>${unitsList()}
@@ -3681,7 +3698,11 @@ PAGES.invoice = async (view, parts, q) => {
     S.H.letot();
   };
   const header = () => ({ bu_id: $("[name=bu_id]").value, number: $("[name=number]").value, date: $("[name=date]").value, boq_id: $("[name=boq_id]").value,
-    customer: $("[name=customer]").value, vat_code: $("[name=vat_code]").value, wht_code: $("[name=wht_code]").value });
+    customer: $("[name=customer]").value, vat_code: $("[name=vat_code]").value, wht_code: $("[name=wht_code]").value,
+    doc_type: ($("[name=doc_type]") || {}).value || x.doc_type || "I", ...($("[name=ref_number]") ? { ref_number: $("[name=ref_number]").value, eta_reason: $("[name=eta_reason]").value } : {}),
+    ...($("[name=einv_template]") ? { einv_template: $("[name=einv_template]").value } : {}) });
+  S.H.xdtype = el => { const h = header(); x = { ...x, ...h, lines: readLines(true), doc_type: el.value, einv_template: "",
+    number: x.id ? h.number : h.number.replace(/^(INV|CN|DN)-/, { I: "INV-", C: "CN-", D: "DN-" }[el.value]) }; render(); };
   // the fee card: one % per section of the lines (and one for any other section); amounts follow the lines as they change
   const drawFees = base => {
     const box = $("#feecard"); if (!box) return;
@@ -3728,23 +3749,107 @@ PAGES.invoice = async (view, parts, q) => {
     try { await api("POST", `/api/extracts/${x.id}/reopen`, {}); toast(L2("Returned to draft.", "أُعيدت إلى مسودة.")); route(); } catch (e) { fail(e); } };
   render();
 };
+// ================================================== e-invoicing through the BeyondERP Signer
+// The Signer runs on the computer the USB token is plugged into (signer/beyond_signer.py). This page talks to it on that
+// computer only (http://127.0.0.1:47321), with the pairing key kept on this device; the Signer signs with the token and,
+// for the Signer connection, talks to the tax authority itself (its client secret stays there). The books keep the result.
+const SIGNER_URL = "http://127.0.0.1:47321";
+const signerCfg = () => ({ url: SIGNER_URL, key: "", ...(store.get("etaSigner", {}) || {}) });
+const etaConn = st => (st && st.eta_connection) || (S.cache.etaSettings || {}).eta_connection || "signer";
+async function etaSettings(force) {
+  if (force || !S.cache.etaSettings) S.cache.etaSettings = await api("GET", "/api/einvoice/settings").catch(() => ({}));
+  return S.cache.etaSettings;
+}
+async function signerCall(method, path, body, tries = 3) {
+  const c = signerCfg();
+  if (!c.key) throw new Error(L2("Pair this computer with the BeyondERP Signer first: E-invoicing → Settings → BeyondERP Signer.", "اربط هذا الجهاز ببرنامج التوقيع BeyondERP Signer أولاً: الفاتورة الإلكترونية ← الإعدادات ← برنامج التوقيع."));
+  let r, d = {};
+  try { r = await fetch(c.url.replace(/\/$/, "") + path, { method, headers: { "content-type": "application/json", "x-signer-key": c.key }, body: body ? JSON.stringify(body) : undefined }); }
+  catch { throw new Error(L2("The BeyondERP Signer is not running on this computer. Start it (keep its window open while signing), then try again.", "برنامج التوقيع BeyondERP Signer لا يعمل على هذا الجهاز. شغّله (اترك نافذته مفتوحة أثناء التوقيع) ثم أعد المحاولة.")); }
+  try { d = await r.json(); } catch { d = {}; }
+  if (r.status === 401 && (d.code === "pin_needed" || d.code === "bad_pin") && tries > 0) {
+    const pin = await uiDialog(d.code === "bad_pin" && path === "/v1/unlock" ? L2("Wrong PIN. Enter the token PIN again:", "رقم PIN غير صحيح. أدخل رقم التوكن مرة أخرى:")
+      : L2("Token PIN (sent only to the Signer on this computer):", "رقم PIN للتوكن (يُرسل فقط إلى برنامج التوقيع على هذا الجهاز):"), { input: "", password: true, ok: L2("Unlock", "فتح") });
+    if (!pin) throw new Error(L2("Signing cancelled.", "أُلغي التوقيع."));
+    await signerCall("POST", "/v1/unlock", { pin }, tries - 1);
+    return path === "/v1/unlock" ? {} : signerCall(method, path, body, tries - 1);
+  }
+  if (r.status === 401 && d.code === "not_paired") throw new Error(L2("This computer's pairing key does not match the Signer's. Copy the key from the Signer's window into E-invoicing → Settings.", "مفتاح الربط على هذا الجهاز لا يطابق مفتاح برنامج التوقيع. انسخ المفتاح من نافذة البرنامج إلى الفاتورة الإلكترونية ← الإعدادات."));
+  if (!r.ok) throw new Error(d.error || `Signer ${r.status}`);
+  return d;
+}
+// the documents the books built, the problems that stop some of them, then: sign (and send) the rest
+async function etaSign(ids, send = true) {
+  const st = await etaSettings();
+  if (etaConn(st) === "direct" && send) return api("POST", "/api/einvoice/submit", { ids });
+  const prep = (await api("POST", "/api/einvoice/prepare", { ids })).documents;
+  const bad = prep.filter(p => p.problems.length), good = prep.filter(p => !p.problems.length);
+  if (bad.length && !await uiConfirm(`${L2("These cannot be sent yet:", "لا يمكن إرسال هذه بعد:")}\n${bad.map(p => `• ${p.number}: ${p.problems.join("; ")}`).join("\n")}${good.length ? `\n\n${L2(`Continue with the other ${good.length}?`, `المتابعة بالباقي (${good.length})؟`)}` : ""}`, { ok: good.length ? L2("Continue", "متابعة") : L2("OK", "موافق") }) || !good.length) return null;
+  const docs = good.map(p => p.document);
+  if (!send) { const r = await signerCall("POST", "/v1/sign", { documents: docs }); return api("POST", "/api/einvoice/record-signed", { documents: r.documents }); }
+  const r = await signerCall("POST", "/v1/eta/submit", { documents: docs });
+  return api("POST", "/api/einvoice/record-submission", { submission: r.submission, documents: r.documents });
+}
+async function etaRefresh(x) {
+  if (etaConn(await etaSettings()) === "direct") return api("POST", `/api/einvoice/${x.id}/refresh`, {});
+  const det = await signerCall("GET", `/v1/eta/document/${encodeURIComponent(x.eta_uuid)}/details`);
+  return api("POST", `/api/einvoice/${x.id}/record-status`, { details: det });
+}
+async function etaCancel(x, reason) {
+  if (etaConn(await etaSettings()) === "direct") return api("POST", `/api/einvoice/${x.id}/cancel`, { reason });
+  await signerCall("PUT", `/v1/eta/document/${encodeURIComponent(x.eta_uuid)}/state`, { status: "cancelled", reason });
+  return api("POST", `/api/einvoice/${x.id}/record-cancel`, { reason });
+}
+async function etaPdf(uuid, name) {
+  const r = await signerCall("GET", `/v1/eta/document/${encodeURIComponent(uuid)}/pdf`);
+  const bin = Uint8Array.from(atob(r.pdf), c => c.charCodeAt(0)), url = URL.createObjectURL(new Blob([bin], { type: "application/pdf" }));
+  const a = document.createElement("a"); a.href = url; a.download = (name || uuid) + ".pdf"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30e3);
+}
+const etaShareUrl = (st, uuid, longId) => uuid && longId ? `https://${(st || {}).eta_env === "prod" ? "" : "preprod."}invoicing.eta.gov.eg/print/documents/${encodeURIComponent(uuid)}/share/${encodeURIComponent(longId)}` : "";
+// what the Signer found when it checked a signature
+function etaVerifyDialog(v) {
+  const c = v.certificate || {};
+  drawer(L2("Signature check", "فحص التوقيع"), `<div class="banner ${v.valid ? "ok" : "err"}">${esc(v.valid ? L2("The signature is valid and the document is exactly what was signed.", "التوقيع صحيح والمستند مطابق تماماً لما تم توقيعه.") : L2("The signature does not check out. Do not send this document as it is.", "التوقيع غير صحيح. لا ترسل المستند كما هو."))}</div>
+    <div class="tbl"><table><tbody>${(v.checks || []).map(k => `<tr><td style="width:34px">${chipS(k.ok ? "ok" : "bad", k.ok ? "✓" : "✗")}</td><td><b>${esc(etaCheckName(k.check))}</b>${k.detail ? `<div class="muted" style="font-size:.85em" dir="ltr">${esc(k.detail)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>
+    ${c.subject ? `<h3>${esc(L2("Certificate", "الشهادة"))}</h3><div class="grid g2"><div><span class="muted">${esc(L2("Issued to", "صادرة إلى"))}</span><div dir="ltr">${esc(c.subject)}</div></div><div><span class="muted">${esc(L2("Issued by", "صادرة من"))}</span><div dir="ltr">${esc(c.issuer)}</div></div>
+      <div><span class="muted">${esc(L2("Valid", "صالحة"))}</span><div>${fd(c.valid_from)} → ${fd(c.valid_to)}</div></div><div><span class="muted">${esc(L2("Signed at", "وقت التوقيع"))}</span><div>${esc((v.signed_at || "").replace("T", " ").slice(0, 19))}</div></div></div>` : ""}`, null, { readOnly: true });
+}
+const etaCheckName = k => S.lang !== "ar" ? k : ({ "The document matches what was signed": "المستند مطابق لما تم توقيعه", "The signature was made with this certificate's key": "التوقيع تم بمفتاح هذه الشهادة",
+  "The certificate was valid when signed": "الشهادة كانت سارية وقت التوقيع", "The certificate is named in the signature (signing-certificate-v2)": "الشهادة مذكورة في التوقيع (signing-certificate-v2)",
+  "The signature can be read": "يمكن قراءة التوقيع", "The document carries a signature": "المستند يحمل توقيعاً" })[k] || k;
+const ETA_TYPE = () => ({ I: L2("Invoice", "فاتورة"), C: L2("Credit note", "إشعار دائن"), D: L2("Debit note", "إشعار مدين") });
+const etaChip = s => { const v = String(s || ""); if (!v) return ""; const lv = /^valid/i.test(v) ? "ok" : /reject|invalid/i.test(v) ? "bad" : /cancel/i.test(v) ? "" : "warn";
+  const ar = { Valid: "سارية", Invalid: "غير صالحة", Rejected: "مرفوضة", Submitted: "مُرسلة", Signed: "موقّعة", Cancelled: "ملغاة", "Cancel requested": "طلب إلغاء" };
+  return chipS(lv, S.lang === "ar" ? ar[v] || v : v); };
 async function etaPanel(x) {
   const box = $("#etabody"); if (!box) return;
-  let d;
-  try { d = await api("GET", "/api/einvoice/" + x.id); } catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; return; }
-  const tx = can("tax.einvoice", "edit");
-  const st = x.eta_status ? `<span class="chip ${/valid/i.test(x.eta_status) && !/invalid/i.test(x.eta_status) ? "ok" : /reject|invalid/i.test(x.eta_status) ? "bad" : "warn"}">${esc(x.eta_status)}</span> ${x.eta_uuid ? `<span class="muted">${esc(x.eta_uuid)}</span>` : ""}` : "";
-  box.innerHTML = `<div class="row" style="margin-bottom:8px">${t("eta_status")}: ${st || "—"}</div>
-    ${d.problems.length ? `<div class="banner warn"><b>${esc(L2("The invoice is posted. To submit it as an e-invoice, complete the following first", "الفاتورة مُرحّلة. لإرسالها فاتورةً إلكترونية، استكمل ما يلي أولاً"))}:</b><ul>${d.problems.map(p => `<li>${esc(p)}</li>`).join("")}</ul></div>` : `<div class="banner ok">${t("eta_ready")} — ${money(d.document.totalAmount)} ${cur()}</div>`}
-    ${x.eta_error ? `<div class="banner err" style="font-size:.8em">${esc(x.eta_error)}</div>` : ""}
-    <div class="row"><a class="btn" href="/api/einvoice/${x.id}?format=json">⬇ ${t("eta_json")}</a>
-      ${tx && !d.problems.length && !/valid|submitted/i.test(x.eta_status || "") ? `<button class="btn pri" data-a="etasub">${t("eta_submit")}</button>` : ""}
-      ${x.eta_uuid ? `<button class="btn" data-a="etaref">${t("eta_refresh")}</button>` : ""}${tx && x.eta_uuid ? `<button class="btn danger" data-a="etacan">${t("eta_cancel")}</button>` : ""}
-      <button class="btn" data-a="etaprev">${t("eta_preview")}</button></div>`;
+  let d, st;
+  try { [d, st] = await Promise.all([api("GET", "/api/einvoice/" + x.id), etaSettings(true)]); } catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; return; }
+  const tx = can("tax.einvoice", "add"), txe = can("tax.einvoice", "edit"), viaSigner = etaConn(st) === "signer";
+  const sent = !!x.eta_uuid && !/reject|invalid/i.test(x.eta_status || ""), live = sent && !/cancel/i.test(x.eta_status || "");
+  const share = etaShareUrl(st, x.eta_uuid, x.eta_long_id);
+  box.innerHTML = `<div class="row" style="margin-bottom:8px;gap:8px">${chipS("", ETA_TYPE()[x.doc_type || "I"])} ${etaChip(x.eta_status) || `<span class="muted">${esc(L2("Not sent yet", "لم تُرسل بعد"))}</span>`}
+      ${x.eta_uuid ? `<span class="muted" dir="ltr" style="font-size:.85em">UUID ${esc(x.eta_uuid)}</span>` : ""}${x.eta_signed_at ? `<span class="muted" style="font-size:.85em">${esc(L2("Signed", "وُقّعت"))} ${esc(x.eta_signed_at.slice(0, 16).replace("T", " "))}</span>` : ""}</div>
+    ${d.problems.length && !sent ? `<div class="banner warn"><b>${esc(L2("Before it can be sent", "قبل إمكانية الإرسال"))}:</b><ul>${d.problems.map(p => `<li>${esc(p)}</li>`).join("")}</ul></div>` : ""}
+    ${x.eta_error ? `<div class="banner ${/^Cancelled:/.test(x.eta_error) ? "info" : "err"}" style="font-size:.85em">${esc(x.eta_error)}</div>` : ""}
+    <div class="row" style="gap:6px;flex-wrap:wrap">
+      ${tx && !sent && !d.problems.length ? `<button class="btn pri" data-a="etasub">✍ ${esc(viaSigner ? L2("Sign and send", "توقيع وإرسال") : t("eta_submit"))}</button>${viaSigner ? `<button class="btn" data-a="etasignonly">${esc(L2("Sign only", "توقيع فقط"))}</button>` : ""}` : ""}
+      ${x.eta_signed ? `<button class="btn" data-a="etaverify">✓ ${esc(L2("Check the signature", "فحص التوقيع"))}</button><a class="btn" href="/api/einvoice/${x.id}/signed?format=json">⬇ ${esc(L2("Signed document", "المستند الموقّع"))}</a>` : ""}
+      ${x.eta_uuid ? `<button class="btn" data-a="etaref">↻ ${t("eta_refresh")}</button>` : ""}
+      ${share ? `<a class="btn" href="${esc(share)}" target="_blank" rel="noopener">${esc(L2("Official printout", "النسخة الرسمية"))} ↗</a>` : ""}
+      ${x.eta_uuid && viaSigner ? `<button class="btn" data-a="etapdf">⬇ PDF</button>` : ""}
+      ${txe && live ? `<button class="btn danger" data-a="etacan">${t("eta_cancel")}</button>` : ""}
+      <button class="btn" data-a="etaprev">${t("eta_preview")}</button><a class="btn" href="/api/einvoice/${x.id}?format=json">⬇ ${t("eta_json")}</a></div>
+    ${live && (x.doc_type || "I") === "I" ? `<p class="muted" style="font-size:.85em;margin-bottom:0">${esc(L2("Cancelling is allowed for a limited time after issue; after that, correct it with a credit note or a debit note.", "يُسمح بالإلغاء لفترة محدودة بعد الإصدار؛ بعدها صحّح الفاتورة بإشعار دائن أو مدين."))}</p>` : ""}`;
+  const done = (msg, r) => { S.cache.etaSettings = null; toast(msg); route(); return r; };
   S.H.etaprev = () => drawer(t("eta_preview"), `<pre style="white-space:pre-wrap;font-size:.75em;direction:ltr;text-align:left">${esc(JSON.stringify(d.document, null, 2))}</pre>`, null, { readOnly: true });
-  S.H.etasub = async () => { try { const r = await api("POST", "/api/einvoice/submit", { ids: [x.id] }); toast((r.results[0] || {}).status || "OK"); route(); } catch (e) { fail(e); } };
-  S.H.etaref = async () => { try { const r = await api("POST", `/api/einvoice/${x.id}/refresh`, {}); toast(r.status); route(); } catch (e) { fail(e); } };
-  S.H.etacan = async () => { const why = await uiPrompt(S.lang === "ar" ? "سبب الإلغاء" : "Reason for cancelling"); if (!why) return; try { await api("POST", `/api/einvoice/${x.id}/cancel`, { reason: why }); route(); } catch (e) { fail(e); } };
+  S.H.etasub = async el => { el.disabled = true; try { const r = await etaSign([x.id], true); if (r) done(((r.results || [])[0] || {}).status || "OK"); } catch (e) { fail(e); } finally { el.disabled = false; } };
+  S.H.etasignonly = async el => { el.disabled = true; try { const r = await etaSign([x.id], false); if (r) done(L2("Signed. It can be sent later.", "تم التوقيع. يمكن إرسالها لاحقاً.")); } catch (e) { fail(e); } finally { el.disabled = false; } };
+  S.H.etaverify = async () => { try { const s2 = await api("GET", `/api/einvoice/${x.id}/signed`); etaVerifyDialog(await signerCall("POST", "/v1/verify", { document: s2.document })); } catch (e) { fail(e); } };
+  S.H.etaref = async () => { try { const r = await etaRefresh(x); done(r.status); } catch (e) { fail(e); } };
+  S.H.etapdf = async () => { try { await etaPdf(x.eta_uuid, x.number); } catch (e) { fail(e); } };
+  S.H.etacan = async () => { const why = await uiPrompt(L2("Reason for cancelling (sent to the tax authority)", "سبب الإلغاء (يُرسل إلى مصلحة الضرائب)")); if (!why) return;
+    try { await etaCancel(x, why); done(L2("Cancellation requested.", "تم طلب الإلغاء.")); } catch (e) { fail(e); } };
 }
 
 PAGES.boqs = async (view, parts, q) => {
@@ -5788,35 +5893,152 @@ PAGES.taxcodes = async (view) => {
     ${rows.map(c => `<tr class="click ${c.active ? "" : "void"}" data-a="${ed ? "tedit" : ""}" data-id="${esc(c.code)}"><td><b>${esc(c.code)}</b></td><td>${esc(S.lang === "ar" && c.name_ar ? c.name_ar : c.name)}</td><td>${c.kind === "vat" ? t("vat_code") : t("wht_code")}</td><td class="num">${pct(c.rate)}</td><td>${esc(c.eta_type)}</td><td>${esc(c.eta_subtype)}</td></tr>`).join("")}</tbody></table></div></div>`;
 };
 PAGES.einvoice = async (view, parts, q) => {
-  const [st, inv] = await Promise.all([api("GET", "/api/einvoice/settings"), can("sales.invoices") || can("tax.einvoice") ? api("GET", "/api/extracts?" + qs(q)) : []]);
-  const drafts = inv.filter(x => x.status !== "posted").length;
-  const ed = can("tax.einvoice", "edit");
-  S.H.etasave = async () => { try { await api("PUT", "/api/einvoice/settings", readForm($("#etaset"))); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  const tab = q.tab || "issued", ar = S.lang === "ar";
+  const st = await etaSettings(true), viaSigner = etaConn(st) === "signer";
+  const add = can("tax.einvoice", "add"), ed = can("tax.einvoice", "edit");
+  const tabs = [["issued", L2("Issued", "الصادرة")], ["received", L2("Received", "الواردة")], ["templates", L2("Templates", "القوالب")], ["settings", L2("Settings", "الإعدادات")]];
+  const top = `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/einvoice?${qs({ ...q, tab: k })}" class="${k === tab ? "on" : ""}">${esc(l)}</a>`).join("")}</div>
+    ${viaSigner && !signerCfg().key && tab !== "settings" ? `<div class="banner warn">${esc(L2("Sign and send from here: install the BeyondERP Signer on the computer with the USB token and pair it (Settings).", "للتوقيع والإرسال من هنا: ثبّت برنامج التوقيع BeyondERP Signer على الجهاز المتصل به التوكن واربطه (الإعدادات)."))} <a class="btn sm" href="#/einvoice?tab=settings">${esc(L2("Set up", "إعداد"))}</a></div>` : ""}`;
+  const done = msg => { S.cache.etaSettings = null; toast(msg); route(); };
+
+  if (tab === "issued") {
+    const inv = await api("GET", "/api/extracts?" + qs({ date_from: q.date_from || "", date_to: q.date_to || "", bu_id: q.bu_id || "" }));
+    const want = q.state || "";
+    const stateOf = x => x.status !== "posted" ? "draft" : !x.eta_status ? "unsent" : /^valid/i.test(x.eta_status) ? "valid" : /reject|invalid/i.test(x.eta_status) ? "problem" : /cancel/i.test(x.eta_status) ? "cancelled" : /signed/i.test(x.eta_status) ? "signed" : "sent";
+    const STATES = [["", L2("All", "الكل")], ["unsent", L2("Not sent", "لم تُرسل")], ["signed", L2("Signed, not sent", "موقّعة لم تُرسل")], ["sent", L2("Waiting for the tax authority", "بانتظار المصلحة")],
+      ["valid", L2("Valid", "سارية")], ["problem", L2("Rejected or invalid", "مرفوضة أو غير صالحة")], ["cancelled", L2("Cancelled", "ملغاة")], ["draft", L2("Drafts", "مسودات")]];
+    const rows = inv.filter(x => !want || stateOf(x) === want);
+    const count = k => inv.filter(x => stateOf(x) === k).length;
+    S.H.etastate = el => setQ({ ...q, state: el.value });
+    S.H.etaall = el => $$("input.etachk:not(:disabled)").forEach(i => { i.checked = el.checked; });
+    const picked = () => $$("input.etachk:checked").map(i => +i.value);
+    S.H.etasel = async el => { const ids = picked(); if (!ids.length) return toast(L2("Tick the invoices first.", "حدد الفواتير أولاً."));
+      el.disabled = true; try { const r = await etaSign(ids, true); if (r) done((r.results || []).map(x => `${(inv.find(i => i.id === x.id) || {}).number || x.id}: ${x.status}`).join(" · ") || "OK"); } catch (e) { fail(e); } finally { el.disabled = false; } };
+    S.H.etasign = async el => { const ids = picked(); if (!ids.length) return toast(L2("Tick the invoices first.", "حدد الفواتير أولاً."));
+      el.disabled = true; try { const r = await etaSign(ids, false); if (r) done(L2(`${(r.signed || []).length} signed.`, `تم توقيع ${(r.signed || []).length}.`)); } catch (e) { fail(e); } finally { el.disabled = false; } };
+    S.H.etarefall = async el => { const list = inv.filter(x => x.eta_uuid && /submitted|cancel requested/i.test(x.eta_status || "")); if (!list.length) return toast(L2("Nothing is waiting for an answer.", "لا يوجد ما ينتظر رداً."));
+      el.disabled = true; let n = 0; for (const x of list) { try { await etaRefresh(x); n++; } catch (e) { fail(e); break; } } el.disabled = false; done(L2(`${n} refreshed.`, `تم تحديث ${n}.`)); };
+    view.innerHTML = top + filterBar(q, ["dates", "bu"]) + `<div class="kpis">${[["unsent", L2("Not sent", "لم تُرسل")], ["sent", L2("Waiting", "بالانتظار")], ["valid", L2("Valid", "سارية")], ["problem", L2("Need attention", "تحتاج مراجعة")]].map(([k, l]) => kpiBox(l, String(count(k)), k === "problem" && count(k) ? "neg" : "")).join("")}</div>
+      <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><label class="f" style="flex:none">${esc(L2("Show", "عرض"))}<select data-change="etastate">${STATES.map(([v, l]) => `<option value="${v}" ${v === want ? "selected" : ""}>${esc(l)}${v ? ` (${count(v)})` : ""}</option>`).join("")}</select></label><span class="spacer"></span>
+        ${add ? `<button class="btn pri" data-a="etasel">✍ ${esc(viaSigner ? L2("Sign and send ticked", "توقيع وإرسال المحدد") : t("eta_submit"))}</button>${viaSigner ? `<button class="btn" data-a="etasign">${esc(L2("Sign ticked only", "توقيع المحدد فقط"))}</button>` : ""}` : ""}<button class="btn" data-a="etarefall">↻ ${esc(L2("Refresh statuses", "تحديث الحالات"))}</button>
+        <a class="btn" href="/api/einvoice-batch?${qs({ ...q, format: "json" })}">⬇ JSON</a><a class="btn" href="/api/einvoice-batch?${qs({ ...q, format: "xlsx" })}">⬇ Excel</a></div>
+      ${rows.length ? `<div class="tbl"><table><thead><tr><th><input type="checkbox" data-change="etaall" aria-label="${esc(L2("All", "الكل"))}"></th><th>${t("invoice_no")}</th><th>${esc(L2("Document", "المستند"))}</th><th>${t("customer")}</th><th>${t("date")}</th><th class="num">${t("amount")}</th><th>${t("eta_status")}</th></tr></thead><tbody>
+        ${rows.map(x => { const k = stateOf(x), can2 = add && ["unsent", "signed", "problem"].includes(k);
+          return `<tr><td><input type="checkbox" class="etachk" value="${x.id}" ${can2 ? "" : "disabled"}></td><td><a href="#/invoice/${x.id}"><b>${esc(x.number)}</b></a></td><td>${esc(ETA_TYPE()[x.doc_type || "I"])}</td><td>${esc(x.customer || "")}</td><td>${fd(x.date)}</td><td class="num">${money(x.total)}</td>
+          <td>${k === "draft" ? chipS("warn", L2("Draft: post it first", "مسودة: رحّلها أولاً")) : etaChip(x.eta_status) || `<span class="muted">${esc(L2("Not sent", "لم تُرسل"))}</span>`}${x.eta_error && k === "problem" ? `<div class="lines" style="max-width:340px">${esc(x.eta_error.slice(0, 160))}</div>` : ""}</td></tr>`; }).join("")}</tbody></table></div>`
+        : `<div class="empty">${t("nothing")}</div>`}</div>`;
+    return;
+  }
+
+  if (tab === "received") {
+    const d = await api("GET", "/api/einvoice-received?" + qs({ q: q.q || "" }));
+    S.H.rcvfetch = async el => { el.disabled = true;
+      try { let saved = 0;
+        if (!viaSigner) saved = (await api("POST", "/api/einvoice-received/fetch", { page: 1, size: 100 })).saved;
+        else for (let page = 1; page <= 5; page++) { const r = await signerCall("GET", `/v1/eta/recent?${qs({ direction: "Received", page, size: 100 })}`);
+          saved += (await api("POST", "/api/einvoice-received", { rows: r.result || [] })).saved; if (page >= ((r.metadata || {}).totalPages || 1)) break; }
+        done(L2(`${saved} document(s) brought up to date.`, `تم تحديث ${saved} مستند.`)); } catch (e) { fail(e); } finally { el.disabled = false; } };
+    S.H.rcvopen = el => rcvDrawer(el.dataset.u, viaSigner);
+    view.innerHTML = top + `<div class="toolbar">${add ? `<button class="btn pri" data-a="rcvfetch">↻ ${esc(L2("Fetch from the tax authority", "جلب من مصلحة الضرائب"))}</button>` : ""}<span class="spacer"></span></div>
+      <p class="muted" style="margin-top:0">${esc(L2("E-invoices your suppliers issued to this company. Open one to see its lines, record it as a supplier bill, or reject it (within the period the tax authority allows).", "الفواتير الإلكترونية التي أصدرها الموردون لهذه الشركة. افتح أياً منها لعرض البنود أو تسجيلها فاتورة مورد أو رفضها (خلال المدة التي تسمح بها المصلحة)."))}</p>
+      <div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${esc(L2("Supplier", "المورد"))}</th><th>${esc(L2("Their number", "رقمهم"))}</th><th>${esc(L2("Document", "المستند"))}</th><th>${t("date")}</th><th class="num">${t("amount")}</th><th>${t("status")}</th><th>${esc(L2("In the books", "في الدفاتر"))}</th></tr></thead><tbody>
+        ${d.rows.map(r => `<tr class="click" data-a="rcvopen" data-u="${esc(r.uuid)}"><td><b>${esc(r.issuer_name)}</b><div class="lines" dir="ltr">${esc(r.issuer_id)}</div></td><td>${esc(r.internal_id)}</td><td>${esc(ETA_TYPE()[r.doc_type] || r.doc_type)}</td><td>${fd((r.issued || "").slice(0, 10))}</td><td class="num">${money(r.total)}</td><td>${etaChip(r.status)}</td>
+          <td>${r.entry_id ? `<a href="#/journal?q=${encodeURIComponent(r.internal_id)}">${chipS("ok", L2("Recorded", "مسجلة"))}</a>` : "—"}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty">${esc(L2("Nothing fetched yet. Press “Fetch from the tax authority”.", "لم يُجلب شيء بعد. اضغط «جلب من مصلحة الضرائب»."))}</div>`}</div>`;
+    return;
+  }
+
+  if (tab === "templates") {
+    const rows = (await api("GET", "/api/einvoice-templates")).rows;
+    const tplForm = t0 => drawer(t0.code ? t0.name : L2("New e-invoice template", "قالب فاتورة إلكترونية جديد"), form([
+      { k: "code", l: L2("Code", "الكود"), v: t0.code || "", req: 1 }, { k: "name", l: t("name"), v: t0.name || "", req: 1 },
+      { k: "doc_type", l: L2("Document", "المستند"), type: "select", opts: Object.entries(ETA_TYPE()), v: t0.doc_type || "I" },
+      { k: "active", l: L2("In use", "مستخدم"), type: "checkbox", v: t0.active == null ? true : !!t0.active },
+      { k: "customers", l: L2("Customers it applies to (one per line; blank = any customer)", "العملاء الذين ينطبق عليهم (عميل في كل سطر؛ فارغ = أي عميل)"), type: "textarea", v: t0.customers || "", span: "spanall" },
+      { k: "reason", l: L2("Reason (credit / debit notes)", "السبب (الإشعارات الدائنة / المدينة)"), v: t0.reason || "", span: "spanall" },
+      { k: "activity_code", l: t("eta_activity"), v: t0.activity_code || "", ph: st.eta_activity_code || "4330" }, { k: "branch_id", l: t("eta_branch"), v: t0.branch_id || "", ph: st.eta_branch_id || "0" },
+      { k: "item_code", l: t("eta_item_code"), v: t0.item_code || "", ph: st.eta_default_item_code || "" }, { k: "unit", l: t("eta_unit"), v: t0.unit || "", ph: st.eta_default_unit || "EA" },
+      { k: "po_ref", l: L2("Customer's purchase order no.", "رقم أمر شراء العميل"), v: t0.po_ref || "" }, { k: "po_desc", l: L2("Purchase order description", "وصف أمر الشراء"), v: t0.po_desc || "" },
+      { k: "so_desc", l: L2("Sales order description", "وصف أمر البيع"), v: t0.so_desc || "", span: "spanall" }, { k: "notes", l: t("notes"), v: t0.notes || "", span: "spanall" }]) +
+      `<p class="muted" style="font-size:.85em">${esc(L2("An invoice follows the template chosen on it, else the first one in use of its kind for its customer, else one for any customer. Blank fields use E-invoicing → Settings.", "تتبع الفاتورة القالب المختار عليها، وإلا أول قالب مستخدم من نوعها لعميلها، وإلا قالباً لأي عميل. الحقول الفارغة تأخذ قيمها من الفاتورة الإلكترونية ← الإعدادات."))}</p>`,
+      async v => { await api(t0.code ? "PUT" : "POST", t0.code ? `/api/einvoice-templates/${encodeURIComponent(t0.code)}` : "/api/einvoice-templates", v); toast(t("saved")); route(); });
+    S.H.tplnew = () => tplForm({});
+    S.H.tpledit = el => tplForm(rows.find(r => r.code === el.dataset.c) || {});
+    S.H.tpldel = async el => { if (!await uiConfirm(L2(`Delete the template ${el.dataset.c}?`, `حذف القالب ${el.dataset.c}؟`))) return; try { await api("DELETE", `/api/einvoice-templates/${encodeURIComponent(el.dataset.c)}`); route(); } catch (e) { fail(e); } };
+    view.innerHTML = top + `<div class="toolbar">${add ? `<button class="btn pri" data-a="tplnew">+ ${esc(L2("Template", "قالب"))}</button>` : ""}<span class="spacer"></span></div>
+      <p class="muted" style="margin-top:0">${esc(L2("For different kinds of documents, certain customers or certain reasons: their activity code, branch, item code, the customer's purchase order and the like, filled in by themselves.", "لأنواع مختلفة من المستندات أو عملاء أو أسباب بعينها: كود النشاط والفرع وكود الصنف وأمر شراء العميل وما شابه، تُملأ تلقائياً."))}</p>
+      <div class="card">${rows.length ? `<div class="tbl"><table><thead><tr><th>${esc(L2("Template", "القالب"))}</th><th>${esc(L2("Document", "المستند"))}</th><th>${esc(L2("Customers", "العملاء"))}</th><th>${t("eta_activity")}</th><th>${esc(L2("In use", "مستخدم"))}</th><th></th></tr></thead><tbody>
+        ${rows.map(r => `<tr class="${ed ? "click" : ""}" data-a="${ed ? "tpledit" : ""}" data-c="${esc(r.code)}"><td><b>${esc(r.name)}</b><div class="lines">${esc(r.code)}</div></td><td>${esc(ETA_TYPE()[r.doc_type])}</td><td>${esc((r.customers || "").split("\n").filter(Boolean).join(", ") || L2("Any customer", "أي عميل"))}</td><td>${esc(r.activity_code || "—")}</td>
+          <td>${r.active ? chipS("ok", "✓") : "—"}</td><td>${ed ? `<button class="btn sm danger" data-a="tpldel" data-c="${esc(r.code)}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty">${esc(L2("No templates yet.", "لا توجد قوالب بعد."))}</div>`}</div>`;
+    return;
+  }
+
+  // settings: the connection, this computer's Signer, the issuer's details
+  const sc = signerCfg();
+  S.H.etasave = async () => { try { await api("PUT", "/api/einvoice/settings", readForm($("#etaset"))); S.cache.etaSettings = null; toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.etatest = async () => { try { await api("POST", "/api/einvoice/test", {}); toast("✓ ETA"); } catch (e) { fail(e); } };
-  S.H.etasel = async () => { const ids = $$("input.etachk:checked").map(i => +i.value); if (!ids.length) return;
-    try { const r = await api("POST", "/api/einvoice/submit", { ids }); toast(r.results.map(x => `#${x.id} ${x.status}`).join(" · ")); route(); } catch (e) { fail(e); } };
-  view.innerHTML = `<div class="grid g2"><div class="card"><h2>${t("eta_batch_json").split("—")[0]}</h2>
-      <p class="muted">${S.lang === "ar" ? "الطريقة 1، التوليد للاستيراد: نزّل المستندات بصيغة مصلحة الضرائب (JSON) أو كدفعة Excel، ثم ارفعها عبر البوابة أو سلّمها لمزود التكامل." : "Option 1, generate for import: download the documents in the tax authority's format (JSON) or as an Excel batch, then upload them through the portal or pass them to your integrator."}</p>
-      ${filterBar(q, ["dates", "bu"])}
-      <div class="row"><a class="btn" href="/api/einvoice-batch?${qs({ ...q, format: "json" })}">⬇ ${t("eta_batch_json")}</a><a class="btn" href="/api/einvoice-batch?${qs({ ...q, format: "xlsx" })}">⬇ ${t("eta_batch_xlsx")}</a></div></div>
-    <div class="card" id="etaset"><h2>${t("eta_setup")}</h2><p class="muted">${S.lang === "ar" ? "الطريقة 2، الربط المباشر: تُوقَّع الفواتير عبر خدمة التوقيع المحلية (التوكن)، وتُرسل إلى واجهة مصلحة الضرائب وتُتابع حالتها." : "Option 2, direct connection: invoices are signed through your local signing service (USB token), submitted to the tax authority API and tracked."}</p>
-      ${form([{ k: "eta_env", l: t("eta_env"), type: "select", opts: [["preprod", L2("Pre-production (testing)", "بيئة ما قبل الإنتاج (اختبار)")], ["prod", L2("Production", "بيئة الإنتاج")]], v: st.eta_env },
+  S.H.sgsave = () => { store.set("etaSigner", { url: ($("#sgurl").value || SIGNER_URL).trim(), key: $("#sgkey").value.trim() }); toast(t("saved")); S.H.sgtest(); };
+  S.H.sgtest = async () => { const out = $("#sgout"); out.innerHTML = `<span class="muted">${t("loading")}</span>`;
+    try { const s2 = await signerCall("GET", "/v1/status"), k = s2.keys || {}, c = k.certificate || {};
+      let eta = ""; if (s2.eta && s2.eta.ready) { try { await signerCall("GET", "/v1/eta/test"); eta = chipS("ok", L2("Tax authority: signed in", "مصلحة الضرائب: تم الدخول")); } catch (e) { eta = chipS("bad", e.message.slice(0, 120)); } }
+      else eta = chipS("warn", L2("Enter the ETA client ID and secret in the Signer's window", "أدخل معرّف وسر مصلحة الضرائب في نافذة برنامج التوقيع"));
+      out.innerHTML = `<div class="row" style="gap:6px;flex-wrap:wrap">${chipS("ok", `BeyondERP Signer ${esc(s2.version)}`)}${k.present ? chipS("ok", (k.token && k.token.label) || L2("Key found", "تم العثور على المفتاح")) : chipS("bad", k.problem || L2("No token", "لا يوجد توكن"))}
+        ${k.unlocked ? chipS("ok", L2("Unlocked", "مفتوح")) : chipS("", L2("Locked: the PIN is asked when signing", "مقفل: يُطلب الرقم السري عند التوقيع"))}${eta}</div>${c.subject ? `<div class="muted" style="margin-top:6px" dir="ltr">${esc(c.subject)} · ${fd(c.valid_to)}</div>` : ""}`; }
+    catch (e) { out.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
+  view.innerHTML = top + `<div class="grid g2">
+    <div class="card"><h2>${esc(L2("BeyondERP Signer on this computer", "برنامج التوقيع على هذا الجهاز"))}</h2>
+      <p class="muted">${esc(L2("Signs with the USB token (or a certificate file) on the computer it is plugged into, and talks to the tax authority. Install it there, keep its window open, and paste its pairing key here once on that computer.", "يوقّع باستخدام التوكن (أو ملف شهادة) على الجهاز المتصل به، ويتصل بمصلحة الضرائب. ثبّته على ذلك الجهاز، واترك نافذته مفتوحة، والصق مفتاح الربط هنا مرة واحدة على ذلك الجهاز."))}</p>
+      <p><a class="btn" href="downloads/BeyondERP-Signer.exe" download>⬇ ${esc(L2("Download for Windows", "تنزيل لنظام Windows"))}</a> <span class="muted" style="font-size:.85em">${esc(L2("Mac / Linux: run signer/beyond_signer.py with Python 3.", "Mac / Linux: شغّل signer/beyond_signer.py باستخدام Python 3."))}</span></p>
+      <div class="grid g2"><label class="f">${esc(L2("Pairing key", "مفتاح الربط"))}<input id="sgkey" value="${esc(sc.key)}" autocomplete="off" placeholder="${esc(L2("Shown in the Signer's window", "يظهر في نافذة البرنامج"))}"></label>
+        <label class="f">${esc(L2("Signer address", "عنوان البرنامج"))}<input id="sgurl" value="${esc(sc.url)}" dir="ltr"></label></div>
+      <div class="row" style="margin-top:8px"><button class="btn pri" data-a="sgsave">${t("save")}</button><button class="btn" data-a="sgtest">${esc(L2("Test", "اختبار"))}</button></div><div id="sgout" style="margin-top:10px"></div>
+      <p class="muted" style="font-size:.82em">${esc(L2("The key is kept on this device only. Safari on Mac blocks pages from reaching the Signer; use Chrome, Edge or the desktop app there.", "يُحفظ المفتاح على هذا الجهاز فقط. يمنع Safari على Mac الصفحات من الوصول إلى البرنامج؛ استخدم Chrome أو Edge أو تطبيق سطح المكتب."))}</p></div>
+    <div class="card" id="etaset"><h2>${t("eta_setup")}</h2>
+      ${form([{ k: "eta_connection", l: L2("Connection to the tax authority", "الاتصال بمصلحة الضرائب"), type: "select", span: "spanall", v: etaConn(st),
+          opts: [["signer", L2("Through the BeyondERP Signer (recommended; the client secret stays on that computer)", "عبر برنامج التوقيع BeyondERP Signer (مستحسن؛ يبقى السر على ذلك الجهاز)")], ["direct", L2("Direct from this server (desktop / self-hosted)", "مباشرة من هذا الخادم (سطح المكتب / الاستضافة الذاتية)")]] },
         { k: "eta_doc_version", l: t("eta_version"), type: "select", opts: [["1.0", L2("1.0 (signed)", "1.0 (موقّعة)")], ["0.9", L2("0.9 (unsigned, pre-production only)", "0.9 (غير موقّعة، ما قبل الإنتاج فقط)")]], v: st.eta_doc_version },
-        { k: "eta_client_id", l: t("eta_client_id"), v: st.eta_client_id }, { k: "eta_client_secret", l: t("eta_client_secret"), type: "password", v: st.eta_client_secret },
-        { k: "eta_signer_url", l: t("eta_signer"), v: st.eta_signer_url, ph: "http://127.0.0.1:18088/sign", span: "spanall" },
+        ...(viaSigner ? [] : [{ k: "eta_env", l: t("eta_env"), type: "select", opts: [["preprod", L2("Pre-production (testing)", "بيئة ما قبل الإنتاج (اختبار)")], ["prod", L2("Production", "بيئة الإنتاج")]], v: st.eta_env },
+          { k: "eta_client_id", l: t("eta_client_id"), v: st.eta_client_id }, { k: "eta_client_secret", l: t("eta_client_secret"), type: "password", v: st.eta_client_secret },
+          { k: "eta_signer_url", l: t("eta_signer"), v: st.eta_signer_url, ph: "http://127.0.0.1:47321/v1/sign" }, { k: "eta_signer_key", l: L2("Signer pairing key", "مفتاح ربط البرنامج"), type: "password", v: st.eta_signer_key }]),
         { k: "eta_activity_code", l: t("eta_activity"), v: st.eta_activity_code, ph: "4330" }, { k: "eta_branch_id", l: t("eta_branch"), v: st.eta_branch_id },
         { k: "eta_default_item_code", l: t("eta_item_code"), v: st.eta_default_item_code, ph: "EG-123456789-1001" }, { k: "eta_default_unit", l: t("eta_unit"), v: st.eta_default_unit },
         { html: `<b>${t("eta_issuer")}</b>`, span: "spanall" }, { k: "eta_governate", l: t("governate"), v: st.eta_governate }, { k: "eta_region", l: t("region"), v: st.eta_region },
         { k: "eta_street", l: t("street"), v: st.eta_street }, { k: "eta_building", l: t("building"), v: st.eta_building }, { k: "eta_postal_code", l: t("postal"), v: st.eta_postal_code }])}
-      ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="etasave">${t("save")}</button><button class="btn" data-a="etatest">${t("eta_test")}</button></div>` : ""}
-      <p class="muted" style="font-size:.8em">${S.lang === "ar" ? "يُضبط رقم التسجيل الضريبي للشركة من الإعدادات ← الشركة." : "The company's tax registration number is set in Settings → Company."}</p></div></div>
-    <div class="card"><h2>${t("m_invoices")}</h2>${inv.length ? `<div class="tbl"><table><thead><tr><th></th><th>${t("invoice_no")}</th><th>${t("customer")}</th><th>${t("date")}</th><th class="num">${t("amount")}</th><th>${t("eta_status")}</th></tr></thead><tbody>
-      ${inv.map(x => { const draft = x.status !== "posted"; return `<tr class="${draft ? "void" : ""}"><td>${ed ? `<input type="checkbox" class="etachk" value="${x.id}" ${draft || /valid|submitted/i.test(x.eta_status || "") ? "disabled" : ""}>` : ""}</td><td><a href="#/invoice/${x.id}">${esc(x.number)}</a></td><td>${esc(x.customer)}</td><td>${fd(x.date)}</td><td class="num">${money(x.total)}</td>
-        <td>${draft ? `<span class="chip warn">${L2("Draft: post it first", "مسودة: يجب ترحيلها أولاً")}</span> <a class="btn sm" href="#/invoice/${x.id}">${L2("Open", "فتح")}</a>` : esc(x.eta_status || "—")}</td></tr>`; }).join("")}</tbody></table></div>
-      ${drafts ? `<p class="muted" style="margin-top:8px">${L2("The tax authority accepts posted invoices only. Open the draft and select “Save and post”; it can then be submitted or included in batch files.", "تقبل مصلحة الضرائب الفواتير المرحّلة فقط. افتح المسودة واختر «حفظ وترحيل»، ثم يمكن إرسالها أو إدراجها في ملفات الدفعة.")}</p>` : ""}
-      ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="etasel">${t("eta_submit")}</button></div>` : ""}` : `<div class="empty">${t("nothing")}</div>`}</div>`;
+      ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="etasave">${t("save")}</button>${viaSigner ? "" : `<button class="btn" data-a="etatest">${t("eta_test")}</button>`}</div>` : ""}
+      <p class="muted" style="font-size:.8em">${esc(L2("The company's tax registration number is set in Settings → Company.", "يُضبط رقم التسجيل الضريبي للشركة من الإعدادات ← الشركة."))}</p></div></div>`;
+  view.addEventListener("change", e => { if (e.target.name === "eta_connection" && ed) S.H.etasave(); }, { once: true });
   if (!ed) $$("#etaset input, #etaset select").forEach(e => { e.disabled = true; });
+  if (sc.key) S.H.sgtest();
 };
+// a received e-invoice: its lines (fetched once), then record it as a supplier bill, or reject it
+async function rcvDrawer(uuid, viaSigner) {
+  let r;
+  try { r = await api("GET", "/api/einvoice-received/" + encodeURIComponent(uuid));
+    if (!r.document && can("tax.einvoice", "add")) {
+      if (viaSigner) { const raw = await signerCall("GET", `/v1/eta/document/${encodeURIComponent(uuid)}/raw`); r = await api("POST", `/api/einvoice-received/${encodeURIComponent(uuid)}/raw`, { raw }); }
+    } } catch (e) { return fail(e); }
+  const doc = r.document || {}, lines = doc.invoiceLines || [], booked = !!r.entry_id, closed = /reject|cancel|invalid/i.test(r.status || "");
+  drawer(`${r.issuer_name} — ${r.internal_id}`, `<div class="row" style="gap:6px;margin-bottom:8px">${chipS("", ETA_TYPE()[r.doc_type] || r.doc_type)} ${etaChip(r.status)} ${booked ? chipS("ok", L2("Recorded in the books", "مسجلة في الدفاتر")) : ""}</div>
+    <div class="kpis">${kpiBox(L2("Net", "الصافي"), r.net)}${kpiBox(L2("VAT", "الضريبة"), r.vat)}${kpiBox(t("total"), r.total)}</div>
+    ${lines.length ? `<div class="tbl"><table><thead><tr><th>${t("description")}</th><th class="num">${t("qty")}</th><th class="num">${t("price")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>${lines.map(l => `<tr><td dir="auto">${esc(l.description || "")}<div class="lines" dir="ltr">${esc(l.itemCode || "")}</div></td><td class="num">${numf(l.quantity || 0)}</td><td class="num">${money(((l.unitValue || {}).amountEGP) || 0)}</td><td class="num">${money(l.netTotal || l.salesTotal || 0)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="muted">${esc(viaSigner ? L2("Lines not fetched yet.", "لم تُجلب البنود بعد.") : L2("The full document is fetched through the BeyondERP Signer.", "يُجلب المستند الكامل عبر برنامج التوقيع."))}</div>`}
+    <div class="row" style="gap:6px;margin-top:12px">${!booked && !closed && r.document && can("tax.einvoice", "add") ? `<button class="btn pri" data-a="rcvbook">${esc(L2("Record as a supplier bill", "تسجيل كفاتورة مورد"))}</button>` : ""}
+      ${!booked && !closed && can("tax.einvoice", "edit") && viaSigner ? `<button class="btn danger" data-a="rcvrej">${esc(L2("Reject", "رفض"))}</button>` : ""}
+      ${viaSigner ? `<button class="btn" data-a="rcvpdf">⬇ PDF</button>` : ""}</div>
+    ${r.reason ? `<p class="muted">${esc(L2("Reason", "السبب"))}: ${esc(r.reason)}</p>` : ""}`, null, { readOnly: true });
+  S.H.rcvpdf = async () => { try { await etaPdf(uuid, r.internal_id); } catch (e) { fail(e); } };
+  S.H.rcvrej = async () => { const why = await uiPrompt(L2("Reason for rejecting (sent to the tax authority)", "سبب الرفض (يُرسل إلى مصلحة الضرائب)")); if (!why) return;
+    try { await signerCall("PUT", `/v1/eta/document/${encodeURIComponent(uuid)}/state`, { status: "rejected", reason: why });
+      await api("POST", `/api/einvoice-received/${encodeURIComponent(uuid)}/record-reject`, { reason: why }); closeDrawer(); toast(L2("Rejected.", "تم الرفض.")); route(); } catch (e) { fail(e); } };
+  S.H.rcvbook = () => drawer(L2("Record as a supplier bill", "تسجيل كفاتورة مورد"), form([
+      { k: "bu_id", l: L2("Project (blank: an overhead expense)", "المشروع (فارغ: مصروف عام)"), type: "select", opts: [["", "—"], ...buOpts()], v: "" },
+      { k: "account", l: t("account"), type: "select", opts: [["", L2("Usual account", "الحساب المعتاد")], ...(S.boot.accounts || []).filter(a => ["COGS", "Expense"].includes(a.type)).map(a => [a.code, `${a.code} ${a.name}`])], v: "" },
+      { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: r.vat ? ((S.boot.tax_codes || []).find(x => x.kind === "vat" && x.rate > 0 && x.active) || {}).code || "" : "" },
+      { k: "description", l: t("description"), v: `${L2("E-invoice", "فاتورة إلكترونية")} ${r.internal_id} — ${r.issuer_name}`, span: "spanall" }]) +
+      `<p class="muted">${esc(L2(`Owed to ${r.issuer_name}: ${money(r.total)} (net ${money(r.net)} + VAT ${money(r.vat)}). Pay it later with a payment voucher.`, `مستحق لـ ${r.issuer_name}: ${money(r.total)} (صافي ${money(r.net)} + ضريبة ${money(r.vat)}). سدّده لاحقاً بسند صرف.`))}</p>`,
+    async v => { await api("POST", `/api/einvoice-received/${encodeURIComponent(uuid)}/book`, v); toast(L2("Recorded.", "تم التسجيل.")); route(); });
+}
 
 // --------------------------------------------------------------- settings
 // Image helpers (browser canvas): the server only stores and embeds the results.
@@ -9677,6 +9899,8 @@ PAGES.download = async view => {
     card(L2("Desktop application, online (recommended)", "تطبيق سطح المكتب، متصل (مستحسن)"), `<p>${L2("Opens this site in a dedicated window. Same sign-in and books; changes appear immediately on all devices. Requires an internet connection.", "يفتح هذا الموقع في نافذة مستقلة، بنفس تسجيل الدخول والدفاتر، وتظهر التغييرات فوراً على جميع الأجهزة. يتطلب اتصالاً بالإنترنت.")}</p>
       <p><b>Windows</b> — ${dl(f("windows"), L2("Download installer (.exe)", "تنزيل برنامج التثبيت (.exe)"))}</p>
       <p><b>Mac</b> — ${dl(f("mac"), L2("Download for Mac (.zip)", "تنزيل لنظام Mac (.zip)"))}</p>`) +
+    card(L2("BeyondERP Signer (e-invoices)", "برنامج التوقيع BeyondERP Signer (الفواتير الإلكترونية)"), `<p>${L2("For the computer the e-invoicing USB token is plugged into: signs invoices with the token and sends them to the tax authority, from the invoice itself. Keep its window open while signing, and paste its pairing key in E-invoicing → Settings.", "للجهاز المتصل به توكن الفاتورة الإلكترونية: يوقّع الفواتير بالتوكن ويرسلها إلى مصلحة الضرائب من داخل الفاتورة نفسها. اترك نافذته مفتوحة أثناء التوقيع، والصق مفتاح الربط في الفاتورة الإلكترونية ← الإعدادات.")}</p>
+      <p><b>Windows</b> — ${dl(f("signer-windows"), L2("Download the Signer (.exe)", "تنزيل برنامج التوقيع (.exe)"))}</p>`) +
     // the offline editions carry the whole app, so they are not public: the platform owner gets them from the private
     // GitHub release that every deploy refreshes (only people with access to the private repository can open it)
     (S.billing && S.billing.is_owner ? card(L2("Offline desktop application (owner only)", "تطبيق سطح المكتب دون اتصال (للمالك فقط)"), `<p>${L2("Offline editions contain the complete application and are available to the owner only. Each release publishes the Windows and Mac installers to your private GitHub release; sign in with the repository owner's account to download.", "تحتوي النسخ دون اتصال على التطبيق كاملاً وتتاح للمالك فقط. يُنشر كل إصدار برامج التثبيت لنظامي Windows وMac على الإصدار الخاص في GitHub؛ سجّل الدخول بحساب مالك المستودع للتنزيل.")}</p>

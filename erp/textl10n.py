@@ -81,7 +81,7 @@ _RX = [(re.compile(r"^" + p + r"$", re.S), ar) for p, ar in _P]
 VALUES = {
     "Care Package": "باقة رعاية", "Insurance Claim": "مطالبة تأمين", "Medical Invoice": "فاتورة طبية", "Opening balance": "رصيد افتتاحي", "Provider Fees": "أتعاب مقدمي الخدمة", "Revenue Recognition": "إثبات إيراد",
     "Direct Cost": "تكلفة مباشرة", "Operating Expense": "مصروف تشغيلي", "Payroll Accrual": "استحقاق أجور",
-    "Payment Voucher": "سند صرف", "Receipt Voucher": "سند قبض", "Sales Invoice": "فاتورة مبيعات",
+    "Payment Voucher": "سند صرف", "Receipt Voucher": "سند قبض", "Sales Invoice": "فاتورة مبيعات", "Credit Note": "إشعار دائن", "Debit Note": "إشعار مدين",
     "Capital Contribution": "مساهمة رأسمالية", "Capital Withdrawal": "تخفيض رأس المال", "Owner Drawing": "مسحوبات شريك",
     "Partner Loan": "قرض من شريك", "Partner Loan Repayment": "سداد قرض شريك", "Partner Loan Interest": "فوائد قرض شريك",
     "Share Transfer": "تنازل عن حصة", "Partner Admission": "دخول شريك", "Partner Exit": "خروج شريك",

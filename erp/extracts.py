@@ -31,7 +31,7 @@ def _collections(db, bu_id, upto=None, before=None):
         w.append("e.date<?")
         p.append(before)
     r = db.one(f"SELECT COALESCE(SUM(l.credit),0) AS c FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-               f"WHERE {' AND '.join(w)} AND e.kind<>'Sales Invoice'", p)
+               f"WHERE {' AND '.join(w)} AND e.kind NOT IN ('Sales Invoice','Credit Note','Debit Note')", p)
     return to_major(r["c"])
 
 

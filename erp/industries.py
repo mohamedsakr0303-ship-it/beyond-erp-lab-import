@@ -247,6 +247,26 @@ _MODELS = {
 }
 
 
+# e-invoice templates every business starts with (no activity code, branch or item code: those are the company's own,
+# registered with the tax authority, and are filled in on the template or the tax settings)
+_EINV_TEMPLATES = [
+    {"code": "INV", "name": "Standard invoice", "doc_type": "I", "notes": "Used for every customer without a template of their own."},
+    {"code": "CN-RET", "name": "Credit note: returns", "doc_type": "C", "reason": "Returned goods or cancelled work"},
+    {"code": "CN-DISC", "name": "Credit note: discount after invoicing", "doc_type": "C", "reason": "Discount agreed after the invoice"},
+    {"code": "DN-ADJ", "name": "Debit note: additional charges", "doc_type": "D", "reason": "Additional quantities or charges after the invoice"},
+]
+
+
+def _add_einv_templates(db):
+    from . import einvoice
+    added = []
+    for t in _EINV_TEMPLATES:
+        if not db.one("SELECT 1 FROM einv_templates WHERE code=?", (t["code"],)):
+            einvoice.save_template(db, t)
+            added.append(t["code"])
+    return added
+
+
 def _add_models(db, key, own_codes):
     """The business's own entry models, when their fixed accounts are this template's (or system ones): never one that
     would post to an account of the same number that means something else in these books."""
@@ -307,7 +327,8 @@ def apply(db, key, hide_modules=True):
                 c["active"] = t["components"][c["code"]]
         payroll.save_settings(db, {"components": s["components"]})
         models = _add_models(db, key, added)
-    return {"type": key, "accounts_added": added, "models_added": models, "hidden": t["hide"] if hide_modules else None}
+        einv = _add_einv_templates(db)
+    return {"type": key, "accounts_added": added, "models_added": models, "einv_templates_added": einv, "hidden": t["hide"] if hide_modules else None}
 
 
 # ---- the same guide in Arabic (catalogue() sends both; the screen shows the reader's language)

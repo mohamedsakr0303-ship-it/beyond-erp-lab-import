@@ -50,7 +50,9 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt -r signer/requirements.txt
+      # a software token stands in for the USB token in the Signer's tests
+      - run: sudo apt-get install -y softhsm2 >/dev/null
       - run: python -m unittest discover tests
 
   # Business journeys through the screens in a real browser (tests/e2e/run.js): purchasing, sales, stock, budget, drafts,
@@ -176,6 +178,14 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
           & $iscc "/DAppVersion=$v" /DOnline packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      # BeyondERP Signer: signs e-invoices with the company's USB token on the computer it is plugged into
+      - name: BeyondERP Signer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pip install -r signer/requirements.txt
+          pyinstaller --onefile --console --name BeyondERP-Signer --icon packaging/icon.ico --distpath dist-signer --workpath build-signer signer/beyond_signer.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Mac apps
         if: runner.os == 'macOS'
         run: |
@@ -189,7 +199,7 @@ jobs:
         run: |
           gh release view desktop-app >/dev/null 2>&1 || gh release create desktop-app --prerelease \
             --title "BeyondERP desktop app (latest build)" --notes "The connected desktop app: opens the BeyondERP website in its own window. Built from main; also offered on the website."
-          files=$(ls dist-installer/BeyondERP-Setup.exe BeyondERP-mac.zip 2>/dev/null || true)
+          files=$(ls dist-installer/BeyondERP-Setup.exe BeyondERP-mac.zip dist-signer/BeyondERP-Signer.exe 2>/dev/null || true)
           if [ -n "$files" ]; then gh release upload desktop-app $files --clobber; fi
 
   web:

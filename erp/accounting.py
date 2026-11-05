@@ -28,7 +28,7 @@ PAYROLL_TYPES = {  # cost type -> (account role, business unit required?)
 }
 STOCK_MOVE_TYPES = ["Receipt", "Issue", "Transfer", "Adjustment"]
 ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment Voucher", "Supplier Discount",
-               "Receipt Voucher", "Sales Invoice", "Capital Contribution", "Capital Withdrawal", "Owner Drawing", "Partner Loan", "Partner Loan Repayment",
+               "Receipt Voucher", "Sales Invoice", "Credit Note", "Debit Note", "Capital Contribution", "Capital Withdrawal", "Owner Drawing", "Partner Loan", "Partner Loan Repayment",
                "Partner Loan Interest", "Share Transfer", "Partner Admission", "Partner Exit", "Profit Distribution",
                "Reserve Transfer", "Cash Transfer", "Asset Purchase", "Depreciation", "Asset Disposal", "Journal Voucher",
                "Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Reversing Entry",
@@ -1172,6 +1172,51 @@ def next_in_series(db, prefix):
     return f"{prefix}{n + 1:03d}"
 
 
+DOC_TYPES = {"I": "Invoice", "C": "Credit Note", "D": "Debit Note"}
+
+
+def _note_fields(db, d, extract_id=None):
+    """(document type, the invoice a credit / debit note corrects, its reason). A note names a posted invoice of the same
+    customer and says why; a credit note can take back no more than that invoice still holds."""
+    cur = db.one("SELECT doc_type, ref_id, eta_reason FROM extracts WHERE id=?", (extract_id,)) if extract_id else None
+    dt = str(d.get("doc_type") or (cur or {}).get("doc_type") or "I").upper()[:1]
+    if dt not in DOC_TYPES:
+        raise ValidationError("The document is an invoice, a credit note or a debit note")
+    if dt == "I":
+        return "I", None, ""
+    ref = d.get("ref_id") if "ref_id" in d or "ref_number" not in d else None
+    if not ref and d.get("ref_number"):
+        r = db.one("SELECT id FROM extracts WHERE number=?", (text(d["ref_number"]),))
+        if not r:
+            raise ValidationError(f"Invoice {d['ref_number']} not found")
+        ref = r["id"]
+    ref = ref or (cur or {}).get("ref_id")
+    if not ref:
+        raise ValidationError(f"A {DOC_TYPES[dt].lower()} names the invoice it corrects")
+    orig = db.one("SELECT id, number, status, doc_type, customer FROM extracts WHERE id=?", (int(ref),))
+    if not orig or orig["doc_type"] not in ("I", None, ""):
+        raise ValidationError("Choose the original invoice (not another note)")
+    if orig["status"] != "posted":
+        raise ValidationError(f"Invoice {orig['number']} is still a draft. Post it before correcting it")
+    if text(d.get("customer")) and orig["customer"] and text(d.get("customer")) != orig["customer"]:
+        raise ValidationError(f"A note goes to the invoice's customer ({orig['customer']})")
+    reason = text(d.get("eta_reason") if "eta_reason" in d else (cur or {}).get("eta_reason"), maxlen=500)
+    if not reason:
+        raise ValidationError("Give the reason for the note")
+    return dt, orig["id"], reason
+
+
+def credit_left(db, invoice_id, except_id=None):
+    """What an invoice still holds for credit notes (its total with VAT, less the credit notes already issued)."""
+    inv = get_extract(db, invoice_id)
+    if not inv:
+        return 0.0
+    taken = 0.0
+    for c in db.q("SELECT id FROM extracts WHERE ref_id=? AND doc_type='C' AND status='posted' AND id<>?", (invoice_id, except_id or 0)):
+        taken += get_extract(db, c["id"])["gross"]
+    return round(inv["gross"] - taken, 2)
+
+
 def save_extract(db, d, extract_id=None):
     bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"), required=True)
     number = text(d.get("number"), "invoice / extract number", required=True)
@@ -1187,6 +1232,7 @@ def save_extract(db, d, extract_id=None):
         if not seq_no and not extract_id:   # extract no. on this site: the next one
             r = db.one("SELECT COALESCE(MAX(seq_no),0) AS n, COUNT(*) AS c FROM extracts WHERE bu_id=?", (bu,))
             seq_no = max(r["n"] or 0, r["c"] or 0) + 1
+        doc_type, ref_id, reason = _note_fields(db, d, extract_id)
         vals = (bu, boq_id, number, clean_date(d.get("date")), text(d.get("customer")), vat_code, wht_code,
                 text(d.get("project")), text(d.get("work")), seq_no, prev, to_minor(num(d.get("deductions") or 0, "deductions")),
                 text(d.get("notes"), maxlen=2000), 1 if d.get("final") in (1, True, "1", "true", "yes", "Yes") else 0,
@@ -1206,6 +1252,9 @@ def save_extract(db, d, extract_id=None):
                 raise ValidationError(f"Invoice number {number} already exists")
             extract_id = db.conn.execute("INSERT INTO extracts(bu_id,boq_id,number,date,customer,vat_code,wht_code,project,work,"
                                          "seq_no,prev_paid,deductions,notes,final,fees) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals).lastrowid
+        db.conn.execute("UPDATE extracts SET doc_type=?, ref_id=?, eta_reason=?, einv_template=? WHERE id=?",
+                        (doc_type, ref_id, reason, text(d.get("einv_template"), maxlen=40) if "einv_template" in d else
+                         ((db.one("SELECT einv_template FROM extracts WHERE id=?", (extract_id,)) or {}).get("einv_template") or ""), extract_id))
         for ln in lines:   # a line may earn into its own revenue account (rent, services, compensation...)
             if ln["account"] and ln["account"] != db.acct("service_deferred"):   # billed in advance, earned month by month
                 account_code(db, ln["account"], types=("Revenue",), field="revenue account")
@@ -1215,6 +1264,34 @@ def save_extract(db, d, extract_id=None):
                               ln["unit"], ln["qty"], ln["price"], ln["account"], ln["pct"], ln["style"]) for ln in lines])
         _wip_after(db, "Sales Invoice", bu, old_bu)
     return extract_id
+
+
+def _post_credit_note(db, x, date, user, ar, rev):
+    """A credit note takes back part or all of an invoice: the mirror of its entry (Dr revenue and output VAT, Cr the
+    customer and the withholding they would have deducted), on the same project and customer."""
+    left = credit_left(db, x["ref_id"], x["id"])
+    if x["gross"] > left + 0.005:
+        raise ValidationError(f"The credit note ({x['gross']:,.2f}) is more than the invoice still holds ({left:,.2f})")
+    orig = db.one("SELECT number FROM extracts WHERE id=?", (x["ref_id"],))
+    by_acc = {}
+    for ln in x["lines"]:
+        a = ln.get("account") or rev
+        by_acc[a] = by_acc.get(a, 0) + to_minor(ln["amount"])
+    by_acc[rev] = by_acc.get(rev, 0) + to_minor(x["total"]) - sum(by_acc.values())
+    lines = [{"account": a, "debit": to_major(v)} if v > 0 else {"account": a, "credit": to_major(-v)} for a, v in by_acc.items() if v]
+    if x["vat"]:
+        lines.append({"account": db.acct("vat_output"), "debit": x["vat"]})
+    lines.append({"account": ar, "credit": x["receivable"]})
+    if x["wht"]:
+        lines.append({"account": db.acct("wht_receivable"), "credit": x["wht"]})
+    with db.tx():
+        eid = _insert_entry(db, date=date or x["date"], kind="Credit Note",
+                            memo=f"Credit note — {x['number']} (on {orig['number']}): {x.get('eta_reason') or ''}",
+                            bu_id=x["bu_id"], party=x["customer"] or x["bu_customer"] or x["bu_name"], ref=x["number"], user=user,
+                            lines=lines, meta={"extract_id": x["id"], "credit_of": x["ref_id"], "vat_code": x["vat_code"], "wht_code": x["wht_code"]})
+        db.conn.execute("UPDATE extracts SET status='posted', entry_id=? WHERE id=?", (eid, x["id"]))
+        _wip_after(db, "Sales Invoice", x["bu_id"])
+    return eid
 
 
 def get_extract(db, xid):
@@ -1289,6 +1366,8 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
         raise ValidationError("The progress bill total must be greater than zero")
     ar = account_code(db, ar_account or db.acct("ar"), types=("Asset",))
     rev = account_code(db, revenue_account or db.acct("revenue"), types=("Revenue",))
+    if (x.get("doc_type") or "I") == "C":
+        return _post_credit_note(db, x, date, user, ar, rev)
     lines = [{"account": ar, "debit": x["receivable"]}]
     if x["wht"]:
         lines.append({"account": db.acct("wht_receivable"), "debit": x["wht"]})
@@ -1320,7 +1399,11 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
     if x["vat"]:
         lines.append({"account": db.acct("vat_output"), "credit": x["vat"]})
     with db.tx():
-        eid = _insert_entry(db, date=date or x["date"], kind="Sales Invoice", memo=f"Invoice — {x['number']}",
+        debit_note = (x.get("doc_type") or "I") == "D"
+        if debit_note:
+            orig = db.one("SELECT number FROM extracts WHERE id=?", (x["ref_id"],)) or {}
+        eid = _insert_entry(db, date=date or x["date"], kind="Debit Note" if debit_note else "Sales Invoice",
+                            memo=f"Debit note — {x['number']} (on {orig.get('number', '')}): {x.get('eta_reason') or ''}" if debit_note else f"Invoice — {x['number']}",
                             bu_id=x["bu_id"], party=x["customer"] or x["bu_customer"] or x["bu_name"], ref=x["number"],
                             user=user, lines=lines,
                             meta={"extract_id": xid, "vat_code": x["vat_code"], "wht_code": x["wht_code"],
@@ -2357,10 +2440,10 @@ def tax_summary(db, date_from=None, date_to=None):
         if not m.get("vat_code"):
             continue
         e = get_entry(db, r["id"])
-        side = "sales" if r["kind"] in ("Sales Invoice", "Receipt Voucher") else "purchases"
+        side = "sales" if r["kind"] in ("Sales Invoice", "Receipt Voucher", "Credit Note", "Debit Note") else "purchases"
         vat_line = sum(ln["credit"] - ln["debit"] if side == "sales" else ln["debit"] - ln["credit"]
                        for ln in e["lines"] if ln["account"] == roles["vat_output" if side == "sales" else "vat_input"])
-        net = sum(ln["credit"] for ln in e["lines"] if side == "sales" and db.one(
+        net = sum(ln["credit"] - ln["debit"] for ln in e["lines"] if side == "sales" and db.one(   # a credit note: negative
             "SELECT type FROM accounts WHERE code=?", (ln["account"],))["type"] == "Revenue") if side == "sales" else \
             sum(ln["debit"] for ln in e["lines"] if ln["debit"] and ln["account"] != roles["vat_input"])
         k = (side, m["vat_code"])

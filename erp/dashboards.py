@@ -226,7 +226,7 @@ class Ctx:
 def _sales_total(db, date_from, date_to):
     """Sales invoiced in a period: revenue credited by sales invoices (projects, shop orders, rentals, services)."""
     r = db.one("""SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                  JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND e.kind='Sales Invoice' AND a.type='Revenue'
+                  JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND e.kind IN ('Sales Invoice','Credit Note','Debit Note') AND a.type='Revenue'
                   AND e.date>=? AND e.date<=?""", (date_from, date_to))
     return to_major(r["n"])
 

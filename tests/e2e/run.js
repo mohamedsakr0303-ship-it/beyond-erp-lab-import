@@ -199,6 +199,33 @@ async function sales(page) {
   expect((await page.innerText(".main")).includes("they owe us"), "statement does not say the customer owes us");
 }
 
+// A credit note started from a posted invoice → the customer owes less; the e-invoicing screens list it and its templates
+async function creditNote(page) {
+  const inv = db("sql", "SELECT id FROM extracts WHERE number='INV-D001'")[0].id;
+  const before = db("party_balance", "Emily Clark");
+  await go(page, "#/invoice/" + inv);
+  await page.click(`a[href="#/invoice/new?credit_of=${inv}"]`);
+  await page.addStyleTag({ content: "#nnudge{display:none!important}" });   // the device-setup offer comes on a timer
+  await page.waitForSelector("[name=ref_number]");
+  expect(await page.inputValue("[name=ref_number]") === "INV-D001", "credit note does not name its invoice");
+  await page.fill("[name=number]", "CN-E2E-1");
+  await page.fill("[name=eta_reason]", "E2E returned tiles");
+  const n = (await page.$$("tr[data-i] .l-qty")).length;   // credit 1,000 of the first line only
+  for (let i = 1; i < n; i++) await page.fill(`tr[data-i='${i}'] .l-qty`, "0");
+  await page.fill("tr[data-i='0'] .l-qty", "1");
+  await page.fill("tr[data-i='0'] .l-price", "1000");
+  await page.click("[data-a=xpost]");
+  await page.waitForFunction(() => /^#\/invoice\/\d+$/.test(location.hash), null, { timeout: 10000 });
+  const cn = db("sql", "SELECT x.doc_type, x.ref_id, e.kind FROM extracts x JOIN journal_entries e ON e.id=x.entry_id WHERE x.number='CN-E2E-1'")[0];
+  expect(cn && cn.doc_type === "C" && cn.ref_id === inv && cn.kind === "Credit Note", "credit note not posted as one: " + JSON.stringify(cn));
+  const after = db("party_balance", "Emily Clark");
+  expect(after < before - 999, `the customer owes ${after} after a credit note, was ${before}`);
+  await go(page, "#/einvoice");
+  await page.locator(".main td:visible", { hasText: "CN-E2E-1" }).first().waitFor({ timeout: 10000 });
+  await go(page, "#/einvoice?tab=templates");
+  await page.locator(".main td:visible", { hasText: "CN-RET" }).first().waitFor({ timeout: 10000 });
+}
+
 // Goods received into the main store → transfer to the site → issue to a project → stock on hand and value
 async function stock(page) {
   const move = async (type, fields) => {
@@ -441,6 +468,7 @@ async function phoneTurn(page) {
     browser = await chromium.launch();
     await journey("Purchasing: request → approval → quotes → order → deliveries → payment", browser, purchasing);
     await journey("Sales: invoice → receipt → balance owed", browser, sales);
+    await journey("Credit note: from a posted invoice → customer owes less → listed for e-invoicing", browser, creditNote);
     await journey("Stock: receipt → transfer → issue → levels and value", browser, stock);
     await journey("Budget: project budget → actual cost → budget vs actual", browser, budget);
     await journey("Drafts: a half-filled form left for another screen can be continued and saved", browser, draft);

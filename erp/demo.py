@@ -174,7 +174,18 @@ def sheets(industry=None):
          "vat_code": "VAT14", "wht_code": "WHT1-C"},
         {"number": "INV-D004", "date": d(3, 28), "bu_code": "PRJ-D01", "status": "Posted", "customer": "James Carter"},
         {"number": "INV-D003", "date": d(5, 1), "bu_code": "PRJ-D02", "boq_title": "BOQ — Apartment 14", "status": "Draft",
-         "customer": "Emily Clark"}]
+         "customer": "Emily Clark"},
+        # a credit note on INV-D002 (its VAT and the client's withholding are reversed with it)
+        {"number": "CN-D001", "date": d(4, 25), "bu_code": "PRJ-D03", "status": "Posted", "customer": "Delta Tech Solutions",
+         "vat_code": "VAT14", "wht_code": "WHT1-C", "doc_type": "Credit Note", "original": "INV-D002",
+         "reason": "Design fee reduced after the design review", "einv_template": "CN-DISC"}]
+    S["E-Invoice Templates"] = [
+        {"code": "INV", "name": "Standard invoice", "doc_type": "Invoice", "notes": "Used for every customer without a template of their own.", "active": "Yes"},
+        {"code": "DELTA", "name": "Delta Tech: invoices with their PO", "doc_type": "Invoice", "customers": "Delta Tech Solutions",
+         "po_ref": "PO-DT-2026-01", "po_desc": "Fit-out of the Delta Tech office", "active": "Yes"},
+        {"code": "CN-DISC", "name": "Credit note: discount after invoicing", "doc_type": "Credit Note", "reason": "Discount agreed after the invoice", "active": "Yes"},
+        {"code": "CN-RET", "name": "Credit note: returns", "doc_type": "Credit Note", "reason": "Returned goods or cancelled work", "active": "Yes"},
+        {"code": "DN-ADJ", "name": "Debit note: additional charges", "doc_type": "Debit Note", "reason": "Additional quantities or charges after the invoice", "active": "Yes"}]
     S["Invoice Lines"] = [
         {"number": "INV-D001", "category": "Demolition", "item_no": "1.1", "description": "Wall demolition and debris removal", "unit": "m2", "qty": 120, "price": 150},
         {"number": "INV-D001", "category": "Masonry", "item_no": "2.1", "description": "Red brick walls 12 cm", "unit": "m2", "qty": 85, "price": 650},
@@ -184,6 +195,7 @@ def sheets(industry=None):
         {"number": "INV-D002", "description": "Fit-out works — stage 1 (partitions & ceilings)", "unit": "LS", "qty": 1, "price": 780000},
         {"number": "INV-D004", "description": "Cost-plus billing: works to date + 25% fee", "unit": "LS", "qty": 1, "price": 1050000},
         {"number": "INV-D002", "description": "Design fee", "unit": "LS", "qty": 1, "price": 60000},
+        {"number": "CN-D001", "description": "Design fee: discount agreed after the review", "unit": "LS", "qty": 1, "price": 10000},
         {"number": "INV-D003", "category": "Plastering", "item_no": "3.1", "description": "Internal plaster", "unit": "m2", "qty": 150, "price": 210},
         {"number": "INV-D003", "category": "Flooring", "item_no": "4.1", "description": "Porcelain 60x60 supply & fix", "unit": "m2", "qty": 80, "price": 975}]
     S["Direct Costs"] = [
@@ -796,12 +808,12 @@ def _trim(S, key, d, eom):
 # general chat room…) and the system's own records; every other table holding a row means the books are in use
 SETUP_TABLES = {"settings", "accounts", "warehouses", "tax_codes", "assets", "offer_types", "chat_rooms", "chat_members", "users",
                 "sessions", "audit_log", "user_profiles", "user_groups", "cloud_local", "ai_threads", "ai_usage", "support_tickets",
-                "rent_models"}
+                "rent_models", "einv_templates"}
 
 
 # ---- languages: one universal data set; another language only translates it (demo_ar.py)
 _NOT_DATA_TABLES = {"users", "sessions", "audit_log", "accounts", "tax_codes", "user_groups", "settings", "account_roles"}
-_NOT_DATA_COLS = {"code", "kind", "status", "method", "basis", "cost_type", "gender", "payer", "place", "priority",
+_NOT_DATA_COLS = {"doc_type", "original", "einv_template", "code", "kind", "status", "method", "basis", "cost_type", "gender", "payer", "place", "priority",
                   "direction", "interest_type", "schedule_type", "line_kind", "created_by", "updated_by", "username", "charge_type",
                   "sku", "serial", "email", "phone", "url", "data", "mime", "uuid", "account", "lang"}
 _COMPANY_KEYS = ("company_name", "company_tagline", "company_legal_name", "company_address")

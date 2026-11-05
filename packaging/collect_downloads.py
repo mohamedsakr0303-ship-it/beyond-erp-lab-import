@@ -37,7 +37,8 @@ live_files = {f["file"]: f for f in live.get("files", [])}
 reused = False
 # Only the connected desktop app (a small launcher that opens the website) is public. The offline editions carry the whole
 # app, so they are never put on the website (nor built by Actions while the repository is public).
-wanted = [("windows", "BeyondERP-Setup.exe"), ("mac", "BeyondERP-mac.zip")]
+wanted = [("windows", "BeyondERP-Setup.exe"), ("mac", "BeyondERP-mac.zip"),
+          ("signer-windows", "BeyondERP-Signer.exe")]      # the e-invoice signer for the computer with the USB token
 files = []
 for kind, name in wanted:
     found = next(iter(sorted(src.rglob(name))), None) or (ROOT / name if (ROOT / name).exists() else None)
