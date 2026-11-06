@@ -1169,7 +1169,10 @@ function openPalette() {
     shownItems = [...items, ...(words.length ? recs : [])].filter(i => words.every(w => norm(i.label + " " + i.sub).includes(w))).slice(0, 40); sel = Math.min(sel, Math.max(0, shownItems.length - 1));
     list.innerHTML = shownItems.map((i, n) => `<button class="pal-it ${n === sel ? "on" : ""}" data-n="${n}">${svg(i.ic)}<span><b>${esc(i.label)}</b><small>${esc(i.sub)}</small></span></button>`).join("") || `<div class="empty">${esc(t("nothing"))}</div>`; };
   const go = n => { const i = shownItems[n]; if (!i) return; close(); if (i.doc) newItem(i.doc); else location.hash = i.href; };
-  const close = () => box.remove();
+  // closes when the screen changes underneath it (back button, a notification's link) and on Esc wherever the focus is
+  const onKey = e => { if (e.key === "Escape") close(); };
+  const close = () => { box.remove(); window.removeEventListener("hashchange", close); document.removeEventListener("keydown", onKey); };
+  window.addEventListener("hashchange", close); document.addEventListener("keydown", onKey);
   box.addEventListener("click", e => { const b = e.target.closest(".pal-it"); if (b) go(+b.dataset.n); else if (!e.target.closest(".pal")) close(); });
   inp.addEventListener("input", () => { sel = 0; draw(); });
   inp.addEventListener("keydown", e => { if (e.key === "ArrowDown") { sel = Math.min(sel + 1, shownItems.length - 1); draw(); e.preventDefault(); }
