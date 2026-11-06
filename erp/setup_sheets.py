@@ -375,8 +375,15 @@ def _specs(C):
 # Recurring entries and subscriptions count every period started by the report end date (Settings → report_to).
 # {col} = this row's cell, {row} = this row's number, [[Sheet.col]] = that column of another sheet (data rows).
 def _standalone(sheets, C):
-    from .interchange import ROLE, TAXRATE
+    from .interchange import ROLE, TAXRATE, STOCK_METHOD, WH_ACCT
     by = {s["name"]: s for s in sheets}
+
+    def _so_fifo(x):
+        """C(x) over the Stock Moves batches into this sale's warehouse dated up to the sale (see stockcost.py)."""
+        d = f"((({x})-[[Stock Moves.x_icb]])+ABS(({x})-[[Stock Moves.x_icb]]))/2"
+        take = f"([[Stock Moves.x_iq]]+{d}-ABS([[Stock Moves.x_iq]]-{d}))/2"
+        return (f"SUMPRODUCT(([[Stock Moves.item]]={{x_stk}})*([[Stock Moves.x_iw]]={{x_swh}})*([[Stock Moves.date]]<={{date}})"
+                f"*{take}*[[Stock Moves.x_iu]])")
 
     def calc(key, label, f, width=10):
         return C(key, label, label, kind="calc", width=width, calc=f)
@@ -541,13 +548,29 @@ def _standalone(sheets, C):
         # cost of sales when the revenue is booked: stock items at their average cost, units / goods at the product's cost
         calc("x_stk", "stock item", '=IF({product}="","",IFERROR(INDEX([[Products.stock_item]],MATCH({product},[[Products.code]],0))&"",""))'),
         calc("x_pinv", "inventory account", '=IF({product}="","",IFERROR(INDEX([[Products.inventory_account]],MATCH({product},[[Products.code]],0))&"",""))'),
-        calc("x_cu", "unit cost", '=IF({x_stk}<>"",IFERROR(SUMIFS([[Stock Moves.x_rval]],[[Stock Moves.item]],{x_stk},[[Stock Moves.date]],"<="&{date})'
-                                  '/SUMIFS([[Stock Moves.x_rqty]],[[Stock Moves.item]],{x_stk},[[Stock Moves.date]],"<="&{date}),0),'
-                                  'IF({x_pinv}<>"",N(IFERROR(INDEX([[Products.cost]],MATCH({product},[[Products.code]],0)),0)),0))'),
-        calc("x_cogs", "cost of sales", f'=IF({{code}}="",0,ROUND(N(IF({{qty}}="",1,{{qty}}))*{{x_cu}},2)'
-                                        f'*IFERROR(INDEX([[{sc}.x_on]],MATCH({{code}},[[{sc}.code]],0))*INDEX([[{sc}.x_sale]],MATCH({{code}},[[{sc}.code]],0)),0))'),
+        # stock items sold: taken out of their warehouse (the product's, else the first) after that day's Stock Moves, in
+        # date order, costed FIFO (or by moving average) from the Stock Moves batches — as the app does on import
+        calc("x_book", "cost booked now", f'=IFERROR(INDEX([[{sc}.x_on]],MATCH({{code}},[[{sc}.code]],0))*INDEX([[{sc}.x_sale]],MATCH({{code}},[[{sc}.code]],0)),0)'),
+        calc("x_swh", "sold from warehouse", '=IF({x_stk}="","",IF(IFERROR(INDEX([[Products.warehouse]],MATCH({product},[[Products.code]],0))&"","")<>"",'
+                                             'INDEX([[Products.warehouse]],MATCH({product},[[Products.code]],0))&"",Warehouses!$A$5&""))'),
+        calc("x_sq", "stock qty sold", '=IF(OR({code}="",{x_stk}=""),0,N(IF({qty}="",1,{qty}))*{x_book})'),
+        C("x_socb", "stock sold before (sales)", "مبيعات سابقة", kind="calc", width=8,
+          calc0=f'=SUMIFS([[{sc}.x_sq]],[[{sc}.x_stk]],{{x_stk}},[[{sc}.x_swh]],{{x_swh}},[[{sc}.date]],"<"&{{date}})',
+          calc=f'=SUMIFS([[{sc}.x_sq]],[[{sc}.x_stk]],{{x_stk}},[[{sc}.x_swh]],{{x_swh}},[[{sc}.date]],"<"&{{date}})'
+               '+SUMIFS([[^x_sq]],[[^x_stk]],{x_stk},[[^x_swh]],{x_swh},[[^date]],{date})'),
+        calc("x_sa", "units out before", '=IF({x_sq}=0,0,SUMIFS([[Stock Moves.x_oq]],[[Stock Moves.item]],{x_stk},[[Stock Moves.x_ow]],{x_swh},'
+                                        '[[Stock Moves.date]],"<="&{date})+{x_socb})'),
+        calc("x_soh", "on hand before", '=IF({x_sq}=0,0,SUMIFS([[Stock Moves.x_iq]],[[Stock Moves.item]],{x_stk},[[Stock Moves.x_iw]],{x_swh},'
+                                       '[[Stock Moves.date]],"<="&{date})-{x_sa})'),
+        calc("x_short", "more than on hand", '=IF({x_sq}>{x_soh}+0.000001,1,0)'),
+        calc("x_cu", "unit cost", '=IF({x_pinv}<>"",N(IFERROR(INDEX([[Products.cost]],MATCH({product},[[Products.code]],0)),0)),0)'),
+        calc("x_cogs", "cost of sales", '=IF({code}="",0,IF({x_stk}<>"",IF({x_sq}=0,0,IF(' + STOCK_METHOD() + '="average",'
+                                        'ROUND({x_sq}*IFERROR(LOOKUP(2,1/(([[Stock Moves.item]]={x_stk})*([[Stock Moves.x_iw]]={x_swh})*([[Stock Moves.date]]<={date})),[[Stock Moves.x_avg]]),0),2),'
+                                        'ROUND(' + _so_fifo("{x_sa}+{x_sq}") + '-' + _so_fifo("{x_sa}") + ',2))),'
+                                        'ROUND(N(IF({qty}="",1,{qty}))*{x_cu},2)*{x_book}))'),
         role("x_cos", "cost_of_sales"),
-        calc("x_cinv", "stock / units account", f'=IF({{x_stk}}<>"",{ROLE("inventory")},IF({{x_pinv}}<>"",{{x_pinv}},{ROLE("goods_inventory")}))')]
+        calc("x_cinv", "stock / units account", f'=IF({{x_stk}}<>"",IF({WH_ACCT("{x_swh}")}="",{ROLE("inventory")},{WH_ACCT("{x_swh}")}),'
+                                                 f'IF({{x_pinv}}<>"",{{x_pinv}},{ROLE("goods_inventory")}))')]
     by[sc]["legs"] = [("x_ar", "x_arac", "D"), ("x_rev", "x_sales", "C"), ("x_vatp", "x_vo", "C"), ("x_markup", "x_arac", "D"),
                       ("x_markup", "x_idef", "C"), ("x_col", "x_money", "D"), ("x_col", "x_colacct", "C"), ("x_earn", "x_idef", "D"),
                       ("x_earn", "x_iinc", "C"), ("x_cogs", "x_cos", "D"), ("x_cogs", "x_cinv", "C")]

@@ -142,9 +142,9 @@ def sheets(industry=None):
         {"code": "U-S03", "inventory_account": "1210", "name": "Shop S-03", "kind": "unit", "category": "Shops", "unit": "unit", "price": 1900000, "cost": 1100000,
          "bu_code": "SALES-01", "specs": "Area: 60 m²; Frontage: 6 m", "status": "hidden"},
         {"code": "G-TILE", "name": "Ceramic tiles 60x60 (retail)", "kind": "item", "category": "Materials", "unit": "m2", "price": 420,
-         "stock_item": "Ceramic tiles 60x60", "vat_code": "VAT14", "bu_code": "SALES-01"},
+         "stock_item": "Ceramic tiles 60x60", "vat_code": "VAT14", "bu_code": "SALES-01", "warehouse": "Main Store"},
         {"code": "G-SAN", "name": "Bathroom set (retail)", "kind": "item", "category": "Sanitary ware", "unit": "set", "price": 9500,
-         "stock_item": "Bathroom set (basin + WC)", "vat_code": "VAT14"},
+         "stock_item": "Bathroom set (basin + WC)", "vat_code": "VAT14", "warehouse": "Main Store"},
         {"code": "S-DES", "name": "Interior design consultation", "kind": "service", "category": "Services", "unit": "visit",
          "price": 3500, "vat_code": "VAT14"}]
     S["Price List"] = [

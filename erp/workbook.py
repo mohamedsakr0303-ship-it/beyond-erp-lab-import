@@ -958,6 +958,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     jv = colmap["Journal Vouchers"]
     ov = colmap["Business Units"]["overhead_pct"]
     sm = colmap["Stock Moves"]
+    scx = colmap["Sales Contracts"]["x_short"]
     checks = [
         ("Trial balance: closing debits = closing credits", f"='Trial Balance'!I{tr_tb(tb_last)}",
          f"='Trial Balance'!J{tr_tb(tb_last)}"),
@@ -974,8 +975,9 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
          f"=SUM('Business Units'!{ov}{FIRST_DATA_ROW}:{ov}3000)", "=MIN(1,B{r})"),
         # FIFO is costed in row order: by date, and on a day what comes in from outside (receipts, count gains) first
         ("Stock Moves rows in date order (receipts and count gains first on a day)", "=" + _sm_order(colmap["Stock Moves"]), "=0"),
-        ("No warehouse takes out more than it holds (Stock Moves)",
-         f"=SUMPRODUCT(('Stock Moves'!{sm['x_oq']}{FIRST_DATA_ROW}:{sm['x_oq']}20000-'Stock Moves'!{sm['x_ohq']}{FIRST_DATA_ROW}:{sm['x_ohq']}20000>0.000001)*1)", "=0"),
+        ("No warehouse takes out more than it holds (Stock Moves, Sales Contracts)",
+         f"=SUMPRODUCT(('Stock Moves'!{sm['x_oq']}{FIRST_DATA_ROW}:{sm['x_oq']}20000-'Stock Moves'!{sm['x_ohq']}{FIRST_DATA_ROW}:{sm['x_ohq']}20000>0.000001)*1)"
+         f"+SUM('Sales Contracts'!{scx}{FIRST_DATA_ROW}:{scx}20000)", "=0"),
     ]
     for i, (lbl, a, b) in enumerate(checks):
         r = 4 + i

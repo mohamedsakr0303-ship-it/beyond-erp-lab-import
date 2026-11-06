@@ -287,6 +287,9 @@ SHEETS = [
               C("status", "Status", "الحالة", width=10, choices=["available", "reserved", "sold", "delivered", "hidden"]),
               C("bu_code", "Project / Business Unit", "المشروع", kind="bu"),
               C("stock_item", "Stock Item (sold from stock)", "صنف المخزون", width=18),
+              C("warehouse", "Sold From Warehouse", "يُباع من مخزن", width=16,
+                note="stock items: the warehouse a sale takes them from. Blank: the app uses the first warehouse in the list that "
+                     "holds enough, the Excel workbook the first warehouse — name it so both cost the sale the same way"),
               C("inventory_account", "Held in Account (cost of sales from)", "الحساب المحتفظ به", kind="acct",
                 note="e.g. 1210 Goods & Units for Sale — when sold, its cost moves to cost of sales"),
               C("specs", "Specifications", "المواصفات", width=30, note="Label: value; Label: value — e.g. Area: 150 m²; Floor: 3"),
@@ -514,24 +517,43 @@ SHEETS = [
               C("x_oq", "qty out", "كمية منصرفة", kind="calc", width=7, calc='=IF({x_ow}="",0,ABS(N({qty})))'),
               C("x_icb", "units in before", "وارد قبلها", kind="calc", width=7, calc0="=0",
                 calc='=IF({x_iq}=0,0,SUMIFS([[^x_iq]],[[^item]],{item},[[^x_iw]],{x_iw}))'),
-              C("x_ocb", "units out before", "منصرف قبلها", kind="calc", width=7, calc0="=0",
-                calc='=IF({x_oq}=0,0,SUMIFS([[^x_oq]],[[^item]],{item},[[^x_ow]],{x_ow}))'),
-              C("x_ohq", "on hand before", "الرصيد قبلها", kind="calc", width=7, calc0="=0",
-                calc='=SUMIFS([[^x_iq]],[[^item]],{item},[[^x_iw]],{warehouse}&"")-SUMIFS([[^x_oq]],[[^item]],{item},[[^x_ow]],{warehouse}&"")'),
-              C("x_ohv", "value on hand before", "قيمة الرصيد قبلها", kind="calc", width=8, calc0="=0",
-                calc='=SUMIFS([[^x_iv]],[[^item]],{item},[[^x_iw]],{warehouse}&"")-SUMIFS([[^x_ov]],[[^item]],{item},[[^x_ow]],{warehouse}&"")'),
+              # what this row's warehouse sent out before it: Stock Moves rows above, and sales dated earlier
+              C("x_oqw", "units out of the warehouse before", "منصرف المخزن قبلها", kind="calc", width=7,
+                calc0='=SUMIFS([[Sales Contracts.x_sq]],[[Sales Contracts.x_stk]],{item}&"",[[Sales Contracts.x_swh]],{warehouse}&"",[[Sales Contracts.date]],"<"&{date})',
+                calc='=SUMIFS([[^x_oq]],[[^item]],{item},[[^x_ow]],{warehouse}&"")+SUMIFS([[Sales Contracts.x_sq]],[[Sales Contracts.x_stk]],{item}&"",[[Sales Contracts.x_swh]],{warehouse}&"",[[Sales Contracts.date]],"<"&{date})'),
+              C("x_ocb", "units out before", "منصرف قبلها", kind="calc", width=7, calc='=IF({x_oq}=0,0,{x_oqw})'),
+              C("x_ohq", "on hand before", "الرصيد قبلها", kind="calc", width=7, calc0='=-{x_oqw}',
+                calc='=SUMIFS([[^x_iq]],[[^item]],{item},[[^x_iw]],{warehouse}&"")-{x_oqw}'),
+              # FIFO: what the units on hand are worth (the batches still in), for a count gain without a unit cost
+              C("x_ohv", "value on hand before (FIFO)", "قيمة الرصيد قبلها", kind="calc", width=8, calc0="=0",
+                calc='=IF(AND({type}="Adjustment",N({qty})>0,N({rate})=0),SUMIFS([[^x_iv]],[[^item]],{item},[[^x_iw]],{warehouse}&"")-' + _fifo_cost("{x_oqw}") + ',0)'),
+              C("x_lastu", "last unit value in", "آخر تكلفة وحدة واردة", kind="calc", width=8, calc0="=0",
+                calc='=IFERROR(LOOKUP(2,1/(([[^item]]={item})*([[^x_iw]]={warehouse}&"")),[[^x_iu]]),0)'),
+              # moving average: the warehouse's average before this row, and after it for a row coming in
+              C("x_avgw", "average before (warehouse)", "المتوسط قبلها", kind="calc", width=8, calc0="=0",
+                calc='=IFERROR(LOOKUP(2,1/(([[^item]]={item})*([[^x_iw]]={warehouse}&"")),[[^x_avg]]),0)'),
+              C("x_qi", "on hand before (receiving warehouse)", "رصيد المستلم قبلها", kind="calc", width=7,
+                calc0='=IF({x_iw}="",0,-SUMIFS([[Sales Contracts.x_sq]],[[Sales Contracts.x_stk]],{item}&"",[[Sales Contracts.x_swh]],{x_iw},[[Sales Contracts.date]],"<"&{date}))',
+                calc='=IF({x_iw}="",0,SUMIFS([[^x_iq]],[[^item]],{item},[[^x_iw]],{x_iw})-SUMIFS([[^x_oq]],[[^item]],{item},[[^x_ow]],{x_iw})-SUMIFS([[Sales Contracts.x_sq]],[[Sales Contracts.x_stk]],{item}&"",[[Sales Contracts.x_swh]],{x_iw},[[Sales Contracts.date]],"<"&{date}))'),
+              C("x_avgi", "average before (receiving warehouse)", "متوسط المستلم قبلها", kind="calc", width=8, calc0="=0",
+                calc='=IF({x_iw}="",0,IFERROR(LOOKUP(2,1/(([[^item]]={item})*([[^x_iw]]={x_iw})),[[^x_avg]]),0))'),
+              C("x_uavg", "unit cost in (average)", "تكلفة الوحدة الواردة (متوسط)", kind="calc", width=8,
+                calc='=IF({type}="Receipt",N({rate}),IF(AND({type}="Adjustment",N({qty})>0),IF(N({rate})>0,N({rate}),{x_avgw}),IF({type}="Transfer",{x_avgw},0)))'),
+              C("x_avg", "average after", "المتوسط بعدها", kind="calc", width=8,
+                calc='=IF({x_iq}=0,"",IF({x_qi}+{x_iq}>0,(MAX({x_qi},0)*{x_avgi}+{x_iq}*{x_uavg})/({x_qi}+{x_iq}),{x_uavg}))'),
               C("value", "Value", "القيمة", kind="calc",
                 note="Receipts: qty x unit cost. Issues, transfers and count losses: FIFO, the cost of the oldest units still in "
-                     "that warehouse (or the moving average, if Settings says stock_costing = average). A count gain: its unit "
-                     "cost if given, else the average of what is on hand. Keep the rows in date order.",
+                     "that warehouse (or the moving average, if Settings says stock_costing = average); sales of stock items "
+                     "(Sales Contracts) take their units in date order too. A count gain: its unit cost if given, else what a "
+                     "unit on hand is worth. Keep the rows in date order.",
                 calc0='=IF({type}="Receipt",ROUND(N({qty})*N({rate}),2),IF(AND({type}="Adjustment",N({qty})>0),ROUND(N({qty})*N({rate}),2),0))',
                 calc='=IF({type}="Receipt",ROUND(N({qty})*N({rate}),2),IF(AND({type}="Adjustment",N({qty})>0),'
-                     'IF(N({rate})>0,ROUND(N({qty})*N({rate}),2),IF({x_ohq}>0,ROUND(N({qty})*{x_ohv}/{x_ohq},2),0)),'
-                     'IF({x_oq}=0,0,IF(' + STOCK_METHOD() + '="average",IF({x_ohq}>0,ROUND({x_oq}*{x_ohv}/{x_ohq},2),0),'
+                     'IF(N({rate})>0,ROUND(N({qty})*N({rate}),2),IF(' + STOCK_METHOD() + '="average",ROUND(N({qty})*{x_avgw},2),'
+                     'ROUND(N({qty})*IF({x_ohq}>0,{x_ohv}/{x_ohq},{x_lastu}),2))),'
+                     'IF({x_oq}=0,0,IF(' + STOCK_METHOD() + '="average",ROUND({x_oq}*{x_avgw},2),'
                      'ROUND(' + _fifo_cost("{x_ocb}+{x_oq}") + '-' + _fifo_cost("{x_ocb}") + ',2)))))'),
               C("x_iv", "value in", "قيمة واردة", kind="calc", width=8, calc='=IF({x_iq}>0,{value},0)'),
               C("x_iu", "unit value in", "تكلفة وحدة الوارد", kind="calc", width=8, calc='=IF({x_iq}>0,{x_iv}/{x_iq},0)'),
-              C("x_ov", "value out", "قيمة منصرفة", kind="calc", width=8, calc='=IF({x_oq}>0,{value},0)'),
               C("vat_amt", "Input VAT", "ض.ق.م المدخلات", kind="calc",
                 calc='=IF({type}="Receipt",ROUND({value}*' + TAXRATE("{vat_code}") + ',2),0)'),
               C("wht_amt", "WHT Withheld", "الخصم والتحصيل", kind="calc",
@@ -677,6 +699,7 @@ def export_data(db):
         out["Products"].append({k: p[k] for k in ("code", "name", "name_ar", "kind", "category", "unit", "vat_code", "status",
                                                   "stock_item", "inventory_account", "description")}
                                | {"price": to_major(p["price"]), "cost": to_major(p["cost"]) or "", "bu_code": bus_.get(p["bu_id"], ""),
+                                  "warehouse": (db.one("SELECT name FROM warehouses WHERE id=?", (p["warehouse_id"],)) or {}).get("name", "") if p.get("warehouse_id") else "",
                                   "specs": "; ".join(f"{a}: {b}" for a, b in json.loads(p["specs"] or "[]"))})
     for r in db.q("SELECT * FROM rates ORDER BY category, id"):
         out["Price List"].append({"category": r["category"], "item_no": r["item_no"], "sub": r["sub"],
@@ -2257,6 +2280,8 @@ def _imp_product(db, r):
     p = db.one("SELECT id, status FROM products WHERE code=?", (acc.text(r.get("code")),)) if r.get("code") else None
     specs = [[a.strip(), b.strip()] for a, _, b in (x.partition(":") for x in str(r.get("specs") or "").split(";")) if a.strip()]
     d = {**r, "specs": specs, "kind": (str(r.get("kind") or "").lower() or "item")}
+    if acc.text(r.get("warehouse")):
+        d["warehouse_id"] = acc._warehouse(db, r["warehouse"])["id"]
     d["status"] = str(r.get("status") or "").lower() or (p["status"] if p else "available")
     sales.save_product(db, d, p["id"] if p else None)
 

@@ -93,8 +93,9 @@ class _Store:
         self.qty -= q
 
     def on_hand_unit(self):
+        """What a unit on hand is worth: the batches still in, at their unit values (the workbook computes the same)."""
         left = self.qin - self.qout
-        return (self.vin - self.vout) / left if left > EPS else self.last_unit
+        return (self.vin - self.first_cost(self.qout)) / left if left > EPS else self.last_unit
 
 
 def compute(db, item_id, how=None):

@@ -478,7 +478,7 @@ class FifoWorkbook(unittest.TestCase):
                      if not (m["kind"] == "Transfer" and m["qty"] > 0)]
             self.assertEqual(len(moves), len(xl), how)
             for m, v in zip(moves, xl):
-                self.assertAlmostEqual(m["value"] / 100, v or 0, delta=0.011 if how == "fifo" else 0.05,
+                self.assertAlmostEqual(m["value"] / 100, v or 0, delta=0.011,
                                        msg=f"{how}: {m['kind']} {m['qty']} on {m['date']}")
             to = max(r["date"] for r in db.q("SELECT date FROM journal_entries"))
             app = {r["account"]: (r["dr"] - r["cr"]) / 100 for r in db.q(
@@ -486,7 +486,7 @@ class FifoWorkbook(unittest.TestCase):
                 "WHERE e.date<=? AND e.status='posted' GROUP BY l.account", (to,))}
             tb = {str(r[0]): r[7] or 0 for r in wb["Trial Balance"].iter_rows(min_row=5, values_only=True) if r[0]}
             for k in set(app) | set(tb):
-                self.assertAlmostEqual(app.get(k, 0), tb.get(k, 0), delta=0.05 if how == "fifo" else 0.25, msg=f"{how}: account {k}")
+                self.assertAlmostEqual(app.get(k, 0), tb.get(k, 0), delta=0.011, msg=f"{how}: account {k}")
 
     def test_export_and_import_give_the_same_stock_and_books(self):
         import tempfile
@@ -523,3 +523,75 @@ class CostingSwitch(unittest.TestCase):
             self.assertTrue(c["ok"] and abs(c["a"] - c["b"]) < 0.005, (how, c))
         self.assertEqual(db.one("SELECT SUM(value) v FROM stock_levels")["v"], fifo)
         self.assertEqual(stockcost.recost_all(db, "fifo", preview=True)["items"], [])     # nothing left to change
+
+
+class HandTypedWorkbook(unittest.TestCase):
+    """A workbook typed by hand: stock at changing prices, a transfer, a count gain without a cost, and sales of stock
+    items (Sales Contracts). LibreOffice's figures equal the app's after importing the same rows, line by line."""
+
+    def sheets(self, how):
+        d = lambda m, day: month_day(m, day)
+        rcv = lambda m, day, wh, item, q, r: {"date": d(m, day), "type": "Receipt", "warehouse": wh, "item": item, "unit": "pcs",
+                                                "qty": q, "rate": r, "vendor": "Supplier", "paid": round(q * r, 2)}
+        return {
+            "Settings": [{"key": "stock_costing", "value": how}],
+            "Business Units": [{"code": "SHOP", "name": "Showroom", "type": "Trading"}, {"code": "P1", "name": "Villa"}],
+            "Warehouses": [{"name": "Main Store"}, {"name": "Branch"}],
+            "Stock Items": [{"name": "Tiles", "unit": "pcs"}, {"name": "Sinks", "unit": "pcs"}],
+            "Stock Moves": [
+                rcv(3, 1, "Main Store", "Tiles", 100, 40), rcv(3, 2, "Branch", "Tiles", 30, 47.5), rcv(3, 3, "Main Store", "Sinks", 10, 900),
+                {"date": d(3, 5), "type": "Issue", "warehouse": "Main Store", "item": "Tiles", "qty": 30, "bu_code": "P1"},
+                rcv(3, 6, "Main Store", "Tiles", 50, 43.25),
+                {"date": d(3, 8), "type": "Transfer", "warehouse": "Main Store", "to_warehouse": "Branch", "item": "Tiles", "qty": 20},
+                {"date": d(3, 12), "type": "Adjustment", "warehouse": "Branch", "item": "Tiles", "qty": 3},
+                rcv(2, 2, "Main Store", "Tiles", 40, 46.1), rcv(2, 3, "Main Store", "Sinks", 5, 1020),
+                {"date": d(2, 20), "type": "Issue", "warehouse": "Branch", "item": "Tiles", "qty": 25, "bu_code": "P1"}],
+            "Products": [{"code": "G-T", "name": "Tiles retail", "kind": "item", "price": 80, "stock_item": "Tiles"},
+                         {"code": "G-TB", "name": "Tiles retail (branch)", "kind": "item", "price": 80, "stock_item": "Tiles", "warehouse": "Branch"},
+                         {"code": "G-S", "name": "Sink set", "kind": "item", "price": 1900, "stock_item": "Sinks"}],
+            "Sales Contracts": [
+                {"code": "S1", "date": d(3, 10), "customer": "Buyer A", "bu_code": "SHOP", "product": "G-T", "qty": 60, "confirm": "Yes", "collected": 4800},
+                {"code": "S1", "date": d(3, 10), "customer": "Buyer A", "bu_code": "SHOP", "product": "G-S", "qty": 6},
+                {"code": "S2", "date": d(2, 2), "customer": "Buyer B", "bu_code": "SHOP", "product": "G-T", "qty": 45, "confirm": "Yes"},
+                {"code": "S3", "date": d(2, 2), "customer": "Buyer C", "bu_code": "SHOP", "product": "G-TB", "qty": 12, "confirm": "Yes"},
+                {"code": "S4", "date": d(1, 4), "customer": "Buyer D", "bu_code": "SHOP", "product": "G-S", "qty": 8, "confirm": "Yes"}]}
+
+    @unittest.skipUnless(HAVE_XL and __import__("shutil").which("soffice"), "LibreOffice not installed")
+    def test_libreoffice_and_the_app_agree(self):
+        import subprocess
+        import tempfile
+        import openpyxl
+        from erp import workbook
+        for how in ("fifo", "average"):
+            S = self.sheets(how)
+            db = Database(":memory:")
+            res = interchange.import_data(db, json.loads(json.dumps(S)), user="t")
+            self.assertFalse(res.get("errors"), (how, res.get("errors")))
+            c = [x for x in acc.audit(db) if x["check"].startswith("Stock register")][0]
+            self.assertTrue(c["ok"], (how, c))
+            with tempfile.TemporaryDirectory() as dd:
+                src = Path(dd) / "t.xlsx"
+                src.write_bytes(workbook.build_workbook(Database(":memory:"), template=True, data=S))
+                subprocess.run(["soffice", "--headless", "--convert-to", "xlsx", "--outdir", str(Path(dd) / "out"), str(src)],
+                               capture_output=True, timeout=600)
+                wb = openpyxl.load_workbook(Path(dd) / "out" / "t.xlsx", data_only=True)
+            # each sale line's cost of sales, as the app booked it
+            sc = wb["Sales Contracts"]
+            heads = [x.value for x in sc[interchange.FIRST_DATA_ROW - 1]]
+            col = heads.index("cost of sales")
+            xl = [sc.cell(interchange.FIRST_DATA_ROW + i, col + 1).value or 0 for i in range(len(S["Sales Contracts"]))]
+            app = []
+            for r in S["Sales Contracts"]:
+                e = db.q("SELECT SUM(l.debit) v FROM journal_entries e JOIN journal_lines l ON l.entry_id=e.id JOIN stock_moves m ON m.entry_id=e.id "
+                         "JOIN stock_items i ON i.id=m.item_id WHERE e.status='posted' AND m.note=? AND i.name=?",
+                         (r["code"], {"G-T": "Tiles", "G-TB": "Tiles", "G-S": "Sinks"}[r["product"]]))
+                app.append((e[0]["v"] or 0) / 100)
+            self.assertEqual([round(x, 2) for x in xl], app, how)
+            to = max(r["date"] for r in db.q("SELECT date FROM journal_entries"))
+            mine = {r["account"]: (r["dr"] - r["cr"]) / 100 for r in db.q(
+                "SELECT l.account, SUM(l.debit) dr, SUM(l.credit) cr FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                "WHERE e.date<=? AND e.status='posted' GROUP BY l.account", (to,))}
+            tb = {str(r[0]): r[7] or 0 for r in wb["Trial Balance"].iter_rows(min_row=5, values_only=True) if r[0]}
+            for k in set(mine) | set(tb):
+                self.assertAlmostEqual(mine.get(k, 0), tb.get(k, 0), delta=0.011, msg=f"{how}: account {k}")
+            self.assertEqual([x.value for x in wb["Model Audit"]["E"] if x.value][-1], "ALL OK", how)

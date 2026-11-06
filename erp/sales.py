@@ -700,8 +700,9 @@ def _recognize(db, s, date, user):
     cos = _role(db, "cost_of_sales")
     for ln in lines:
         if ln["stock_item"]:
+            # the product's own warehouse, else the first warehouse (in the list's order) that holds enough — as the workbook does
             wh = ln["warehouse_id"] or (db.one("SELECT l.warehouse_id FROM stock_levels l JOIN stock_items i ON i.id=l.item_id "
-                                               "WHERE i.name=? AND l.qty>=? ORDER BY l.qty DESC LIMIT 1", (ln["stock_item"], ln["qty"])) or {}).get("warehouse_id")
+                                               "WHERE i.name=? AND l.qty>=? ORDER BY l.warehouse_id LIMIT 1", (ln["stock_item"], ln["qty"] - 1e-9)) or {}).get("warehouse_id")
             if not wh:
                 raise ValidationError(f"Not enough {ln['stock_item']} in stock for {ln['qty']:g}")
             ceid = acc.stock_move(db, {"type": "Issue", "date": date, "warehouse_id": wh, "item": ln["stock_item"], "qty": ln["qty"],
