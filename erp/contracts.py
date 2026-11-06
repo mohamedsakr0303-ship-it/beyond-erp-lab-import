@@ -314,6 +314,8 @@ def save_certificate(db, cid, d, cert_id=None):
         x = _cert_row(db, c, db.one("SELECT * FROM sub_certificates WHERE id=?", (xid,)))
         if x["this_period"] < 0:
             raise ValidationError("Quantities to date are below the previous certificate. Enter cumulative quantities.")
+        if not x["this_period"] and not to_minor(num(d.get("deductions") or 0, "deductions")):
+            raise ValidationError("Nothing was executed since the previous certificate: raise the quantity executed to date on a line.")
     return xid
 
 
