@@ -47,7 +47,7 @@ class Notes(unittest.TestCase):
         sign = 1 if ar(db) > 0 else -1
         with self.assertRaisesRegex(acc.ValidationError, "reason"):
             invoice(db, "CN-1", 4000, doc_type="C", ref_id=inv)
-        with self.assertRaisesRegex(acc.ValidationError, "names the invoice"):
+        with self.assertRaisesRegex(acc.ValidationError, "must name the invoice"):
             invoice(db, "CN-1", 4000, doc_type="C", eta_reason="x")
         cn = invoice(db, "CN-1", 4000, doc_type="C", ref_number="INV-1", eta_reason="Price agreed lower")
         eid = acc.post_extract(db, cn)

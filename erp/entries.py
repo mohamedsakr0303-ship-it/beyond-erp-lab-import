@@ -37,7 +37,7 @@ BUILTIN = [
     ("vat_offset", "VAT settlement (offset input VAT)", "تسوية ضريبة القيمة المضافة", "Journal Voucher", "role:vat_output", "role:vat_input", "none", "none"),
     ("vat_pay", "Pay VAT to the Tax Authority", "سداد ضريبة القيمة المضافة", "Journal Voucher", "role:vat_output", "subtype:cash", "none", "none"),
     ("wht_pay", "Pay withholding tax to the Tax Authority", "سداد ضريبة الخصم والتحصيل", "Journal Voucher", "role:wht_payable", "subtype:cash", "none", "none"),
-    ("wht_offset", "Offset client-withheld tax against income tax", "خصم ضريبة الخصم من ضريبة الدخل", "Journal Voucher", "role:income_tax_payable", "role:wht_receivable", "none", "none"),
+    ("wht_offset", "Offset client-withheld tax against income tax", "خصم ضريبة الخصم والتحصيل من ضريبة الدخل", "Journal Voucher", "role:income_tax_payable", "role:wht_receivable", "none", "none"),
     ("legal_reserve", "Transfer to legal reserve", "تجنيب الاحتياطي القانوني", "Reserve Transfer", "role:retained", "subtype:reserves", "none", "none"),
     ("investment", "Buy an investment", "شراء استثمار", "Journal Voucher", "subtype:investment", "subtype:cash", "optional", "none"),
     # work and purchases owed, nothing paid yet: the cost lands on the project now, the supplier is owed until paid
@@ -157,7 +157,7 @@ def _clean_model_lines(name, lines):
             continue
         spec = text(ln.get("account"))
         if not SIDE_RE.match(spec):
-            raise ValidationError(f"{name}: line {i} has a bad account setting")
+            raise ValidationError(f"{name}: line {i} has an account setting that is not valid")
         side = text(ln.get("side")).lower()
         if side not in ("debit", "credit"):
             raise ValidationError(f"{name}: line {i} must be a debit or a credit")

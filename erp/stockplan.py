@@ -127,13 +127,13 @@ def save_settings(db, item_id, d):
     if "alert_mode" in d:
         mode = d.get("alert_mode") or "both"
         if mode not in MODES:
-            raise ValidationError("Choose how the minimum is announced")
+            raise ValidationError("Choose how to be alerted at the minimum")
         sets.append("alert_mode=?")
         vals.append(mode)
     if "lead_days" in d:
         lead = acc.num(d.get("lead_days"), "delivery time (days)")
         if lead < 0 or lead > 365:
-            raise ValidationError("The delivery time is 0 to 365 days")
+            raise ValidationError("The delivery time must be between 0 and 365 days")
         sets.append("lead_days=?")
         vals.append(int(round(lead)))
     if "auto_min" in d:

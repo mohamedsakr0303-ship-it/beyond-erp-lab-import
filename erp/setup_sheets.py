@@ -649,7 +649,7 @@ def _standalone(sheets, C):
                                            f'-MIN({{x_adv}},ROUND(({{x_cum}}-{{x_this}})*N({head("advance_recovery_pct")}),2)),0)'),
         calc("x_vatc", "VAT code", f'=IFERROR({head("vat_code")}&"","")'), calc("x_whtc", "WHT code", f'=IFERROR({head("wht_code")}&"","")'),
         calc("x_vat", "VAT", f'=ROUND({{x_base}}*{TAXRATE("{x_vatc}")},2)'), calc("x_wht", "withholding", f'=ROUND({{x_base}}*{TAXRATE("{x_whtc}")},2)'),
-        calc("x_net", "owed to him", "={x_base}+{x_vat}-{x_ret}-{x_rec}-{x_wht}"),
+        calc("x_net", "owed to the subcontractor", "={x_base}+{x_vat}-{x_ret}-{x_rec}-{x_wht}"),
         role("x_cost", "subcontract_cost"), role("x_vin", "vat_input"), role("x_pay", "sub_payable"), role("x_retp", "retention_payable"),
         role("x_sadv", "supplier_advances"), role("x_whtp", "wht_payable")]
     by[sc_]["legs"] = [("x_base", "x_cost", "D"), ("x_vat", "x_vin", "D"), ("x_net", "x_pay", "C"), ("x_ret", "x_retp", "C"),

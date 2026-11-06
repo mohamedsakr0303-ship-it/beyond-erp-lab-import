@@ -928,7 +928,7 @@ PRESET_FORMS = {**{"doc:" + k: v[1] for k, v in DOCS.items()}, "po:new": "purcha
 
 def _preset_ok(ctx, key):
     if key not in PRESET_FORMS:
-        raise acc.ValidationError("Unknown form")
+        raise acc.ValidationError("This form is not recognised")
     ctx.require(PRESET_FORMS[key], "add")
 
 
@@ -4035,7 +4035,7 @@ def equity_post(ctx, action):
 
 @route("GET", "/api/equity/exit")
 def equity_exit(ctx):
-    """What each partner would take out (or owe) if he left today, and the funding partner's money in and out."""
+    """What each partner would take out (or owe) if they left today, and the funding partner's money in and out."""
     if not ctx.can("partners.equity"):
         raise PermissionError()
     from . import settlement
@@ -4208,7 +4208,7 @@ def eta_settings_save(ctx):
         if k == "eta_doc_version" and v not in ("0.9", "1.0"):
             raise acc.ValidationError("document version must be 0.9 or 1.0")
         if k == "eta_connection" and v not in ("signer", "direct"):
-            raise acc.ValidationError("The connection is the BeyondERP Signer or direct from this server")
+            raise acc.ValidationError("Choose the connection: through the BeyondERP Signer, or directly from this server")
         ctx.db.set_setting(k, acc.text(v, maxlen=500))
     ctx.log("eta.settings")
     return ok(einvoice.public_settings(ctx.db))
@@ -5821,7 +5821,7 @@ def einvoice_received_book(ctx, uuid):
     from . import einvoice
     need = "purchasing.costs" if ctx.body.get("bu_id") or ctx.body.get("bu_code") else "purchasing.expenses"
     if not ctx.can(need, "add"):
-        raise PermissionError("Recording it needs add rights on " + ("direct costs" if need.endswith("costs") else "expenses"))
+        raise PermissionError("Recording it needs permission to add " + ("direct costs" if need.endswith("costs") else "expenses"))
     return ok(einvoice.record_received(ctx.db, urllib.parse.unquote(uuid), ctx.body, ctx.user["username"]))
 
 

@@ -803,7 +803,7 @@ def bankrec_table(db, sid, lang="en"):
     rows.append(R("Adjusted book balance", "الرصيد المعدل حسب الدفاتر", sm["adjusted_book"], "grand"))
     rows.append(R("Difference", "الفرق", sm["difference"], "grand"))
     acct = d["account"]
-    title = ("مذكرة تسوية البنك" if ar else "Bank reconciliation") + f" — {acct['code']} {(acct.get('name_ar') if ar and acct.get('name_ar') else acct['name'])}"
+    title = ("مذكرة التسوية البنكية" if ar else "Bank reconciliation") + f" — {acct['code']} {(acct.get('name_ar') if ar and acct.get('name_ar') else acct['name'])}"
     status = ("مسوّاة" if ar else "Reconciled") if st["status"] == "reconciled" else ("مفتوحة" if ar else "Open")
     return {"title": title, "subtitle": f"{st['date_from']} → {st['date_to']} · {status} · {db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
 

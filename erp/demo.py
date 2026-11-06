@@ -16,6 +16,7 @@ Everything happens in one transaction: it loads completely or not at all. All na
 import base64
 import calendar
 import datetime as _dt
+import json
 import re
 import struct
 import zlib
@@ -842,6 +843,27 @@ def tr(v, lang):
     return out
 
 
+def _keep(k):
+    return k in _NOT_DATA_COLS or k.endswith(("_code", "_at", "_id", "date", "_json", "_type")) or k == "type"
+
+
+def _tr_json(v, lang):
+    """A JSON text (an entry's details): its texts in the language, field by field; codes and keys stay as they are."""
+    try:
+        obj = json.loads(v)
+    except (TypeError, ValueError):
+        return v
+
+    def walk(x, key=""):
+        if isinstance(x, dict):
+            return {k: (y if _keep(k) else walk(y, k)) for k, y in x.items()}
+        if isinstance(x, list):
+            return [walk(y, key) for y in x]
+        return tr(x, lang) if isinstance(x, str) else x
+    out = walk(obj)
+    return v if out == obj else json.dumps(out, ensure_ascii=False)
+
+
 def translate_sheets(S, lang):
     """The demo's import rows in a language (codes, choices and numbers are left as they are)."""
     if lang != "ar":
@@ -873,7 +895,7 @@ def translate_books(db, lang, before=frozenset()):
             if c in _NOT_DATA_COLS or c.endswith(("_code", "_at", "_id", "date", "_json")) or (c == "type" and t != "business_units"):
                 continue
             for (v,) in db.conn.execute(f"SELECT DISTINCT {c} FROM {t} WHERE {c} IS NOT NULL AND {c}<>''").fetchall():
-                new = tr(v, lang)
+                new = _tr_json(v, lang) if c == "meta" else tr(v, lang)
                 if new != v and (t, c, v) not in before:
                     db.conn.execute(f"UPDATE {t} SET {c}=? WHERE {c}=?", (new, v))
     for k in _COMPANY_KEYS:

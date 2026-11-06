@@ -1070,10 +1070,10 @@ def stock_report(db, warehouse_id=None, q=None):
 def _lines_in(raw):
     out = []
     if raw not in (None, "") and not isinstance(raw, list):
-        raise ValidationError("The lines are a list of lines")
+        raise ValidationError("The lines could not be read")
     for i, ln in enumerate(raw or []):
         if not isinstance(ln, dict):
-            raise ValidationError(f"Line {i + 1} is not a line")
+            raise ValidationError(f"Line {i + 1} could not be read")
         desc = text(ln.get("description"), maxlen=2000)
         if not desc:
             continue
@@ -1234,7 +1234,7 @@ def _note_fields(db, d, extract_id=None):
     cur = db.one("SELECT doc_type, ref_id, eta_reason FROM extracts WHERE id=?", (extract_id,)) if extract_id else None
     dt = str(d.get("doc_type") or (cur or {}).get("doc_type") or "I").upper()[:1]
     if dt not in DOC_TYPES:
-        raise ValidationError("The document is an invoice, a credit note or a debit note")
+        raise ValidationError("Choose the document: an invoice, a credit note or a debit note")
     if dt == "I":
         return "I", None, ""
     ref = d.get("ref_id") if "ref_id" in d or "ref_number" not in d else None
@@ -1245,7 +1245,7 @@ def _note_fields(db, d, extract_id=None):
         ref = r["id"]
     ref = ref or (cur or {}).get("ref_id")
     if not ref:
-        raise ValidationError(f"A {DOC_TYPES[dt].lower()} names the invoice it corrects")
+        raise ValidationError(f"A {DOC_TYPES[dt].lower()} must name the invoice it corrects")
     orig = db.one("SELECT id, number, status, doc_type, customer FROM extracts WHERE id=?", (int(ref),))
     if not orig or orig["doc_type"] not in ("I", None, ""):
         raise ValidationError("Choose the original invoice (not another note)")

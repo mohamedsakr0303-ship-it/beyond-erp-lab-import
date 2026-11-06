@@ -40,7 +40,7 @@ def for_form(db, key):
 
 def save(db, key, name, values, user=""):
     if not KEY_RE.match(key or ""):
-        raise ValidationError("Unknown form")
+        raise ValidationError("This form is not recognised")
     name = text(name, "name", required=True, maxlen=80)
     if not isinstance(values, dict):
         raise ValidationError("Nothing to save")

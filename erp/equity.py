@@ -322,7 +322,7 @@ def plan_interest(db, d):
     for r in db.q(f"SELECT meta FROM journal_entries e WHERE {acc.LIVE} AND e.reversed_by IS NULL AND kind='Partner Loan Interest' "
                   "AND party=?", (p["name"],)):
         if json.loads(r["meta"] or "{}").get("funder_account"):
-            continue                                    # interest on his funding account: booked on its own
+            continue                                    # interest on their funding account: booked on its own
         to = json.loads(r["meta"] or "{}").get("period_to")
         last = max(last or to, to) if to else last
     if last:
@@ -550,7 +550,7 @@ def plan_distribute(db, d):
         from . import funders
         via = funders.by_account(db, lines[-1]["account"])
         if via:
-            notes.append(f"Paid through {via['name']}'s account: he pays the partners for the company, so the company owes him "
+            notes.append(f"Paid through {via['name']}'s account: they pay the partners for the company, so the company owes them "
                          f"{total:,.2f} more there.")
     from .accounting import cash_position
     cp = cash_position(db)
@@ -566,11 +566,11 @@ def plan_distribute(db, d):
 
 
 def plan_funder_capital(db, d):
-    """Move money between a funding partner's account and his capital, as a journal entry:
-       to_capital   — what the company owes him on his account becomes his capital: Dr his account, Cr capital
-                      (suggested at most what the company owes him; more is allowed with a warning);
-       from_capital — part of his capital goes back to his account (the company then owes it to him there):
-                      Dr capital, Cr his account (never more than his capital).
+    """Move money between a funding partner's account and their capital, as a journal entry:
+       to_capital   — what the company owes them on their account becomes their capital: Dr their account, Cr capital
+                      (suggested at most what the company owes them; more is allowed with a warning);
+       from_capital — part of their capital goes back to their account (the company then owes it to them there):
+                      Dr capital, Cr their account (never more than their capital).
     Ownership shares stay as they are, follow capital, or are typed in (chosen each time)."""
     from . import funders
     f = funders.by_name(db, d.get("funder") or d.get("partner"))
@@ -585,15 +585,15 @@ def plan_funder_capital(db, d):
     notes = []
     if direction == "to_capital":
         if to_minor(amount) > to_minor(max(owed, 0)):
-            notes.append(f"The company owes {p['name']} {max(owed, 0):,.2f} on his account; moving {amount:,.2f} goes beyond it "
-                         f"(his account would then show {amount - max(owed, 0):,.2f} owed by him).")
+            notes.append(f"The company owes {p['name']} {max(owed, 0):,.2f} on their account; moving {amount:,.2f} goes beyond it "
+                         f"(their account would then show {amount - max(owed, 0):,.2f} owed by them).")
         lines = [_L(f["account"], p["name"], amount), _L(_role(db, "capital"), p["name"], credit=amount)]
-        kind, memo, base = "Capital Contribution", f"{p['name']}: from his funding account to capital", {str(p["id"]): amount}
+        kind, memo, base = "Capital Contribution", f"{p['name']}: from their funding account to capital", {str(p["id"]): amount}
     elif direction == "from_capital":
         if to_minor(amount) > to_minor(cap):
             raise ValidationError(f"{p['name']}'s capital is only {cap:,.2f}")
         lines = [_L(_role(db, "capital"), p["name"], amount), _L(f["account"], p["name"], credit=amount)]
-        kind, memo, base = "Capital Withdrawal", f"{p['name']}: from capital to his funding account", {str(p["id"]): -amount}
+        kind, memo, base = "Capital Withdrawal", f"{p['name']}: from capital to their funding account", {str(p["id"]): -amount}
     else:
         raise ValidationError("Choose the direction of the move")
     st = state(db)
@@ -603,9 +603,9 @@ def plan_funder_capital(db, d):
 
 
 def plan_funder_interest(db, d):
-    """Interest a funding partner's deal gives him on the money the company owes him on his account: his agreed yearly
-    rate on the daily balance, from the day after the interest last booked (or his first funding) to a date.
-    Dr interest expense, Cr his account — so it is repaid to him with his money."""
+    """Interest a funding partner's deal gives them on the money the company owes them on their account: their agreed yearly
+    rate on the daily balance, from the day after the interest last booked (or their first funding) to a date.
+    Dr interest expense, Cr their account — so it is repaid to them with their money."""
     from . import funders
     f = funders.by_name(db, d.get("funder") or d.get("partner"))
     if not f or not f["account"]:
@@ -613,7 +613,7 @@ def plan_funder_interest(db, d):
     end = _dt.date.fromisoformat(acc.clean_date(d.get("date")))
     rate = _pct(d.get("rate"), "interest rate") if d.get("rate") not in (None, "") else (f.get("interest_pct") or 0)
     if not rate:
-        raise ValidationError(f"{f['name']}'s funding has no interest. Set his interest rate first (only if his deal has one).")
+        raise ValidationError(f"{f['name']}'s funding has no interest. Set their interest rate first (only if their deal has one).")
     last = None
     for r in db.q(f"SELECT meta FROM journal_entries e WHERE {acc.LIVE} AND e.reversed_by IS NULL AND kind='Partner Loan Interest' "
                   "AND party=?", (f["name"],)):
@@ -633,13 +633,13 @@ def plan_funder_interest(db, d):
         raise ValidationError(f"Interest is already booked up to {last}")
     amount = _daily_interest(db, f["name"], f["account"], start, end, rate)
     if not amount:
-        raise ValidationError("No interest is due for this period (nothing owed to him on his account)")
+        raise ValidationError("No interest is due for this period (nothing owed to them on their account)")
     lines = [_L(_role(db, "interest"), "", to_major(amount)), _L(f["account"], f["name"], credit=to_major(amount))]
     return _plan("Partner Loan Interest", text(d.get("memo")) or
                  f"Interest {rate * 100:.2f}% on {f['name']}'s funding, {start} to {end}", f["name"], lines, end.isoformat(),
                  {"period_from": start.isoformat(), "period_to": end.isoformat(), "rate": rate, "funder_account": f["account"]},
-                 notes=[f"{(end - start).days + 1} days at {rate * 100:.2f}% a year on what the company owed him each day; "
-                        f"added to what it owes him on his account."])
+                 notes=[f"{(end - start).days + 1} days at {rate * 100:.2f}% a year on what the company owed them each day; "
+                        f"added to what it owes them on their account."])
 
 
 PLANS = {"contribute": plan_contribute, "withdraw": plan_withdraw, "loan": plan_loan, "repay": plan_repay,

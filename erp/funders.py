@@ -1,16 +1,16 @@
 """Funding partners: partners whose own account pays and receives money for the company.
 
 The first (main) funding partner is the one the company has always had: settings `funding_partner`, `funding_mode`,
-`funding_limit`… and the account with the role `funding_partner` (3015). When he is set, the company's payments go
-through his account unless another account is chosen — his account works as the company's bank.
+`funding_limit`… and the account with the role `funding_partner` (3015). When they are set, the company's payments go
+through their account unless another account is chosen — their account works as the company's bank.
 
-More funding partners can work alongside him (or alongside a bank when there is no main one). Each has his own
-account (role `funding_partner_2`, `funding_partner_3`, … — roles are unique per account), his own way of being
-treated (capital: his money is his capital; facility: a credit line owed back to him), an optional limit, a share of
-each client payment repaid to him, "repay him before any distribution", and "distributions may be paid through his
-account". Payments and receipts choose his account explicitly; nothing is routed to him by default.
+More funding partners can work alongside them (or alongside a bank when there is no main one). Each has their own
+account (role `funding_partner_2`, `funding_partner_3`, … — roles are unique per account), their own way of being
+treated (capital: their money is their capital; facility: a credit line owed back to them), an optional limit, a share of
+each client payment repaid to them, "repay them before any distribution", and "distributions may be paid through their
+account". Payments and receipts choose their account explicitly; nothing is routed to them by default.
 
-Money through any funding partner's account is always in his name (the line's party).
+Money through any funding partner's account is always in their name (the line's party).
 """
 import json
 
@@ -50,7 +50,7 @@ def _yes(v, d=False):
 
 
 def primary(db):
-    """The main funding partner (his account is the company's bank), or None."""
+    """The main funding partner (their account is the company's bank), or None."""
     name = (db.setting("funding_partner") or "").strip()
     if not name:
         return None
@@ -97,13 +97,13 @@ def by_name(db, name):
 
 
 def name_for_account(db, code):
-    """Whose money moves through this account (lines on it are always in his name)."""
+    """Whose money moves through this account (lines on it are always in their name)."""
     f = by_account(db, code)
     return f["name"] if f else ""
 
 
 def balance(db, f, date_to=None):
-    """What the company owes this funding partner on his account (credit-positive), as of a date."""
+    """What the company owes this funding partner on their account (credit-positive), as of a date."""
     if not f or not f.get("account"):
         return 0.0
     from .db import to_major
@@ -131,8 +131,8 @@ def _new_account(db, name, mode, nth):
 
 def save_extra(db, rows):
     """Store the other funding partners. Each must be an active partner (not the main funding partner); a new one gets
-    his own account; changing capital ⇄ facility moves his account between equity and liabilities. A funding partner
-    taken off the list keeps his account and its history (switched off, not deleted)."""
+    their own account; changing capital ⇄ facility moves their account between equity and liabilities. A funding partner
+    taken off the list keeps their account and its history (switched off, not deleted)."""
     if not isinstance(rows, list):
         raise acc.ValidationError("Send the list of funding partners.")
     partners = {r["name"].lower(): r["name"] for r in db.q("SELECT name FROM partners")}
@@ -167,7 +167,7 @@ def save_extra(db, rows):
             out.append({"name": name, "role": role, "mode": mode, "limit": max(0.0, _num(r.get("limit"))), "repay_pct": pct,
                         "repay_first": _yes(r.get("repay_first")), "distribute_from": _yes(r.get("distribute_from")),
                         "interest_pct": rate, "active": _yes(r.get("active"), True)})
-        # anyone taken off the list stays in the books, inactive (his account keeps its history)
+        # anyone taken off the list stays in the books, inactive (their account keeps its history)
         for k, f in old.items():
             if k not in seen:
                 out.append({**{x: f[x] for x in ("name", "role", "mode", "limit", "repay_pct", "repay_first", "distribute_from", "interest_pct")},
@@ -177,7 +177,7 @@ def save_extra(db, rows):
 
 
 def overview(db, date_to=None):
-    """Every funding partner with what the company owes him (or he holds for it) and the room left under his limit."""
+    """Every funding partner with what the company owes them (or they hold for it) and the room left under their limit."""
     out = []
     for f in all_funders(db, False):
         bal = balance(db, f, date_to)
@@ -188,7 +188,7 @@ def overview(db, date_to=None):
 
 def others_money(db, date_to=None):
     """What the other funding partners make available to the company: money of the company each one holds (a debit
-    balance on his account), and the room left under each facility limit (facility mode with a limit). The main
+    balance on their account), and the room left under each facility limit (facility mode with a limit). The main
     funding partner's facility is worked out by settlement.facility."""
     held = room = 0.0
     rows = []
@@ -229,7 +229,7 @@ def facility_accounts(db):
 
 
 def first_funded(db, f, date_to=None):
-    """The day this funding partner first put money in (the first credit on his account), or None."""
+    """The day this funding partner first put money in (the first credit on their account), or None."""
     if not f or not f.get("account"):
         return None
     w, p = acc._where(date_to=date_to)

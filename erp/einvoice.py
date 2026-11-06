@@ -313,7 +313,7 @@ def save_template(db, d, code=None):
         raise acc.ValidationError("The document is an invoice, a credit note or a debit note")
     act = acc.text(d.get("activity_code"), maxlen=10)
     if act and not re.fullmatch(r"\d{4}", act):
-        raise acc.ValidationError("The activity code is 4 digits")
+        raise acc.ValidationError("The activity code has 4 digits")
     custs = "\n".join(sorted({c.strip() for c in re.split(r"[\n;]", str(d.get("customers") or "")) if c.strip()}))
     vals = (name, dt, custs, acc.text(d.get("reason"), maxlen=500), act, acc.text(d.get("branch_id"), maxlen=20),
             acc.text(d.get("item_code"), maxlen=100), acc.text(d.get("unit"), maxlen=10), acc.text(d.get("po_ref"), maxlen=100),
@@ -451,7 +451,7 @@ def record_state(db, extract_id, status, reason, user=""):
     if not x or not x["eta_uuid"]:
         raise acc.ValidationError("This invoice has not been submitted")
     if status != "cancelled":
-        raise acc.ValidationError("An issued invoice can be cancelled")
+        raise acc.ValidationError("Only an issued invoice can be cancelled")
     db.x("UPDATE extracts SET eta_status='Cancel requested', eta_error=? WHERE id=?", ("Cancelled: " + acc.text(reason, "reason", required=True, maxlen=500), x["id"]))
     db.log(user, "eta.cancel", str(x["id"]))
     return {"status": "Cancel requested"}
@@ -539,7 +539,7 @@ def save_received_raw(db, uuid, raw):
 
 def received_state(db, uuid, status, reason, user=""):
     if status != "rejected":
-        raise acc.ValidationError("A received e-invoice can be rejected")
+        raise acc.ValidationError("Only a received e-invoice can be rejected")
     r = db.one("SELECT entry_id FROM einv_received WHERE uuid=?", (uuid,))
     if not r:
         raise acc.ValidationError("Not found")

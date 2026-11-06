@@ -141,7 +141,7 @@ def _undated(db):
 
 
 def _facility(db):
-    """The funding partner's facility when his account is the company's bank (facility mode), else None."""
+    """The funding partner's facility when their account is the company's bank (facility mode), else None."""
     if (db.setting("funding_mode") or "capital") != "facility":
         return None
     from . import settlement
@@ -169,7 +169,7 @@ def build(db, days=90, include_overdue=True, today=None):
     dated = [r for r in items if r["date"] >= today]
     start = cash_now(db)
     fac = _facility(db)
-    if fac:       # facility mode: what can be spent is the room left in his facility, plus any cash of the company's own
+    if fac:       # facility mode: what can be spent is the room left in their facility, plus any cash of the company's own
         start = round(start + fac["room"], 2)
     from . import funders
     others = funders.others_money(db)       # other funding partners: money of the company they hold, room under their limits

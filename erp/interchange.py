@@ -2247,7 +2247,7 @@ def _doc_type(v):
         return "I"
     d = v[:1].upper()
     if d not in ("I", "C", "D"):
-        raise acc.ValidationError(f"Document '{v}': an Invoice, a Credit Note or a Debit Note")
+        raise acc.ValidationError(f"Document '{v}' is not recognised: use Invoice, Credit Note or Debit Note")
     return d
 
 

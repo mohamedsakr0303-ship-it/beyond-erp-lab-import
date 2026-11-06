@@ -1708,7 +1708,7 @@ GUIDE = [
      "Use the calculator to see what is due (frames × width × height × rate) — it never posts. Book what you really paid "
      "as a Direct Costs row with the site's business unit. → BU Profitability, Income Statement.",
      "دفع أجر طاقم التركيب",
-     "استخدم حاسبة أجور الأطقم لمعرفة المستحق (لا تُرحّل شيئاً). سجّل المبلغ المدفوع فعلاً كصف في التكاليف المباشرة بوحدة عمل الموقع "
+     "استخدم حاسبة أجور الأطقم لمعرفة المستحق (لا تُرحّل شيئاً). سجّل المبلغ المدفوع فعلاً كصف في التكاليف المباشرة بوحدة أعمال الموقع "
      "← ربحية المشروعات وقائمة الدخل."),
     ("Expenses", "Operating Expenses / Direct Costs",
      "Office, transport, tips … in Operating Expenses; anything for one site in Direct Costs with its business unit.",

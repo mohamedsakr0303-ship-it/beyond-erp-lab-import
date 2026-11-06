@@ -562,7 +562,7 @@ _W = [
     ("costs", "Costs", "التكاليف", "overview", ("reports", "dashboard"), 1, w_kpi("costs", "Costs", "التكاليف"), {}),
     ("net_profit", "Net profit", "صافي الربح", "overview", ("reports", "dashboard"), 1, w_kpi("net_profit", "Net profit", "صافي الربح"), {}),
     ("cash", "Cash & bank", "النقدية والبنوك", "overview", ("assets.cash", "dashboard"), 1, w_kpi("cash", "Cash & bank", "النقدية والبنوك"), {}),
-    ("money_position", "Money position", "المركز المالي", "overview", ("reports", "dashboard"), 2, w_money_position, {}),
+    ("money_position", "Money position", "الموقف المالي", "overview", ("reports", "dashboard"), 2, w_money_position, {}),
     ("monthly_chart", "Revenue vs costs by month", "الإيرادات مقابل التكاليف شهرياً", "overview", ("reports", "dashboard"), 2, w_monthly, {}),
     ("attention", "Needs attention", "يحتاج متابعة", "general", (), 2, w_attention, {}),
     ("books_check", "Books check", "فحص الدفاتر", "overview", ("reports",), 2, w_books_check, {}),

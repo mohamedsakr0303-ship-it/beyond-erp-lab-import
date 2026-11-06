@@ -243,6 +243,66 @@ def _literals(f):
     return re.sub(r'"([^"]*)"', lambda m: '"' + LITERALS_AR.get(m.group(1), m.group(1)) + '"', f)
 
 
+GUIDE = "دليل الأكواد"
+
+
+def code_meaning(sheet, col, code, tr=None):
+    """The Arabic meaning of a drop-down code in one column ("" when there is none)."""
+    from .workbook_ar_terms import CODES_AR, CODES_AR_BY_COL
+    tr = translations() if tr is None else tr
+    return (CODES_AR_BY_COL.get(f"{sheet}.{col}", {}).get(code) or CODES_AR.get(code) or tr.get(code)
+            or tr.get(code.replace("_", " ").capitalize()) or "")
+
+
+def _code_guide(wb, by_name, names, tr):
+    """Drop-downs keep their codes (formulas and the importer compare against them). The Arabic workbook says what
+    each one means: as the drop-down's hint where it fits, and in full on a code guide sheet."""
+    from openpyxl.styles import Font, PatternFill
+    rows = []
+    for ws in wb.worksheets:
+        s = by_name.get(ws.title)
+        if not s:
+            continue
+        dv_of = {}
+        for dv in ws.data_validations.dataValidation:
+            if dv.type == "list":
+                for rg in dv.sqref.ranges:
+                    for ci in range(rg.min_col, rg.max_col + 1):
+                        dv_of.setdefault(ci, dv)
+        for i, c in enumerate(s["cols"], start=1):
+            codes = [v for v in (c.get("choices") or []) if isinstance(v, str) and v]
+            if not codes:
+                continue
+            pairs = [(v, code_meaning(s["name"], c["key"], v, tr)) for v in codes]
+            if all(re.search("[؀-ۿ]", v) for v, _ in pairs):
+                continue
+            rows += [(names.get(s["name"], s["name"]), c["ar"], v, m) for v, m in pairs]
+            dv = dv_of.get(i)
+            if dv is not None:
+                hint = "؛ ".join(f"{v} = {m}" for v, m in pairs if m)
+                dv.promptTitle = (c["ar"] or "")[:32]
+                dv.prompt = hint if len(hint) <= 250 else f"معنى كل كود في ورقة «{GUIDE}»"
+                dv.showInputMessage = True
+    if not rows:
+        return
+    g = wb.create_sheet(GUIDE, index=wb.sheetnames.index("Lists") if "Lists" in wb.sheetnames else None)
+    g.sheet_view.rightToLeft = True
+    g.sheet_view.showGridLines = False
+    g["A1"] = GUIDE
+    g["A1"].font = Font(bold=True, size=14)
+    g["A2"] = "الأكواد تبقى كما هي في الخلايا لأن المعادلات والاستيراد تعتمد عليها. هذا معنى كل كود."
+    head = ("الورقة", "العمود", "الكود", "المعنى")
+    for j, h in enumerate(head, start=1):
+        cell = g.cell(4, j, h)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="E8EEF5")
+    for r, row in enumerate(rows, start=5):
+        for j, v in enumerate(row, start=1):
+            g.cell(r, j, v)
+    for col, w in zip("ABCD", (26, 26, 26, 54)):
+        g.column_dimensions[col].width = w
+
+
 def localize(wb, extra_names=None):
     from .workbook_ar_terms import TITLES_AR, helper
     names = sheet_names(extra_names)
@@ -252,8 +312,14 @@ def localize(wb, extra_names=None):
     trl = {k.lower(): v for k, v in tr.items()}
     by_name = {s["name"]: s for s in SHEETS}
     for ws in wb.worksheets:
+        if ws.title == "Lists":     # the drop-down sources: codes the formulas and the importer read (see _code_guide)
+            for row in ws.iter_rows():
+                for c in row:
+                    if isinstance(c.value, str) and c.value.startswith("="):
+                        c.value = fix(c.value)
+            continue
         data_sheet = by_name.get(ws.title)
-        heads = {c["en"]: c["ar"] for c in data_sheet["cols"] if c.get("kind") != "calc"} if data_sheet else {}
+        heads ={c["en"]: c["ar"] for c in data_sheet["cols"] if c.get("kind") != "calc"} if data_sheet else {}
         calc_ar = {c["en"]: c["ar"] for c in data_sheet["cols"] if c.get("kind") == "calc"} if data_sheet else {}
         # cells under a drop-down hold codes that formulas compare against ("both", "Yes", "monthly") — never translate them
         coded = {cell for dv in ws.data_validations.dataValidation if dv.type == "list"
@@ -340,6 +406,7 @@ def localize(wb, extra_names=None):
         dn = list(wb.defined_names.definedName)
     for d in dn:
         d.attr_text = fix(d.attr_text)
+    _code_guide(wb, by_name, names, tr)
     for ws in wb.worksheets:
         if ws.title in names:
             ws.title = names[ws.title]

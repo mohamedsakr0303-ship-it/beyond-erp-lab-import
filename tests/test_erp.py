@@ -3449,6 +3449,38 @@ class RentalsLanguageAssets(unittest.TestCase):
         __import__("os").unlink(fh.name)
         self.assertEqual(a.balance_sheet(d2)["total_assets"], a.balance_sheet(db)["total_assets"])
 
+    def test_arabic_drop_downs_keep_their_codes_and_say_what_they_mean(self):
+        """The Arabic workbook's drop-downs offer the codes the formulas and the importer read (never a translation the
+        importer would not know); the code guide and each drop-down's hint give their meaning in Arabic."""
+        import io as _io
+        import re
+        import openpyxl
+        from erp import workbook, demo, workbook_ar
+        db = Database(":memory:")
+        demo.load(db, "admin", lang="ar")
+        wb = openpyxl.load_workbook(_io.BytesIO(workbook.build_workbook(db, lang="ar")))
+        L = wb["Lists"]
+        self.assertEqual([c.value for r in L.iter_rows() for c in r if isinstance(c.value, str)
+                          and not c.value.startswith("=") and re.search("[؀-ۿ]", c.value)], [])
+        outside = []
+        for ws in wb.worksheets:
+            for dv in ws.data_validations.dataValidation:
+                m = re.fullmatch(r"=?'?Lists'?!\$([A-Z]+)\$(\d+):\$([A-Z]+)\$(\d+)", dv.formula1 or "") if dv.type == "list" else None
+                if not m:
+                    continue
+                allowed = {c.value for row in L[f"{m.group(1)}{m.group(2)}:{m.group(3)}{m.group(4)}"] for c in row}
+                outside += [(ws.title, c.coordinate, c.value) for rg in dv.sqref.ranges
+                            for row in ws.iter_rows(min_row=rg.min_row, max_row=min(rg.max_row, ws.max_row), min_col=rg.min_col, max_col=rg.max_col)
+                            for c in row if c.value not in (None, "") and c.value not in allowed and not str(c.value).startswith("=")]
+        self.assertEqual(outside, [])
+        g = wb[workbook_ar.GUIDE]
+        rows = [r for r in g.iter_rows(min_row=5, values_only=True) if r[2]]
+        self.assertEqual([r for r in rows if not r[3]], [])                       # every code has a meaning
+        self.assertIn(("حركات المخزون", "نوع الحركة", "Issue", "صرف"), [tuple(r[:4]) for r in rows])
+        hints = [dv.prompt for ws in wb.worksheets for dv in ws.data_validations.dataValidation if dv.prompt]
+        self.assertTrue(any("general_admin = مصروفات عمومية وإدارية" in h or workbook_ar.GUIDE in h for h in hints))
+        self.assertTrue(all(len(h) <= 255 for h in hints))
+
 
 class Extracts(unittest.TestCase):
     """Running extracts (مستخلص جاري): the client's totals, the next extract of a rental contract, follow-up, adjusting."""

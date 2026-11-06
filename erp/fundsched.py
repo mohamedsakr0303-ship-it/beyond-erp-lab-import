@@ -1,10 +1,10 @@
 """The funding partners' repayment schedule: what clients paid and a funding partner's share of each so far, then month
-by month what each funding partner is expected to get back from the money still to come in, until his money in the
+by month what each funding partner is expected to get back from the money still to come in, until their money in the
 company is repaid.
 
 The main funding partner's share of each client payment is the distribution policy's `funding_repay_pct`; each other
-funding partner has his own (Partner settlement → Other funding partners). A funding partner's money in the company is
-the balance of his own funding account. Money expected in: what customers owe today (collected `lag` months from now),
+funding partner has their own (Partner settlement → Other funding partners). A funding partner's money in the company is
+the balance of their own funding account. Money expected in: what customers owe today (collected `lag` months from now),
 installments, customer cheques and recurring receipts from the cash forecast, and each active rental contract's monthly
 rent from its next unbilled month to its last month. The rent and the last month of each contract can be set here
 (`funding_schedule` setting) since a contract has no end date of its own; left blank, rent runs to the end of the horizon.
@@ -47,7 +47,7 @@ def clean(v):
         last = acc.text(r.get("last"))
         if last:
             if len(last) < 7 or not last[:4].isdigit() or last[4] != "-" or not last[5:7].isdigit():
-                raise acc.ValidationError("The last month looks like 2028-07")
+                raise acc.ValidationError("Enter the last month as year-month, e.g. 2028-07")
             row["last"] = last[:7]
         if row:
             out["rentals"][acc.text(code)[:40]] = row
@@ -55,8 +55,8 @@ def clean(v):
 
 
 def history(db, date_to, account=None):
-    """Each client payment, and what was paid back to a funding partner (debits on his account) on each day.
-    account: his account (default: the main funding partner's)."""
+    """Each client payment, and what was paid back to a funding partner (debits on their account) on each day.
+    account: their account (default: the main funding partner's)."""
     pays = db.q(f"""SELECT e.id, e.date, e.memo, e.party, SUM(l.credit) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                     JOIN accounts a ON a.code=l.account WHERE {acc.LIVE} AND e.date<=? AND e.kind='Receipt Voucher'
                     AND (a.subtype='receivable' OR a.role='client_advances') AND l.credit>0 GROUP BY e.id ORDER BY e.date, e.id""",
@@ -71,8 +71,8 @@ def history(db, date_to, account=None):
 
 
 def _funders(db, date_to):
-    """Every funding partner with an account: the main one (his share is the distribution policy's) and the others
-    (each with his own share), what the company owes each today."""
+    """Every funding partner with an account: the main one (their share is the distribution policy's) and the others
+    (each with their own share), what the company owes each today."""
     from . import funders as fd
     out = []
     for f in fd.all_funders(db):
@@ -85,8 +85,8 @@ def _funders(db, date_to):
 
 
 def build(db, date_to=None, opts=None, funder=None):
-    """The schedule of one funding partner (`funder`: his name; default the main one, else the first), with every
-    funding partner repaid side by side month by month — each takes his own share of what clients pay until his money
+    """The schedule of one funding partner (`funder`: their name; default the main one, else the first), with every
+    funding partner repaid side by side month by month — each takes their own share of what clients pay until their money
     is back, and the partners' part is what is left after all of them."""
     from . import cashplan, rentals
     date_to = acc.clean_date(date_to) if date_to else acc.today()
@@ -102,7 +102,7 @@ def build(db, date_to=None, opts=None, funder=None):
         pays, back = history(db, date_to, sel["account"])
         for p in pays:
             if not since or p["date"] < since:
-                continue                         # before he put any money in: nothing of it is his
+                continue                         # before they put any money in: nothing of it is their
             amt = to_major(p["n"])
             rep = back.get(p["date"], 0.0) if p["date"] not in used else 0.0
             used.add(p["date"])
@@ -141,9 +141,9 @@ def build(db, date_to=None, opts=None, funder=None):
         for m in months:
             if m >= nxt and (not last or m <= last):
                 put("rent:" + r["code"], f"Rent {r['code']} — {r['client']}", _add(m, o["lag"]) if o["lag"] else m, monthly, f"#/rental/{r['id']}")
-    # every funding partner with a share of client payments is repaid at the same time, each from his own share
+    # every funding partner with a share of client payments is repaid at the same time, each from their own share
     payers = [f for f in fl if f["pct"]]
-    # his deal's interest (if any) is added each month on what is still owed to him — a projection, booked only with
+    # their deal's interest (if any) is added each month on what is still owed to them — a projection, booked only with
     # Partner transaction → Funding partner interest
     bal = {f["name"]: max(f["owed"], 0.0) for f in payers}
     done = {f["name"]: "" for f in payers}
@@ -199,7 +199,7 @@ def table(db, date_to=None, lang="en", funder=None):
     rows.append(_row(T("TOTAL", "الإجمالي"), [round(sum(r["in"] for r in d["rows"]), 2), "", d["total_to_funder"], d["left_at_end"],
                                              d["total_partners"]], "total"))
     rows.append(_row(T(f"Repaid in full in {d['repaid_in']}" if d["repaid_in"] else
-                       f"Still owed to him at the end: {d['left_at_end']:,.2f}",
+                       f"Still owed to them at the end: {d['left_at_end']:,.2f}",
                        f"يُرد بالكامل في {d['repaid_in']}" if d["repaid_in"] else f"المتبقي له في النهاية: {d['left_at_end']:,.2f}"),
                      blank(5), "note"))
     rows.append(_row(T("So far", "ما تم حتى تاريخه"), blank(5), "section"))
@@ -207,12 +207,12 @@ def table(db, date_to=None, lang="en", funder=None):
         rows.append(_row(f"{h['date']}  {h['memo'][:60]}", [h["payment"], "", h["share"], h["repaid"], round(h["share"] - h["repaid"], 2)]))
     rows.append(_row(T("TOTAL", "الإجمالي"), [d["paid"], "", d["share"], d["repaid"], round(d["share"] - d["repaid"], 2)], "total"))
     return {"title": T("Funding partner repayment schedule", "جدول سداد الشريك الممول"),
-            "subtitle": T(f"{d['partner']} · {(d['pct'] or 0):.0%} of each client payment · owed to him {d['owed']:,.2f} on {d['date_to']}",
+            "subtitle": T(f"{d['partner']} · {(d['pct'] or 0):.0%} of each client payment · owed to them {d['owed']:,.2f} on {d['date_to']}",
                           f"{d['partner']} · {(d['pct'] or 0):.0%} من كل دفعة عميل · المستحق له {d['owed']:,.2f} في {d['date_to']}"),
             "columns": [{"label": T("Month / payment", "الشهر / الدفعة"), "align": "left"},
                         {"label": T("Clients pay", "تحصيل العملاء"), "align": "right", "fmt": "money"},
-                        {"label": T("Owed to him (start)", "المستحق له أول الشهر"), "align": "right", "fmt": "money"},
-                        {"label": T("To him", "يُرد له"), "align": "right", "fmt": "money"},
-                        {"label": T("Owed to him (end) / repaid", "المستحق له آخر الشهر / رُد له"), "align": "right", "fmt": "money"},
+                        {"label": T("Owed to them (start)", "المستحق له أول الشهر"), "align": "right", "fmt": "money"},
+                        {"label": T("To them", "يُرد له"), "align": "right", "fmt": "money"},
+                        {"label": T("Owed to them (end) / repaid", "المستحق له آخر الشهر / رُد له"), "align": "right", "fmt": "money"},
                         {"label": T("Partners' part / difference", "نصيب الشركاء / الفرق"), "align": "right", "fmt": "money"}],
             "rows": rows, "lang": lang, "data": d}

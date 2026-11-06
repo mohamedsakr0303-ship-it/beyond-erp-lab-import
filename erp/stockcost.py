@@ -200,8 +200,8 @@ def short_message(db, short, new_ids=()):
     wh = db.one("SELECT name FROM warehouses WHERE id=?", (m["warehouse_id"],))["name"]
     if m["id"] in new_ids:
         return f"Only {avail:g} {it['unit']} of {it['name']} in {wh} on {m['date']}"
-    return (f"{it['name']} in {wh} would run short on {m['date']} (a {m['kind'].lower()} of {abs(m['qty']):g} {it['unit']} "
-            f"with {avail:g} left). Undo or move the later movements first, or correct the quantity with a count.")
+    return (f"{it['name']} in {wh} would run short on {m['date']}: {abs(m['qty']):g} {it['unit']} go out with only {avail:g} "
+            f"left. Undo or move the later movements first, or correct the quantity with a count.")
 
 
 def apply(db, item_id, after=None, why="", user="", new_ids=(), check=True):
@@ -240,7 +240,7 @@ def recost_all(db, how=None, user="", preview=False):
     from .accounting import ValidationError
     how = how or method(db)
     if how not in METHODS:
-        raise ValidationError("Costing is FIFO or moving average")
+        raise ValidationError("Choose FIFO or moving average")
     out = {"method": how, "items": [], "total": 0.0, "short": []}
     items = db.q("SELECT DISTINCT m.item_id, i.name FROM stock_moves m JOIN stock_items i ON i.id=m.item_id ORDER BY i.name")
     for it in items:

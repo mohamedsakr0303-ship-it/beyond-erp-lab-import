@@ -561,7 +561,7 @@ def crew_qty(ln):
     """Quantity of one measured line = count × length/width × height/depth (blank dimensions count as 1)."""
     from .accounting import num
     if not isinstance(ln, dict):
-        raise ValidationError("Each measured line has a count and its dimensions")
+        raise ValidationError("Each measured line needs a count and its dimensions")
     q = num(ln.get("count") or 0, "count")
     for k in ("dim1", "dim2", "dim3"):
         if ln.get(k) not in (None, "", 0, "0"):

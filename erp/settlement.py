@@ -1,15 +1,15 @@
-"""What each partner would take out if he left today, and the main funding partner's own account.
+"""What each partner would take out if they left today, and the main funding partner's own account.
 
 Funding partner: one partner's personal account is the company's bank (the main funding partner; other funding
-partners, each with his own account, are in funders.py). Every client payment lands in
-it and every cost, loan to a partner or distribution leaves it. The money he has put in of his own is therefore
+partners, each with their own account, are in funders.py). Every client payment lands in
+it and every cost, loan to a partner or distribution leaves it. The money they have put in of their own is therefore
 "out − in" across the company's cash / bank movements — live, so it moves with every payment, like the workbook's
-Balances Tracker section 5. His capital in the books is the same figure once it is booked (the workbook's automatic
+Balances Tracker section 5. Their capital in the books is the same figure once it is booked (the workbook's automatic
 funding entry, or "Book funding to date" here).
 
-Leaving partner: capital (+ funding not yet booked) + current account + his undrawn share of BILLED profit (after the
-reserve, less his drawings) + his share of the reserve held back − what he owes the company (loans to him, anything else
-in his name) + what the company owes him (loans from him, interest, amounts payable). His share of the profit expected on
+Leaving partner: capital (+ funding not yet booked) + current account + their undrawn share of BILLED profit (after the
+reserve, less their drawings) + their share of the reserve held back − what he owes the company (loans to them, anything else
+in their name) + what the company owes them (loans from them, interest, amounts payable). Their share of the profit expected on
 work done but not invoiced is a memo only — never in the total.
 """
 from . import accounting as acc
@@ -31,8 +31,8 @@ def _cash_codes(db):
 
 def funding_ledger(db, name=None, date_to=None):
     """Every movement of the company's cash / bank as the funding partner's money in and out, grouped like the
-    workbook: per project, then custody, partner loans, distributions and company overhead. Entries that book his
-    funding itself (cash against his capital) are left out — they are the result, not a movement."""
+    workbook: per project, then custody, partner loans, distributions and company overhead. Entries that book their
+    funding itself (cash against their capital) are left out — they are the result, not a movement."""
     name = name or funding_partner(db)
     if not name:
         return None
@@ -54,7 +54,7 @@ def funding_ledger(db, name=None, date_to=None):
     for eid, ls in by_entry.items():
         is_money = lambda x: x["subtype"] == "cash" or x["role"] == "funding_partner"  # noqa: E731
         if any(x["subtype"] in ("capital", "partner_current") and x["role"] != "funding_partner" and x["party"] == name for x in ls):
-            continue                                    # booking his funding as capital: not a movement of money
+            continue                                    # booking their funding as capital: not a movement of money
         money = sum(x["debit"] - x["credit"] for x in ls if is_money(x))
         if not money:
             continue                                    # a transfer between the company's own accounts
@@ -77,8 +77,8 @@ def funding_ledger(db, name=None, date_to=None):
         g["in" if money > 0 else "out"] += abs(money)
         rows.append({"id": eid, "date": e["date"], "kind": e["kind"], "ref": e["ref"], "memo": e["memo"], "group": label,
                      "party": e["party"], "in": to_major(max(money, 0)), "out": to_major(max(-money, 0))})
-    # money he paid (or received) personally on the company's behalf — booked straight to his capital with no
-    # cash / bank line (e.g. a loan he paid out of his own pocket)
+    # money he paid (or received) personally on the company's behalf — booked straight to their capital with no
+    # cash / bank line (e.g. a loan he paid out of their own pocket)
     for e in db.q(f"""SELECT e.id, e.date, e.kind, e.ref, e.memo, b.code AS bu_code, b.name AS bu_name, SUM(l.credit-l.debit) AS n
                       FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
                       LEFT JOIN business_units b ON b.id=e.bu_id
@@ -88,7 +88,7 @@ def funding_ledger(db, name=None, date_to=None):
                       GROUP BY e.id ORDER BY e.date, e.id""", [date_to, name] + cash):
         if not e["n"]:
             continue
-        g = groups.setdefault("personal", {"key": "personal", "label": "Paid / received by him personally", "in": 0, "out": 0})
+        g = groups.setdefault("personal", {"key": "personal", "label": "Paid / received by them personally", "in": 0, "out": 0})
         g["out" if e["n"] > 0 else "in"] += abs(e["n"])
         rows.append({"id": e["id"], "date": e["date"], "kind": e["kind"], "ref": e["ref"], "memo": e["memo"],
                      "group": g["label"], "party": name, "in": to_major(max(-e["n"], 0)), "out": to_major(max(e["n"], 0))})
@@ -96,7 +96,7 @@ def funding_ledger(db, name=None, date_to=None):
     run = 0
     for r in rows:
         run += to_minor(r["out"]) - to_minor(r["in"])
-        r["own_money"] = to_major(run)                  # his own money in the company after this movement
+        r["own_money"] = to_major(run)                  # their own money in the company after this movement
     order = sorted(groups.values(), key=lambda g: (not g["key"].startswith("bu:"), g["key"]))
     tin, tout = sum(g["in"] for g in order), sum(g["out"] for g in order)
     booked = to_minor(_bal(db, name, date_to, ("capital", "partner_current")))
@@ -115,8 +115,8 @@ FUNDING_MODES = ("capital", "facility")
 
 
 def apply_funding_mode(db, mode=None):
-    """capital: what he fronts is his capital in the company (equity). facility: it is a credit line he gives the
-    company, owed back to him first (a current liability, like the workbook's account 2400)."""
+    """capital: what he fronts is their capital in the company (equity). facility: it is a credit line he gives the
+    company, owed back to them first (a current liability, like the workbook's account 2400)."""
     mode = mode or (db.setting("funding_mode") or "capital")
     if mode not in FUNDING_MODES:
         raise acc.ValidationError("The funding partner's money is either capital or a facility.")
@@ -135,8 +135,8 @@ def _partner_loans_out(db, date_to):
 
 def facility(db, date_to=None, led=None):
     """The funding partner's facility: a base line he always covers plus an optional temporary line (agreed for loans to
-    partners; it can shrink as they repay), what he has fronted today and once the suppliers still owed are paid from
-    his account, the peak so far, and a status against the warning levels."""
+    partners; it can shrink as they repay), what they have fronted today and once the suppliers still owed are paid from
+    their account, the peak so far, and a status against the warning levels."""
     name = funding_partner(db)
     if not name:
         return None
@@ -150,7 +150,7 @@ def facility(db, date_to=None, led=None):
     limit = round(base + extra_now, 2)
     fronted = led["own_money"]
     owed = acc.deals(db, date_to)["total_owed"]
-    # the company's own cash is already part of the ledger (money in), so only what is left over in his favour offsets
+    # the company's own cash is already part of the ledger (money in), so only what is left over in their favour offsets
     after = round(max(0.0, fronted + owed - led["in_his_account"]), 2)
     peak = max([r["own_money"] for r in led["rows"]] + [fronted, 0.0])
     warn, crit = num("funding_warn", 0.75), num("funding_critical", 0.9)
@@ -173,7 +173,7 @@ def facility(db, date_to=None, led=None):
 
 
 def _weeks(rows, base, date_to):
-    """Weekly statement of his account (weeks start on Monday): paid out, came in, and where it stood at week end."""
+    """Weekly statement of their account (weeks start on Monday): paid out, came in, and where it stood at week end."""
     import datetime as _d
     if not rows:
         return []
@@ -206,7 +206,7 @@ def _bal(db, name, date_to, subtypes):
 
 
 def book_funding(db, date=None, user=""):
-    """Bring the funding partner's capital in the books up (or down) to the money he has actually put in."""
+    """Bring the funding partner's capital in the books up (or down) to the money they have actually put in."""
     led = funding_ledger(db, date_to=date)
     if not led:
         raise acc.ValidationError("Choose the funding partner first.")
@@ -220,12 +220,12 @@ def book_funding(db, date=None, user=""):
              [{"account": cap, "debit": amt, "party": led["partner"]}, {"account": bank, "credit": amt}])
     return acc.record_journal(db, {"date": led["date_to"], "kind": "Capital Contribution" if diff > 0 else "Capital Withdrawal",
                                    "party": led["partner"], "ref": "FUNDING",
-                                   "memo": f"Funding partner — his own money in the company brought to {led['own_money']:,.2f}",
+                                   "memo": f"Funding partner — their own money in the company brought to {led['own_money']:,.2f}",
                                    "lines": lines}, user=user) if diff else None
 
 
 def exit_view(db, date_to=None):
-    """For every partner: what the company would owe him (or he would owe it) if he left today."""
+    """For every partner: what the company would owe them (or they would owe it) if they left today."""
     from .accounting import partner_report
     date_to = acc.clean_date(date_to) if date_to else acc.today()
     rep = partner_report(db, None, date_to)
@@ -238,7 +238,7 @@ def exit_view(db, date_to=None):
         capital = _bal(db, name, date_to, ("capital",))
         current = _bal(db, name, date_to, ("partner_current",))
         drawings = -_bal(db, name, date_to, ("drawings",))
-        # profit already moved into his current account by "Share profit" is not counted again
+        # profit already moved into their current account by "Share profit" is not counted again
         shared = db.one(f"""SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                             JOIN accounts a ON a.code=l.account WHERE {LIVE} AND e.date<=? AND e.kind='Profit Appropriation'
                             AND {PARTY_IS} AND a.subtype IN ('partner_current','drawings')""", (date_to, name))["n"]
@@ -248,11 +248,11 @@ def exit_view(db, date_to=None):
                               COALESCE(SUM(CASE WHEN a.type='Liability' THEN l.credit-l.debit ELSE 0 END),0) AS owed
                        FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
                        WHERE {LIVE} AND e.date<=? AND {PARTY_IS} AND a.subtype<>'cash'
-                             AND COALESCE(a.role,'')<>'funding_partner'""", (date_to, name))   # his facility: counted once, below
+                             AND COALESCE(a.role,'')<>'funding_partner'""", (date_to, name))   # their facility: counted once, below
         owes, owed = to_major(r["owes"]), to_major(r["owed"])
         unbooked = led["unbooked"] if led and name == fund else 0
-        # his billed profit splits into what he may take (less what he already took) and the reserve the company
-        # holds back — still his equity, so it is paid out when he leaves
+        # their billed profit splits into what he may take (less what he already took) and the reserve the company
+        # holds back — still their equity, so it is paid out when he leaves
         distributable = round(billed * (1 - reserve), 2) if billed > 0 else billed
         undrawn = round(distributable - drawings, 2)
         reserve_share = round(billed - distributable, 2)
