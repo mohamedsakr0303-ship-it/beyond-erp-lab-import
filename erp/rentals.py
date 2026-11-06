@@ -1394,6 +1394,8 @@ def ongoing(db, today=None):
 def allocation(db, rid, line_id):
     """How a frame / square-metre / piece line's rent splits over its pieces, by the pieces' FIFO cost."""
     r = get(db, rid)
+    if not str(line_id or "").strip().isdigit():
+        raise ValidationError("Choose a rent line")
     ln = db.one("SELECT * FROM rental_lines WHERE id=? AND rental_id=?", (int(line_id), r["id"]))
     if not ln or ln["kind"] == "charge":
         raise ValidationError("Choose a rent line")

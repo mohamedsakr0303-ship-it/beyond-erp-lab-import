@@ -116,7 +116,7 @@ window.I18N = {
   partner: ["Partner", "الشريك"], capital: ["Capital contribution", "مساهمة رأسمالية"], drawing: ["Owner drawing / dividend", "مسحوبات / توزيعات أرباح"],
   warehouse: ["Warehouse", "المخزن"], to_warehouse: ["To warehouse", "إلى مخزن"], item: ["Item", "الصنف"], counted: ["Counted quantity", "الكمية الفعلية بالجرد"],
   receipt: ["Goods receipt", "استلام بضاعة"], issue: ["Material issue", "صرف مواد"], transfer: ["Transfer", "تحويل"], adjustment: ["Count adjustment", "تسوية جرد"],
-  on_hand: ["On hand", "الرصيد"], avg_cost: ["Average cost", "متوسط التكلفة"], value: ["Value", "القيمة"], reorder: ["Minimum quantity", "الحد الأدنى للكمية"],
+  on_hand: ["On hand", "الرصيد"], avg_cost: ["Unit cost (on hand)", "تكلفة الوحدة (الرصيد)"], value: ["Value", "القيمة"], reorder: ["Minimum quantity", "الحد الأدنى للكمية"],
   inv_account: ["Inventory account", "حساب المخزون"], template: ["Template", "نموذج"], balanced: ["Balanced", "متوازن"], unbalanced: ["Not balanced", "غير متوازن"],
   invoice_no: ["Invoice / billing no.", "رقم الفاتورة / المستخلص"], boq: ["Bill of quantities", "المقايسة"], standalone: ["Standalone", "مستقل"],
   draft: ["Draft", "مسودة"], invoiced: ["Posted", "مرحّل"], save_post: ["Save & post", "حفظ وترحيل"], contract_qty: ["Contract qty", "كمية العقد"],

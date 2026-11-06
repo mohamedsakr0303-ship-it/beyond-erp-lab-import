@@ -481,7 +481,7 @@ def payables_table(db, date_to=None, lang="en"):
 def stock_table(db, warehouse_id=None, q=None, lang="en"):
     data = acc.stock_report(db, warehouse_id, q)
     heads = [("Code", "الكود", "left", None), ("Item", "الصنف", "left", None), ("Warehouse", "المخزن", "left", None),
-             ("Unit", "الوحدة", "left", None), ("On hand", "الرصيد", "right", "num"), ("Avg cost", "متوسط التكلفة", "right", "money"),
+             ("Unit", "الوحدة", "left", None), ("On hand", "الرصيد", "right", "num"), ("Unit cost (on hand)", "تكلفة الوحدة (الرصيد)", "right", "money"),
              ("Last purchase price", "آخر سعر شراء", "right", "money"), ("Last purchased on", "تاريخ آخر شراء", "left", None),
              ("Value", "القيمة", "right", "money")]
     cols = [{"label": h[1] if lang == "ar" else h[0], "align": h[2], "fmt": h[3]} for h in heads]

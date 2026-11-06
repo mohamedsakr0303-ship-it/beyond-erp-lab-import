@@ -516,7 +516,7 @@ def sheets(industry=None):
 # with a few items at or below their minimum (one per way of announcing it). Items the showroom sells (tiles 60x60,
 # bathroom sets) are left out: their sales are booked after the stock moves with earlier dates, and stock is costed in
 # date order, so a later delivery would change the cost those sales already took.
-_FLOWS = (   # item, unit, supplier, price, (unused), [(warehouse, receipt per month 1..5)], [(warehouse, project, use per month 1..5)]
+_FLOWS = (   # item, unit, supplier, price, monthly price rise, [(warehouse, receipt per month 1..5)], [(warehouse, project, use per month 1..5)]
     ("Granite slab 2cm", "m2", "Tiles & Ceramics Supplier", 520, .02, [("Main Store", (180, 120, 140, 120, 130))],
      [("Main Store", "PRJ-D02", (40, 60, 70, 65, 60)), ("Main Store", "PRJ-D03", (0, 30, 40, 45, 40))]),
     ("Cement bag 50kg", "bag", "Bright Building Materials", 95, .03, [("Main Store", (0, 120, 120, 140, 100)), ("Site Store — Villa 7", (0, 50, 50, 40, 30))],
@@ -538,7 +538,7 @@ def _stock_history(rows, d):
     rows = list(rows)
     for item, unit, vendor, price, rise, ins, outs in _FLOWS:
         for m in range(1, 6):
-            rate = price          # one price per item: the standalone workbook averages all receipts, the app per warehouse
+            rate = round(price * (1 + rise) ** (m - 1), 2)   # suppliers' prices rise month by month: FIFO issues the older, cheaper stock first
             for wh, qs in ins:
                 q = qs[m - 1]
                 if q:

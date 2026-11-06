@@ -1,10 +1,11 @@
 """Stocktakes (الجرد الدوري): count a warehouse, then post the differences as stock adjustments.
 
-Starting a count takes a snapshot of what the books say each item in the warehouse holds and at what average cost.
+Starting a count takes a snapshot of what the books say each item in the warehouse holds and its unit cost on hand.
 People enter what they physically counted (blank = not counted yet — left alone when posting). Posting books one
 Stock Adjustment per item that differs, through the usual stock engine (Dr/Cr inventory against the stock-adjustment
-account). Movements made while the count was open are respected: the adjustment is the counted − snapshot difference
-applied to today's quantity, not a reset to the counted figure.
+account). Movements made while the count was open are respected: the adjustment is the counted − snapshot difference,
+not a reset to the counted figure. A shortage is costed like any issue (FIFO / average); a surplus at the snapshot's
+unit cost.
 """
 from . import accounting as acc
 from .accounting import ValidationError, num, text
@@ -97,9 +98,8 @@ def post(db, cid, user=""):
         for ln in c["lines"]:
             if not ln["diff"]:
                 continue
-            now = acc._level(db, ln["item_id"], c["warehouse_id"])["qty"]
             acc.stock_move(db, {"type": "Adjustment", "warehouse_id": c["warehouse_id"], "item_id": ln["item_id"], "item": ln["item"],
-                                "counted": round(now + ln["diff"], 6), "rate": ln["unit_cost"], "date": c["date"],
+                                "diff": round(ln["diff"], 6), "rate": ln["unit_cost"], "date": c["date"],
                                 "note": f"Stocktake {c['code']}" + (f" — {ln['note']}" if ln["note"] else "")}, user)
             n += 1
         db.conn.execute("UPDATE stock_counts SET status='posted', posted_by=? WHERE id=?", (user, c["id"]))

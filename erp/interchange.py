@@ -24,10 +24,24 @@ FIRST_DATA_ROW = 5
 HEADER_ROW = 4
 
 
-def C(key, en, ar, kind="text", width=14, required=False, role=None, choices=None, calc=None, note=""):
-    """Column spec. kind: text|date|num|money|pct|acct|bu|calc. role: default account role for blanks."""
+def C(key, en, ar, kind="text", width=14, required=False, role=None, choices=None, calc=None, note="", calc0=None):
+    """Column spec. kind: text|date|num|money|pct|acct|bu|calc. role: default account role for blanks. In a formula,
+    [[^col]] is that column of the same sheet over the rows above this one; calc0 is the first data row's formula
+    (it has no rows above)."""
     return {"key": key, "en": en, "ar": ar, "kind": kind, "width": width, "required": required, "role": role,
-            "choices": choices, "calc": calc, "note": note}
+            "choices": choices, "calc": calc, "note": note, **({"calc0": calc0} if calc0 else {})}
+
+
+def STOCK_METHOD():
+    """The books' stock costing (Settings: stock_costing), fifo unless set to average."""
+    return f'IFERROR(VLOOKUP("stock_costing",Settings!$A${FIRST_DATA_ROW}:$B$2000,2,FALSE),"fifo")'
+
+
+def _fifo_cost(x):
+    """C(x): the cost of the first x units into this row's warehouse, from the rows above (see stockcost.py)."""
+    d = f"((({x})-[[^x_icb]])+ABS(({x})-[[^x_icb]]))/2"          # max(0, x - units in before that batch)
+    take = f"([[^x_iq]]+{d}-ABS([[^x_iq]]-{d}))/2"                 # min(batch, that)
+    return f'SUMPRODUCT(([[^item]]={{item}})*([[^x_iw]]={{warehouse}}&"")*{take}*[[^x_iu]])'
 
 
 def ROLE(role):
@@ -490,10 +504,34 @@ SHEETS = [
               C("note", "Note", "ملاحظة", width=16), C("vat_code", "VAT Code", "كود ض.ق.م", kind="tax", width=10), C("wht_code", "WHT Code", "كود خصم وتحصيل", kind="tax", width=10),
               C("x_rqty", "received qty", "الكمية المستلمة", kind="calc", width=8, calc='=IF({type}="Receipt",N({qty}),0)'),
               C("x_rval", "received value", "قيمة الاستلام", kind="calc", width=8, calc='=IF({type}="Receipt",ROUND(N({qty})*N({rate}),2),0)'),
+              # FIFO (or moving average) per warehouse, in row order: the rows are kept in date order (receipts and count
+              # gains first on a day), as the app costs them and as an export writes them
+              C("x_iw", "into warehouse", "إلى مخزن", kind="calc", width=8,
+                calc='=IF(OR({type}="Receipt",AND({type}="Adjustment",N({qty})>0)),{warehouse}&"",IF({type}="Transfer",{to_warehouse}&"",""))'),
+              C("x_iq", "qty in", "كمية واردة", kind="calc", width=7, calc='=IF({x_iw}="",0,ABS(N({qty})))'),
+              C("x_ow", "out of warehouse", "من مخزن", kind="calc", width=8,
+                calc='=IF(OR({type}="Issue",{type}="Transfer",AND({type}="Adjustment",N({qty})<0)),{warehouse}&"","")'),
+              C("x_oq", "qty out", "كمية منصرفة", kind="calc", width=7, calc='=IF({x_ow}="",0,ABS(N({qty})))'),
+              C("x_icb", "units in before", "وارد قبلها", kind="calc", width=7, calc0="=0",
+                calc='=IF({x_iq}=0,0,SUMIFS([[^x_iq]],[[^item]],{item},[[^x_iw]],{x_iw}))'),
+              C("x_ocb", "units out before", "منصرف قبلها", kind="calc", width=7, calc0="=0",
+                calc='=IF({x_oq}=0,0,SUMIFS([[^x_oq]],[[^item]],{item},[[^x_ow]],{x_ow}))'),
+              C("x_ohq", "on hand before", "الرصيد قبلها", kind="calc", width=7, calc0="=0",
+                calc='=SUMIFS([[^x_iq]],[[^item]],{item},[[^x_iw]],{warehouse}&"")-SUMIFS([[^x_oq]],[[^item]],{item},[[^x_ow]],{warehouse}&"")'),
+              C("x_ohv", "value on hand before", "قيمة الرصيد قبلها", kind="calc", width=8, calc0="=0",
+                calc='=SUMIFS([[^x_iv]],[[^item]],{item},[[^x_iw]],{warehouse}&"")-SUMIFS([[^x_ov]],[[^item]],{item},[[^x_ow]],{warehouse}&"")'),
               C("value", "Value", "القيمة", kind="calc",
-                note="Qty × unit cost; with no unit cost (issues, transfers, counts) the item's average cost of receipts up to this date",
-                calc='=ROUND(ABS(N({qty}))*IF({rate}<>"",N({rate}),IFERROR(SUMIFS([[Stock Moves.x_rval]],[[Stock Moves.item]],{item},'
-                     '[[Stock Moves.date]],"<="&{date})/SUMIFS([[Stock Moves.x_rqty]],[[Stock Moves.item]],{item},[[Stock Moves.date]],"<="&{date}),0)),2)'),
+                note="Receipts: qty x unit cost. Issues, transfers and count losses: FIFO, the cost of the oldest units still in "
+                     "that warehouse (or the moving average, if Settings says stock_costing = average). A count gain: its unit "
+                     "cost if given, else the average of what is on hand. Keep the rows in date order.",
+                calc0='=IF({type}="Receipt",ROUND(N({qty})*N({rate}),2),IF(AND({type}="Adjustment",N({qty})>0),ROUND(N({qty})*N({rate}),2),0))',
+                calc='=IF({type}="Receipt",ROUND(N({qty})*N({rate}),2),IF(AND({type}="Adjustment",N({qty})>0),'
+                     'IF(N({rate})>0,ROUND(N({qty})*N({rate}),2),IF({x_ohq}>0,ROUND(N({qty})*{x_ohv}/{x_ohq},2),0)),'
+                     'IF({x_oq}=0,0,IF(' + STOCK_METHOD() + '="average",IF({x_ohq}>0,ROUND({x_oq}*{x_ohv}/{x_ohq},2),0),'
+                     'ROUND(' + _fifo_cost("{x_ocb}+{x_oq}") + '-' + _fifo_cost("{x_ocb}") + ',2)))))'),
+              C("x_iv", "value in", "قيمة واردة", kind="calc", width=8, calc='=IF({x_iq}>0,{value},0)'),
+              C("x_iu", "unit value in", "تكلفة وحدة الوارد", kind="calc", width=8, calc='=IF({x_iq}>0,{x_iv}/{x_iq},0)'),
+              C("x_ov", "value out", "قيمة منصرفة", kind="calc", width=8, calc='=IF({x_oq}>0,{value},0)'),
               C("vat_amt", "Input VAT", "ض.ق.م المدخلات", kind="calc",
                 calc='=IF({type}="Receipt",ROUND({value}*' + TAXRATE("{vat_code}") + ',2),0)'),
               C("wht_amt", "WHT Withheld", "الخصم والتحصيل", kind="calc",
@@ -694,8 +732,12 @@ def export_data(db):
                                          "pct": "" if pct in (None, 1, 1.0) else pct, "account": ln["account"] or ""})
     # stock moves (only those still attached to a live entry, or entry-less transfers/counts)
     stock_entries = set()
-    moves = db.q("SELECT m.*, i.name AS item, i.unit, w.name AS warehouse FROM stock_moves m "
-                 "JOIN stock_items i ON i.id=m.item_id JOIN warehouses w ON w.id=m.warehouse_id ORDER BY m.id")
+    from . import stockcost
+    # in the order they are costed (by date; what comes in from outside first on a day): the workbook's FIFO formulas
+    # and an import take them in that order
+    moves = sorted(db.q("SELECT m.*, i.name AS item, i.unit, w.name AS warehouse FROM stock_moves m "
+                        "JOIN stock_items i ON i.id=m.item_id JOIN warehouses w ON w.id=m.warehouse_id"), key=stockcost.order_key)
+    arrivals = {m["link_id"]: m for m in moves if m["kind"] == "Transfer" and m["qty"] > 0 and m["link_id"]}
     skip = set()
     jitems = {r["entry_id"] for r in db.q("SELECT DISTINCT entry_id FROM material_lines")}   # exported with their voucher
     for idx, m in enumerate(moves):
@@ -724,20 +766,25 @@ def export_data(db):
         elif m["kind"] == "Issue" and e:
             row["qty"] = -m["qty"]
             row["account"] = next(ln["account"] for ln in e["lines"] if ln["debit"])
-            row["rate"] = round(e["amount"] / row["qty"], 6)
+            row["rate"] = ""            # costed again on import (FIFO / average), as the workbook's formulas do
         elif m["kind"] == "Transfer":
-            pair = next((n for n in moves[idx + 1: idx + 3] if n["kind"] == "Transfer" and n["qty"] > 0
-                         and n["item_id"] == m["item_id"] and n["entry_id"] == m["entry_id"]), None)
+            pair = arrivals.get(m["id"]) or next((n for n in moves if n["kind"] == "Transfer" and n["qty"] > 0 and not n["link_id"]
+                                                  and n["id"] == m["id"] + 1 and n["item_id"] == m["item_id"]), None)
             if pair:
                 skip.add(pair["id"])
                 row["to_warehouse"] = pair["warehouse"]
             row["qty"] = -m["qty"]
-        elif m["kind"] == "Adjustment" and e:
-            row["rate"] = round(e["amount"] / abs(m["qty"]), 6) if m["qty"] else 0
+            row["rate"] = ""
+        elif m["kind"] == "Adjustment":
+            # a gain at a unit cost written on the count keeps it; a loss, or a gain at the cost on hand, is costed again
+            row["rate"] = round(m["value"] / m["qty"] / 100, 6) if m["fixed"] and m["qty"] > 0 and m["value"] else ""
         if e:
             stock_entries.add(e["id"])
         out["Stock Moves"].append(row)
 
+    # a live stock cost adjustment is not written out: the movements are costed again on import (and in the workbook)
+    recost_entries = {r["entry_id"] for r in db.q("SELECT r.entry_id FROM stock_recosts r JOIN journal_entries e ON e.id=r.entry_id "
+                                                  "WHERE e.reversed_by IS NULL")}
     # journal-based documents
     accounts = {a["code"]: a for a in db.q("SELECT * FROM accounts")}
     # keep the company's own voucher numbers (e.g. JE-0001) when each belongs to one entry only
@@ -746,7 +793,7 @@ def export_data(db):
         refs[r["ref"]] = r["n"]
     for e in (acc.get_entry(db, r["id"]) for r in
               db.q("SELECT id FROM journal_entries WHERE status='posted' ORDER BY date, id")):
-        if e["id"] in invoice_entries or e["id"] in stock_entries:
+        if e["id"] in invoice_entries or e["id"] in stock_entries or e["id"] in recost_entries:
             continue
         row = None if e["id"] in jitems else _entry_to_row(e, accounts)   # item lines only fit the Journal Vouchers sheet
         if row:
@@ -1750,7 +1797,7 @@ def to_csv(db, sheet_name, template=False):
 WIPE_ORDER = ("year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", "hr_requests", "presence", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
-              "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "einv_received", "einv_templates", "stock_alert_log", "stock_minimums", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
+              "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "einv_received", "einv_templates", "stock_alert_log", "stock_minimums", "stock_recosts", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_stage_shares", "partner_shares", "partners", "rates", "alloc_rules", "business_units")
 
 
@@ -1974,7 +2021,7 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
             run("Partner Transactions", lambda r: acc.record_partner_tx(db, {**r, "type": "Capital" if str(
                 r.get("type", "")).startswith("Capital") else "Distribution"}, user))
             data["Stock Moves"] = sorted(data.get("Stock Moves") or [],
-                                         key=lambda r: (str(r.get("date") or ""), r.get("type") != "Receipt"))
+                                         key=lambda r: (str(r.get("date") or "")[:10], _stock_phase(r)))
             run("Stock Moves", lambda r: _imp_stock(db, r, user))
             run("Payment Vouchers", lambda r: acc.record_payment(db, {**r, "allow_overpay": True}, user))
             _imp_journal(db, data.get("Journal Vouchers") or [], errors, counts, user)
@@ -2406,13 +2453,19 @@ def _imp_invoices(db, data, errors, counts, user, stats):
 
 
 def _imp_stock(db, r, user):
-    typ = r.get("type")
     d = dict(r)
-    if typ == "Adjustment":
-        wh = acc._warehouse(db, r.get("warehouse"))
-        item = acc._item(db, r)
-        d["counted"] = acc._level(db, item["id"], wh["id"])["qty"] + acc.num(r.get("qty"), "qty", allow_negative=True)
+    if r.get("type") == "Adjustment":          # the sheet gives the difference (counted − books) of that day
+        d["diff"] = acc.num(r.get("qty"), "qty", allow_negative=True)
     acc.stock_move(db, d, user)
+
+
+def _stock_phase(r):
+    """As stockcost orders them: on a day, what comes in from outside (receipts, count gains) first."""
+    try:
+        gain = r.get("type") == "Adjustment" and float(r.get("qty") or 0) > 0
+    except (TypeError, ValueError):
+        gain = False
+    return 0 if r.get("type") == "Receipt" or gain else 1
 
 
 def _imp_journal(db, rows, errors, counts, user):

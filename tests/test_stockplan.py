@@ -185,31 +185,114 @@ class StockAndBooksAgree(unittest.TestCase):
         c = [x for x in acc.audit(db) if x["check"].startswith("Stock register")][0]
         self.assertTrue(c["ok"], c)
 
-    @unittest.expectedFailure
+    def cost(self, db, eid):
+        return round(sum(ln["debit"] for ln in acc.get_entry(db, eid)["lines"]), 2)
+
+    def recosts(self, db):
+        return [(r["date"], r["amount"]) for r in db.q(
+            "SELECT e.date, SUM(l.debit)/100.0 amount FROM journal_entries e JOIN journal_lines l ON l.entry_id=e.id "
+            "WHERE e.kind='Stock Cost Adjustment' AND e.status='posted' AND e.reversed_by IS NULL GROUP BY e.id ORDER BY e.id")]
+
+    def test_fifo_takes_the_oldest_batches_first(self):
+        db = books()
+        self.assertEqual(db.setting("stock_costing"), "fifo")                   # new books
+        receive(db, "Main Store", "Cement", 100, 10, month_day(2, 1))
+        receive(db, "Main Store", "Cement", 50, 13, month_day(2, 2))
+        i1 = issue(db, "Main Store", "Cement", 120, "P1", month_day(2, 3))     # 100 × 10 + 20 × 13
+        self.assertEqual(self.cost(db, i1), 1260.0)
+        i2 = issue(db, "Main Store", "Cement", 30, "P1", month_day(2, 4))      # the last 30 × 13
+        self.assertEqual(self.cost(db, i2), 390.0)
+        self.assertEqual(db.one("SELECT qty, value FROM stock_levels"), {"qty": 0, "value": 0})
+        self.check(db)
+
+    def test_each_warehouse_keeps_its_own_batches_and_a_transfer_carries_its_cost(self):
+        db = books()
+        receive(db, "Main Store", "Cement", 10, 10, month_day(2, 1))
+        receive(db, "Main Store", "Cement", 10, 16, month_day(2, 2))
+        receive(db, "Site", "Cement", 10, 50, month_day(2, 2))
+        acc.stock_move(db, {"type": "Transfer", "warehouse": "Main Store", "to_warehouse": "Site", "item": "Cement", "qty": 15,
+                            "date": month_day(2, 3)})                          # 10 × 10 + 5 × 16 = 180 leaves the main store
+        lv = {r["warehouse_id"]: r for r in db.q("SELECT * FROM stock_levels")}
+        self.assertEqual(lv[wh_id(db, "Main Store")]["value"], 8000)           # 5 × 16
+        self.assertEqual(lv[wh_id(db, "Site")]["value"], 68000)                # 500 + 180
+        i = issue(db, "Site", "Cement", 12, "P1", month_day(2, 4))             # the site's own 10 × 50 first, then 2 at 12 (180 / 15)
+        self.assertEqual(self.cost(db, i), 524.0)
+        self.check(db)
+
+    def test_a_backdated_receipt_recosts_the_later_issues_with_adjustment_entries(self):
+        db = books()
+        receive(db, "Main Store", "Cement", 100, 20, month_day(2, 10))
+        i1 = issue(db, "Main Store", "Cement", 60, "P1", month_day(2, 12))     # 60 × 20 = 1,200
+        self.assertEqual(self.cost(db, i1), 1200.0)
+        receive(db, "Main Store", "Cement", 50, 10, month_day(2, 5))           # earlier and cheaper: FIFO takes it first
+        # the issue now costs 50 × 10 + 10 × 20 = 700: its entry stays, an adjustment of −500 is dated on the issue's day
+        self.assertEqual(self.cost(db, i1), 1200.0)
+        self.assertEqual(self.recosts(db), [(month_day(2, 12), 500.0)])
+        cost_p1 = db.one("SELECT SUM(l.debit-l.credit) v FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                         "WHERE e.status='posted' AND e.bu_id=(SELECT id FROM business_units WHERE code='P1') AND l.account=?",
+                         (db.acct("materials"),))["v"]
+        self.assertEqual(cost_p1, 70000)                                        # the project's material cost is now 700
+        self.assertEqual(db.one("SELECT qty, value FROM stock_levels"), {"qty": 90, "value": 180000})   # 90 left × 20
+        self.check(db)
+
     def test_an_issue_entered_with_an_earlier_date_keeps_stock_and_books_agreeing(self):
-        """Known limitation, reported: stock is costed in date order, but an issue posted with a date before later receipts
-        is valued at the average of the moment it is posted, so the register and the inventory account drift apart. The
-        books check flags it. A fix (revaluing later issues, or posting-order costing everywhere) is a costing decision."""
         db = books()
         receive(db, "Main Store", "Cement", 100, 10, month_day(2, 1))
         issue(db, "Main Store", "Cement", 30, "P1", month_day(1, 1))
         receive(db, "Main Store", "Cement", 100, 20, month_day(1, 5))
         issue(db, "Main Store", "Cement", 50, "P1", month_day(2, 10))          # backdated, before the second receipt
         self.check(db)
-
-    def test_a_receipt_already_drawn_on_cannot_vanish(self):
-        db = books()
-        receive(db, "Main Store", "Cement", 100, 10, month_day(2, 1))
-        r2 = receive(db, "Main Store", "Cement", 100, 20, month_day(2, 2))
-        i1 = issue(db, "Main Store", "Cement", 100, "P1", month_day(2, 3))
-        for undo in (lambda: acc.void_entry(db, r2, "wrong"), lambda: acc.reverse_entry(db, r2)):
-            with self.assertRaisesRegex(acc.ValidationError, "Undo the later issues"):
-                undo()
+        with self.assertRaisesRegex(acc.ValidationError, "Only 50 bag of Cement in Main Store on"):
+            issue(db, "Main Store", "Cement", 51, "P1", month_day(2, 11))      # only 50 were there that day
+        with self.assertRaisesRegex(acc.ValidationError, "would run short on " + month_day(1, 1)):
+            issue(db, "Main Store", "Cement", 21, "P2", month_day(2, 11))      # fine that day, but then the issue of month 1 is short
         self.check(db)
-        acc.void_entry(db, i1, "undo the issue first")
+
+    def test_a_receipt_drawn_on_can_go_when_stock_is_left_and_the_issues_are_recosted(self):
+        db = books()
+        r1 = receive(db, "Main Store", "Cement", 100, 10, month_day(2, 1))
+        r2 = receive(db, "Main Store", "Cement", 100, 20, month_day(2, 2))
+        i1 = issue(db, "Main Store", "Cement", 80, "P1", month_day(2, 3))      # 80 × 10
+        self.assertEqual(self.cost(db, i1), 800.0)
+        acc.void_entry(db, r1, "entered twice")                                # the issue now draws on the second: 80 × 20
+        self.assertEqual(self.recosts(db), [(month_day(2, 3), 800.0)])
+        self.check(db)
+        for undo in (lambda: acc.void_entry(db, r2, "wrong"), lambda: acc.reverse_entry(db, r2)):
+            with self.assertRaisesRegex(acc.ValidationError, "would run short"):
+                undo()                                                          # nothing would be left for the issue
+        adj = db.one("SELECT entry_id FROM stock_recosts")["entry_id"]
+        with self.assertRaisesRegex(acc.ValidationError, "belongs to a stock movement"):
+            acc.void_entry(db, adj, "by itself")
+        acc.void_entry(db, i1, "undo the issue")                               # its adjustment goes with it
+        self.assertEqual(self.recosts(db), [])
         acc.void_entry(db, r2, "now it can go")
         self.check(db)
-        self.assertEqual(db.one("SELECT qty FROM stock_levels")["qty"], 100)
+        self.assertEqual(db.one("SELECT qty FROM stock_levels")["qty"], 0)
+
+    def test_reversing_an_issue_reverses_its_cost_adjustments_too(self):
+        db = books()
+        receive(db, "Main Store", "Cement", 10, 20, month_day(2, 10))
+        i1 = issue(db, "Main Store", "Cement", 10, "P1", month_day(2, 12))
+        receive(db, "Main Store", "Cement", 10, 5, month_day(2, 5))            # −150 on the issue
+        self.assertEqual(self.recosts(db), [(month_day(2, 12), 150.0)])
+        acc.reverse_entry(db, i1)
+        self.assertEqual(self.recosts(db), [])
+        self.check(db)
+
+    def test_moving_average_books_and_switching_them_to_fifo(self):
+        from erp import stockcost
+        db = books()
+        db.set_setting("stock_costing", "average")
+        receive(db, "Main Store", "Cement", 100, 10, month_day(2, 1))
+        receive(db, "Main Store", "Cement", 100, 20, month_day(2, 2))
+        i1 = issue(db, "Main Store", "Cement", 50, "P1", month_day(2, 3))      # at the average, 15
+        self.assertEqual(self.cost(db, i1), 750.0)
+        prev = stockcost.recost_all(db, "fifo", preview=True)
+        self.assertEqual((prev["total"], db.setting("stock_costing")), (-250.0, "average"))   # 50 × 10 = 500 under FIFO
+        stockcost.recost_all(db, "fifo", user="admin")
+        self.assertEqual(db.setting("stock_costing"), "fifo")
+        self.assertEqual(self.recosts(db), [(month_day(2, 3), 250.0)])
+        self.check(db)
 
     def test_every_demo_ties_out_including_the_asset_register(self):
         from erp import industries
@@ -335,3 +418,108 @@ class Workbook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FifoWorkbook(unittest.TestCase):
+    """The Excel workbook costs stock the way the app does: every Stock Moves row's value and the trial balance,
+    recalculated by LibreOffice, with prices that change, transfers, counts and a movement entered with an earlier date."""
+
+    def books(self, how="fifo"):
+        db = books()
+        db.set_setting("stock_costing", how)
+        receive(db, "Main Store", "Cement", 100, 10, month_day(3, 1))
+        receive(db, "Main Store", "Cement", 60, 12.5, month_day(3, 4))
+        receive(db, "Site", "Cement", 40, 14, month_day(3, 5))
+        issue(db, "Main Store", "Cement", 130, "P1", month_day(3, 8))                  # 100 × 10 + 30 × 12.5
+        acc.stock_move(db, {"type": "Transfer", "warehouse": "Main Store", "to_warehouse": "Site", "item": "Cement", "qty": 20,
+                            "date": month_day(3, 9)})
+        issue(db, "Site", "Cement", 50, "P2", month_day(3, 10))                         # 40 × 14 + 10 from the transfer
+        acc.stock_move(db, {"type": "Adjustment", "warehouse": "Site", "item": "Cement", "counted": 7, "date": month_day(3, 11)})
+        receive(db, "Main Store", "Cement", 80, 11.3, month_day(2, 2))
+        acc.stock_move(db, {"type": "Adjustment", "warehouse": "Main Store", "item": "Cement", "counted": 95, "date": month_day(2, 3)})
+        acc.stock_move(db, {"type": "Adjustment", "warehouse": "Main Store", "item": "Cement", "counted": 97, "rate": 9.75,
+                            "date": month_day(2, 4)})
+        receive(db, "Main Store", "Tiles", 30, 101.07, month_day(2, 5))
+        r = receive(db, "Main Store", "Tiles", 30, 97.33, month_day(2, 6))
+        issue(db, "Main Store", "Tiles", 25, "P1", month_day(2, 9))
+        receive(db, "Main Store", "Tiles", 10, 80, month_day(2, 1))                     # entered later, dated earlier
+        issue(db, "Main Store", "Cement", 33, "P2", month_day(1, 3))
+        issue(db, "Main Store", "Tiles", 7, "P2", month_day(1, 4))
+        acc.void_entry(db, r, "wrong supplier")                                         # its tiles were partly drawn on
+        return db
+
+    def test_the_app_ties_out(self):
+        db = self.books()
+        c = [x for x in acc.audit(db) if x["check"].startswith("Stock register")][0]
+        self.assertTrue(c["ok"], c)
+        self.assertTrue(db.q("SELECT 1 FROM journal_entries WHERE kind='Stock Cost Adjustment' AND status='posted'"))
+
+    @unittest.skipUnless(HAVE_XL and __import__("shutil").which("soffice"), "LibreOffice not installed")
+    def test_the_workbook_recalculated_agrees_row_by_row(self):
+        import subprocess
+        import tempfile
+        import openpyxl
+        from erp import stockcost, workbook
+        for how in ("fifo", "average"):
+            db = self.books(how)
+            app_values = interchange.export_data(db)["Stock Moves"]
+            with tempfile.TemporaryDirectory() as d:
+                src = Path(d) / "b.xlsx"
+                src.write_bytes(workbook.build_workbook(db))
+                subprocess.run(["soffice", "--headless", "--convert-to", "xlsx", "--outdir", str(Path(d) / "out"), str(src)],
+                               capture_output=True, timeout=600)
+                wb = openpyxl.load_workbook(Path(d) / "out" / "b.xlsx", data_only=True)
+            ws = wb["Stock Moves"]
+            heads = [c.value for c in ws[interchange.FIRST_DATA_ROW - 1]]
+            col = heads.index("Value")
+            xl = [ws.cell(interchange.FIRST_DATA_ROW + i, col + 1).value for i in range(len(app_values))]
+            # the app's own value of each row, in the same order
+            moves = [m for m in sorted(db.q("SELECT * FROM stock_moves"), key=stockcost.order_key)
+                     if not (m["kind"] == "Transfer" and m["qty"] > 0)]
+            self.assertEqual(len(moves), len(xl), how)
+            for m, v in zip(moves, xl):
+                self.assertAlmostEqual(m["value"] / 100, v or 0, delta=0.011 if how == "fifo" else 0.05,
+                                       msg=f"{how}: {m['kind']} {m['qty']} on {m['date']}")
+            to = max(r["date"] for r in db.q("SELECT date FROM journal_entries"))
+            app = {r["account"]: (r["dr"] - r["cr"]) / 100 for r in db.q(
+                "SELECT l.account, SUM(l.debit) dr, SUM(l.credit) cr FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                "WHERE e.date<=? AND e.status='posted' GROUP BY l.account", (to,))}
+            tb = {str(r[0]): r[7] or 0 for r in wb["Trial Balance"].iter_rows(min_row=5, values_only=True) if r[0]}
+            for k in set(app) | set(tb):
+                self.assertAlmostEqual(app.get(k, 0), tb.get(k, 0), delta=0.05 if how == "fifo" else 0.25, msg=f"{how}: account {k}")
+
+    def test_export_and_import_give_the_same_stock_and_books(self):
+        import tempfile
+        from erp import workbook
+        for how in ("fifo", "average"):
+            src = self.books(how)
+            path = str(Path(tempfile.mkdtemp()) / "b.xlsx")
+            Path(path).write_bytes(workbook.build_workbook(src))
+            for label, data in (("json", interchange.read_json(interchange.to_json(src).encode())), ("xlsx", interchange.read_xlsx(path))):
+                dst = Database(":memory:")
+                res = interchange.import_data(dst, data, mode="replace", user="t")
+                self.assertFalse(res.get("errors"), (how, label, res.get("errors")))
+                self.assertEqual(dst.setting("stock_costing"), how)
+                q = ("SELECT i.name, w.name wh, l.qty, l.value FROM stock_levels l JOIN stock_items i ON i.id=l.item_id "
+                     "JOIN warehouses w ON w.id=l.warehouse_id WHERE l.qty<>0 ORDER BY 1, 2")
+                self.assertEqual(src.q(q), dst.q(q), (how, label))
+                tb = lambda db: {r["account"]: r["v"] for r in db.q(
+                    "SELECT l.account, SUM(l.debit-l.credit) v FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                    "WHERE e.status='posted' GROUP BY 1 HAVING v<>0")}
+                self.assertEqual(tb(src), tb(dst), (how, label))
+                c = [x for x in acc.audit(dst) if x["check"].startswith("Stock register")][0]
+                self.assertTrue(c["ok"], (how, label, c))
+
+
+class CostingSwitch(unittest.TestCase):
+    def test_the_demo_switched_to_average_and_back_to_fifo_ties_out_each_time(self):
+        from erp import stockcost
+        db = Database(":memory:")
+        demo.load(db, "admin")
+        fifo = db.one("SELECT SUM(value) v FROM stock_levels")["v"]
+        for how in ("average", "fifo"):
+            stockcost.recost_all(db, how, user="admin")
+            c = [x for x in acc.audit(db) if x["check"].startswith("Stock register")][0]
+            self.assertTrue(c["ok"] and abs(c["a"] - c["b"]) < 0.005, (how, c))
+        self.assertEqual(db.one("SELECT SUM(value) v FROM stock_levels")["v"], fifo)
+        self.assertEqual(stockcost.recost_all(db, "fifo", preview=True)["items"], [])     # nothing left to change

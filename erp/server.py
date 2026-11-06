@@ -1428,6 +1428,8 @@ def automations_run(ctx):
     """Run the signed-in person's own rules and alerts now (the app calls this every few minutes, with its local time)."""
     from . import automations
     only = ctx.body.get("id")
+    if only and not str(only).strip().isdigit():
+        raise acc.ValidationError("Choose the rule to run")
     if only:
         r = ctx.db.one("SELECT created_by FROM automations WHERE id=?", (int(only),))
         if not (ctx.can("settings.automations", "edit") or (r and r["created_by"] == ctx.user["username"])):
@@ -1862,7 +1864,7 @@ def list_docs(ctx, dtype):
     kinds = {"direct_cost": ["Direct Cost"], "expense": ["Operating Expense"], "payment": ["Payment Voucher"],
              "payroll": ["Payroll Accrual"], "receipt": ["Receipt Voucher"],
              "partner_tx": ["Capital Contribution", "Owner Drawing"],
-             "stock_move": ["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment"]}
+             "stock_move": ["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Stock Cost Adjustment"]}
     if dtype not in kinds:
         return ok({"error": "Unknown document"}, 404)
     ctx.require(DOCS[dtype][1], "view")
@@ -1889,7 +1891,7 @@ KIND_MODULE = {"Revenue Recognition": "shop.subscriptions", "Supplier Discount":
                "Share Transfer": "partners.ownership", "Partner Admission": "partners.ownership",
                "Partner Exit": "partners.ownership", "Asset Purchase": "assets.register", "Depreciation": "assets.depreciation",
                "Asset Disposal": "assets.register", "Goods Receipt": "stock.moves", "Material Issue": "stock.moves",
-               "Stock Transfer": "stock.moves", "Stock Adjustment": "stock.moves",
+               "Stock Transfer": "stock.moves", "Stock Adjustment": "stock.moves", "Stock Cost Adjustment": "stock.moves",
                **{k: "accounting.loans" for k in loans.ALL_KINDS}, **{k: "purchasing.custody" for k in custody.ALL_KINDS},
                **{k: "rentals.fleet" for k in rentals.KINDS},
                "Bank Entry": "accounting.bankrec",
@@ -2176,7 +2178,8 @@ def extract_del(ctx, xid):
 def stock(ctx):
     if not (ctx.can("stock.balances") or ctx.can("stock.warehouses") or ctx.can("stock.moves")):
         raise PermissionError()
-    return ok({"levels": acc.stock_report(ctx.db, ctx.q.get("warehouse_id"), ctx.q.get("q")),
+    from . import stockcost
+    return ok({"levels": acc.stock_report(ctx.db, ctx.q.get("warehouse_id"), ctx.q.get("q")), "costing": stockcost.method(ctx.db),
                "warehouses": ctx.db.q("SELECT * FROM warehouses ORDER BY id"),
                "items": ctx.db.q("SELECT * FROM stock_items ORDER BY name"), "catalog": item_catalog(ctx.db, ctx.q.get("q"))})
 
@@ -2184,7 +2187,7 @@ def stock(ctx):
 def item_catalog(db, q=None):
     """Every item — with stock or not — with its standard cost, selling price, what is on hand and the last price paid."""
     rows = db.q("""SELECT i.*, COALESCE((SELECT SUM(qty) FROM stock_levels WHERE item_id=i.id),0) AS on_hand,
-                          COALESCE((SELECT SUM(qty*avg_cost) FROM stock_levels WHERE item_id=i.id),0) AS value_minor,
+                          COALESCE((SELECT SUM(value) FROM stock_levels WHERE item_id=i.id),0) AS value_minor,
                           (SELECT rate FROM stock_moves WHERE item_id=i.id AND qty>0 AND kind='Receipt'
                            ORDER BY date DESC, id DESC LIMIT 1) AS last_rate,
                           (SELECT date FROM stock_moves WHERE item_id=i.id AND qty>0 AND kind='Receipt' ORDER BY date DESC, id DESC LIMIT 1) AS last_date
@@ -2322,6 +2325,29 @@ def item_stock_settings_put(ctx, iid):
     return ok(r)
 
 
+@route("GET", "/api/stock/costing", "stock.balances")
+def stock_costing_get(ctx):
+    from . import stockcost
+    return ok({"method": stockcost.method(ctx.db),
+               "adjustments": ctx.db.one("SELECT COUNT(*) n FROM stock_recosts r JOIN journal_entries e ON e.id=r.entry_id "
+                                         "WHERE e.status='posted' AND e.reversed_by IS NULL")["n"]})
+
+
+@route("POST", "/api/stock/costing", "settings.system", "edit")
+def stock_costing_set(ctx):
+    """Switch the books' stock costing (FIFO / moving average), or re-cost every item with the current method. With
+    preview, nothing changes. Every movement is valued again; the differences are posted as dated adjustment entries."""
+    from . import stockcost
+    if not ctx.user.get("is_super"):
+        raise SuperOnly("Only a super administrator can change how stock is costed")
+    how = acc.text(ctx.body.get("method")) or stockcost.method(ctx.db)
+    preview = ctx.body.get("preview") not in (False, 0, "0", "false", None) if "preview" in ctx.body else True
+    r = stockcost.recost_all(ctx.db, how, user=ctx.user["username"], preview=preview)
+    if not preview:
+        ctx.db.log(ctx.user["username"], "stock costing", f"{how}: {len(r['items'])} item(s) re-costed, {r['total']:+.2f}")
+    return ok(r)
+
+
 @route("GET", "/api/stock-plan", "stock.balances")
 def stock_plan(ctx):
     """The forecast per item and warehouse (what comes in and goes out), and the minimums with what is below them."""
@@ -2344,7 +2370,10 @@ def stock_plan_projects(ctx):
 def stock_plan_apply(ctx):
     """Set minimums to the forecast's suggestions (all items with a delivery time, or the ones given)."""
     from . import stockplan
-    ids = [int(i) for i in (ctx.body.get("items") or [])] or None
+    raw = ctx.body.get("items") or []
+    if not isinstance(raw, list) or not all(str(i).strip().isdigit() for i in raw):
+        raise acc.ValidationError("Choose the items")
+    ids = [int(i) for i in raw] or None
     n = stockplan.apply_suggestions(ctx.db, ids)
     ctx.log("item.minimum", f"{n} suggested minimums applied")
     return ok({"applied": n})
@@ -6031,7 +6060,7 @@ def offer_type_del(ctx, tid):
 
 # ============================================================ erase all data
 ERASE_TRANSACTIONS = ("entry_tags", "workdays", "hr_requests", "presence", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
-                      "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_alert_log", "einv_received", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
+                      "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_alert_log", "einv_received", "stock_recosts", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("kb_pages", "automation_log", "automations", "care_services", "care_patients", "parties", "stock_items", "boq_lines", "boqs", "partner_stage_shares", "partner_shares", "partners", "rates", "alloc_rules",
@@ -6425,6 +6454,7 @@ def _handle(app, method, target, headers, raw, as_user, dry):
         app = _DryRunApp(app)
     url = urlparse(target)
     db = app.db
+    match = None
     try:
         if len(raw or b"") > MAX_BODY:
             return ok({"error": "Upload too large (max 25 MB)"}, 413)
@@ -6500,6 +6530,8 @@ def _handle(app, method, target, headers, raw, as_user, dry):
                 reply = aiundo.capture(db, ai_change, user, lambda: fn(ctx, **match.groupdict()))
             else:
                 reply = fn(ctx, **match.groupdict())
+            if method == "GET" and match.groupdict() and isinstance(reply, Reply) and reply.status == 200 and reply.body == b'{"ok": true}':
+                return ok({"error": "Not found"}, 404)       # a record asked for by its number that is not there
             if sc and method == "GET" and isinstance(reply, Reply) and reply.status == 200 and "json" in (reply.ctype or ""):
                 reply.body = json.dumps(scope.narrow(sc, url.path, json.loads(reply.body)), ensure_ascii=False, default=str).encode("utf-8")
             if ctx.lang != "en" and method == "GET" and isinstance(reply, Reply) and reply.status == 200 and "json" in (reply.ctype or ""):
@@ -6510,7 +6542,13 @@ def _handle(app, method, target, headers, raw, as_user, dry):
     except PermissionError as e:
         return ok({"error": str(e) or "You do not have permission for this action."}, 403)
     except (acc.ValidationError, LookupError, ValueError, json.JSONDecodeError) as e:
-        return ok({"error": str(e)}, 400)
+        msg = str(e)
+        bad = re.match(r"(?:invalid literal for int\(\) with base 10|could not convert string to float): '?(.*?)'?$", msg)
+        if bad and not isinstance(e, acc.ValidationError):   # Python's own wording never reaches the screen
+            if match is not None and bad.group(1) in [str(v) for v in match.groupdict().values()]:
+                return ok({"error": "Not found"}, 404)
+            msg = f"'{bad.group(1)}' is not a number"
+        return ok({"error": msg}, 400)
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
         return ok({"error": f"Server error: {e.__class__.__name__}"}, 500)

@@ -248,11 +248,14 @@ def ignore(db, ids):
 
 def merge(db, keep_id, merge_ids, user=""):
     """Move everything of the merged items onto the kept one, keep their names as aliases, then remove them."""
-    from .accounting import _recompute_level
+    if not str(keep_id or "").strip().isdigit():
+        raise ValidationError("Choose the item to keep")
     keep = db.one("SELECT * FROM stock_items WHERE id=?", (int(keep_id),))
     if not keep:
         raise ValidationError("Choose the item to keep")
-    dups = [db.one("SELECT * FROM stock_items WHERE id=?", (int(i),)) for i in merge_ids or [] if int(i) != keep["id"]]
+    if not isinstance(merge_ids, list) or not all(str(i).strip().isdigit() for i in merge_ids):
+        raise ValidationError("Choose the items to merge into it")
+    dups = [db.one("SELECT * FROM stock_items WHERE id=?", (int(i),)) for i in merge_ids if int(i) != keep["id"]]
     dups = [d for d in dups if d]
     if not dups:
         raise ValidationError("Choose at least one item to merge into it")
@@ -284,6 +287,7 @@ def merge(db, keep_id, merge_ids, user=""):
                             (d["name"], keep["id"], now_iso(), user))
             db.conn.execute("DELETE FROM stock_levels WHERE item_id=?", (d["id"],))
             db.conn.execute("DELETE FROM stock_items WHERE id=?", (d["id"],))
-        for w in whs | {r["warehouse_id"] for r in db.q("SELECT warehouse_id FROM stock_levels WHERE item_id=?", (keep["id"],))}:
-            _recompute_level(db, keep["id"], w)
+        # one item now: its stock is costed as one (FIFO / average), the differences posted as dated adjustment entries
+        from . import stockcost
+        stockcost.apply(db, keep["id"], None, why="items merged: " + ", ".join(d["name"] for d in dups), user=user, check=False)
     return {"kept": keep["name"], "merged": [d["name"] for d in dups]}

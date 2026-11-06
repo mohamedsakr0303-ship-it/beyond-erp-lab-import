@@ -31,7 +31,7 @@ ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment V
                "Receipt Voucher", "Sales Invoice", "Credit Note", "Debit Note", "Capital Contribution", "Capital Withdrawal", "Owner Drawing", "Partner Loan", "Partner Loan Repayment",
                "Partner Loan Interest", "Share Transfer", "Partner Admission", "Partner Exit", "Profit Distribution",
                "Reserve Transfer", "Cash Transfer", "Asset Purchase", "Depreciation", "Asset Disposal", "Journal Voucher",
-               "Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Reversing Entry",
+               "Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Stock Cost Adjustment", "Reversing Entry",
                "Loan Received", "Loan Repayment", "Loan Given", "Loan Collection", "Loan Interest", "Loan Charges",
                "Loan Forgiven", "Loan Written Off", "Custody Issued", "Custody Settlement", "Custody Return",
                "Custody Deduction", "Rental Equipment Purchase", "Rental Equipment Loss", "Rental Equipment Depreciation",
@@ -643,10 +643,11 @@ def record_journal(db, d, user=""):
                             lines=debits + list(d.get("lines") or []), user=user, meta=meta or None)
         for x in items:
             if x["warehouse"]:
-                db.conn.execute("INSERT INTO stock_moves(item_id,warehouse_id,date,qty,rate,bu_id,entry_id,kind,note) "
-                                "VALUES (?,?,?,?,?,?,?,?,?)", (x["item"]["id"], x["warehouse"]["id"], date, x["qty"], x["rate"],
-                                                               None, eid, "Receipt", "journal voucher"))
-                _recompute_level(db, x["item"]["id"], x["warehouse"]["id"])
+                from . import stockcost
+                mid = _new_move(db, x["item"]["id"], x["warehouse"]["id"], date, x["qty"], "Receipt", "journal voucher",
+                                eid=eid, value=x["amount"], fixed=1, rate=x["rate"])
+                stockcost.apply(db, x["item"]["id"], stockcost.order_key(db.one("SELECT * FROM stock_moves WHERE id=?", (mid,))),
+                                why=f"goods received on {date}", user=user)
             db.conn.execute("INSERT INTO material_lines(entry_id,date,bu_id,item_id,description,unit,qty,rate,amount,warehouse_id,account) "
                             "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                             (eid, date, x["bu_id"], (x["item"] or {}).get("id"), x["description"], x["unit"], x["qty"], x["rate"],
@@ -656,29 +657,42 @@ def record_journal(db, d, user=""):
 
 # ------------------------------------------------------------- corrections
 def _stock_undo_guard(db, eid):
-    """Stock received on this entry that later issues or transfers already took out at its average cost cannot simply
-    disappear: the books would keep those issues' cost while the store forgets what they drew on, and stock would no
-    longer agree with the inventory accounts. Those later movements are undone first (or the count corrected)."""
-    for m in db.q("SELECT m.id, m.item_id, m.warehouse_id, m.date, i.name, w.name AS wh FROM stock_moves m JOIN stock_items i ON i.id=m.item_id "
-                  "JOIN warehouses w ON w.id=m.warehouse_id WHERE m.entry_id=? AND m.qty>0", (eid,)):
-        later = db.one("SELECT date, kind FROM stock_moves WHERE item_id=? AND warehouse_id=? AND qty<0 AND COALESCE(entry_id,0)<>? "
-                       "AND (date>? OR (date=? AND id>?)) ORDER BY date, id LIMIT 1",
-                       (m["item_id"], m["warehouse_id"], eid, m["date"], m["date"], m["id"]))
-        if later:
-            raise ValidationError(f"{m['name']} received here was later taken out of {m['wh']} on {later['date']} at a cost that "
-                                  "includes this receipt. Undo the later issues and transfers first, or correct the quantity with a "
-                                  "stock adjustment.")
+    """A stock cost adjustment goes with the movement it re-costed: it is undone with that movement's entry."""
+    r = db.one("SELECT r.origin_entry, r.move_id FROM stock_recosts r WHERE r.entry_id=?", (eid,))
+    if r:
+        raise ValidationError("This cost adjustment belongs to a stock movement" + (f" (entry #{r['origin_entry']})" if r["origin_entry"] else "")
+                              + ". Undo that movement's entry and it goes with it.")
 
 
-def _unlink_documents(db, eid):
-    from . import equity
+def _undo_recosts(db, eid, user="", reverse_on=None):
+    """The cost adjustments of an entry's stock movements: voided with it, or reversed on the same date."""
+    for r in db.q("SELECT s.entry_id FROM stock_recosts s JOIN journal_entries e ON e.id=s.entry_id "
+                  "WHERE s.origin_entry=? AND e.status='posted' AND e.reversed_by IS NULL", (eid,)):
+        if reverse_on:
+            a = get_entry(db, r["entry_id"])
+            rid = _insert_entry(db, date=reverse_on, kind="Reversing Entry", memo=f"Reversal of #{a['id']}: {a['memo']}",
+                                bu_id=a["bu_id"], party=a["party"], ref=a["ref"], reversal_of=a["id"], user=user,
+                                lines=[{"account": ln["account"], "debit": ln["credit"], "credit": ln["debit"]} for ln in a["lines"]])
+            db.conn.execute("UPDATE journal_entries SET reversed_by=? WHERE id=?", (rid, a["id"]))
+        else:
+            meta = json.loads(db.one("SELECT meta FROM journal_entries WHERE id=?", (r["entry_id"],))["meta"] or "{}")
+            meta.update(void_reason=f"with entry #{eid}", voided_by=user)
+            db.conn.execute("UPDATE journal_entries SET status='void', meta=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), r["entry_id"]))
+
+
+def _unlink_documents(db, eid, user=""):
+    from . import equity, stockcost
     equity.undo_change(db, entry_id=eid)  # an ownership change booked by this entry goes with it
     db.conn.execute("UPDATE extracts SET status='draft', entry_id=NULL WHERE entry_id=?", (eid,))
-    pairs = db.q("SELECT DISTINCT item_id, warehouse_id FROM stock_moves WHERE entry_id=?", (eid,))
+    gone = db.q("SELECT * FROM stock_moves WHERE entry_id=?", (eid,))
     db.conn.execute("DELETE FROM stock_moves WHERE entry_id=?", (eid,))
     db.conn.execute("DELETE FROM material_lines WHERE entry_id=?", (eid,))
-    for p in pairs:
-        _recompute_level(db, p["item_id"], p["warehouse_id"])
+    first = {}
+    for m in gone:
+        k = stockcost.order_key(m)
+        first[m["item_id"]] = min(first.get(m["item_id"], k), k)
+    for item_id, k in first.items():     # what came after it is re-costed; stock that would run short is refused
+        stockcost.apply(db, item_id, k, why=f"entry #{eid} undone", user=user)
 
 
 def void_entry(db, eid, reason="", user=""):
@@ -697,7 +711,8 @@ def void_entry(db, eid, reason="", user=""):
         meta["voided_by"] = user
         db.conn.execute("UPDATE journal_entries SET status='void', meta=? WHERE id=?",
                         (json.dumps(meta, ensure_ascii=False), eid))
-        _unlink_documents(db, eid)
+        _undo_recosts(db, eid, user)
+        _unlink_documents(db, eid, user)
         _wip_after(db, e["kind"], e["bu_id"])
 
 
@@ -714,7 +729,8 @@ def reverse_entry(db, eid, date=None, user=""):
         rid = _insert_entry(db, date=date or today(), kind="Reversing Entry", memo=f"Reversal of #{eid}: {e['memo']}",
                             bu_id=e["bu_id"], party=e["party"], ref=e["ref"], lines=lines, reversal_of=eid, user=user)
         db.conn.execute("UPDATE journal_entries SET reversed_by=? WHERE id=?", (rid, eid))
-        _unlink_documents(db, eid)
+        _undo_recosts(db, eid, user, reverse_on=date or today())
+        _unlink_documents(db, eid, user)
         return rid
 
 
@@ -818,18 +834,10 @@ def _wh_account(db, w):
     return w["account"] or db.acct("inventory")
 
 
-def _recompute_level(db, item_id, wh_id):
-    qty, avg = 0.0, 0.0
-    for m in db.q("SELECT qty, rate FROM stock_moves WHERE item_id=? AND warehouse_id=? ORDER BY date, id",
-                  (item_id, wh_id)):
-        if m["qty"] > 0:
-            new_qty = qty + m["qty"]
-            avg = ((max(qty, 0) * avg) + m["qty"] * m["rate"]) / max(new_qty, 1e-9) if new_qty > 0 else m["rate"]
-            qty = new_qty
-        else:
-            qty += m["qty"]
-    db.conn.execute("INSERT OR REPLACE INTO stock_levels(item_id,warehouse_id,qty,avg_cost) VALUES (?,?,?,?)",
-                    (item_id, wh_id, round(qty, 6), avg))
+def _recompute_level(db, item_id, wh_id=None):
+    """What each store holds of the item and its value, from the movements (stockcost)."""
+    from . import stockcost
+    stockcost.refresh(db, item_id)
 
 
 def _item(db, d, create=False):
@@ -852,17 +860,48 @@ def _level(db, item_id, wh_id):
         {"qty": 0.0, "avg_cost": 0.0}
 
 
+def _new_move(db, item_id, wh_id, date, qty, kind, note="", bu=None, eid=None, value=None, fixed=0, rate=0.0, link=None):
+    return db.conn.execute("INSERT INTO stock_moves(item_id,warehouse_id,date,qty,rate,bu_id,entry_id,kind,note,value,booked,fixed,link_id) "
+                           "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (item_id, wh_id, date, qty, rate, bu, eid, kind, note, value, value if fixed else None, fixed, link)).lastrowid
+
+
+def _qty_on(db, item_id, wh_id, date):
+    """What a store held of an item at the end of a day."""
+    r = db.one("SELECT COALESCE(SUM(qty),0) q FROM stock_moves WHERE item_id=? AND warehouse_id=? AND date<=?", (item_id, wh_id, date))
+    return round(r["q"], 6)
+
+
+def _booked_now(db, mid, value, eid):
+    db.conn.execute("UPDATE stock_moves SET value=?, booked=?, entry_id=? WHERE id=?", (value, value, eid, mid))
+
+
 def stock_move(db, d, user=""):
-    """One entry point for Receipt / Issue / Transfer / Adjustment."""
+    """One entry point for Receipt / Issue / Transfer / Adjustment. Costed by stockcost (FIFO or moving average, per
+    warehouse, in date order); a movement dated before later ones re-costs those (with adjustment entries)."""
+    from . import stockcost
     typ = d.get("type") or "Receipt"
     if typ not in STOCK_MOVE_TYPES:
         raise ValidationError("Unknown stock move type")
     date = clean_date(d.get("date"))
+    note = text(d.get("note"))
     with db.tx():
+        check_open(db, date)
         wh = _warehouse(db, d.get("warehouse_id") or d.get("warehouse"))
         item = _item(db, d, create=(typ == "Receipt"))
-        lvl = _level(db, item["id"], wh["id"])
         inv = _wh_account(db, wh)
+
+        def cost_of(mid, new_ids):
+            r = stockcost.compute(db, item["id"])
+            for sh in r["short"]:
+                if stockcost.order_key(sh[0]) >= stockcost.order_key(next(m for m in r["rows"] if m["id"] == mid)):
+                    raise ValidationError(stockcost.short_message(db, sh, new_ids))
+            return r["values"][mid], r["units"][mid]
+
+        def settle(mid, why):
+            m = db.one("SELECT * FROM stock_moves WHERE id=?", (mid,))
+            stockcost.apply(db, item["id"], stockcost.order_key(m), why=why, user=user)
+
         if typ == "Receipt":
             qty = num(d.get("qty"), "quantity", allow_zero=False)
             rate = num(d.get("rate"), "unit cost", allow_zero=False)
@@ -878,30 +917,31 @@ def stock_move(db, d, user=""):
                                 f"{item['name']} → {wh['name']}", party=vendor, lines=lines, user=user,
                                 meta={"qty": qty, "rate": rate, "item": item["name"], "warehouse": wh["name"],
                                       "vat_code": vat_code, "wht_code": wht_code})
-            moves = [(wh["id"], qty, rate * 100, None)]
+            mid = _new_move(db, item["id"], wh["id"], date, qty, "Receipt", note, eid=eid, value=total, fixed=1, rate=rate * 100)
+            settle(mid, f"goods received on {date}")
         elif typ == "Issue":
             qty = num(d.get("qty"), "quantity", allow_zero=False)
-            if qty > lvl["qty"] + 1e-9:
-                raise ValidationError(f"Only {lvl['qty']:g} {item['unit']} of {item['name']} in {wh['name']}")
-            value = int(round(qty * lvl["avg_cost"]))
-            if value <= 0:
-                raise ValidationError("Item has no cost value to issue")
             bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"), required=True)
             cost_acc = account_code(db, d.get("account") or db.acct("materials"), types=("COGS", "Expense"))
+            mid = _new_move(db, item["id"], wh["id"], date, -qty, "Issue", note, bu=bu)
+            value, _ = cost_of(mid, (mid,))
+            if value <= 0:
+                raise ValidationError("Item has no cost value to issue")
             eid = _insert_entry(db, date=date, kind="Material Issue", bu_id=bu, user=user,
                                 memo=f"Issued {qty:g} {item['unit']} {item['name']} from {wh['name']}",
                                 lines=[{"account": cost_acc, "debit": to_major(value)},
                                        {"account": inv, "credit": to_major(value)}],
                                 meta={"qty": qty, "item": item["name"], "warehouse": wh["name"]})
-            moves = [(wh["id"], -qty, lvl["avg_cost"], bu)]
+            _booked_now(db, mid, value, eid)
+            settle(mid, f"material issued on {date}")
         elif typ == "Transfer":
             qty = num(d.get("qty"), "quantity", allow_zero=False)
             to = _warehouse(db, d.get("to_warehouse_id") or d.get("to_warehouse"))
             if to["id"] == wh["id"]:
                 raise ValidationError("Pick a different destination warehouse")
-            if qty > lvl["qty"] + 1e-9:
-                raise ValidationError(f"Only {lvl['qty']:g} {item['unit']} in {wh['name']}")
-            value = int(round(qty * lvl["avg_cost"]))
+            out = _new_move(db, item["id"], wh["id"], date, -qty, "Transfer", note)
+            arr = _new_move(db, item["id"], to["id"], date, qty, "Transfer", note, link=out)
+            value, _ = cost_of(out, (out,))
             to_acc = _wh_account(db, to)
             eid = None
             if to_acc != inv and value:
@@ -909,14 +949,27 @@ def stock_move(db, d, user=""):
                                     memo=f"Transfer {qty:g} {item['name']}: {wh['name']} → {to['name']}",
                                     lines=[{"account": to_acc, "debit": to_major(value)},
                                            {"account": inv, "credit": to_major(value)}])
-            moves = [(wh["id"], -qty, lvl["avg_cost"], None), (to["id"], qty, lvl["avg_cost"], None)]
-        else:  # Adjustment to a physical count
-            counted = num(d.get("counted"), "counted quantity")
-            diff = counted - lvl["qty"]
+            _booked_now(db, out, value, eid)
+            _booked_now(db, arr, value, eid)
+            settle(out, f"stock transferred on {date}")
+        else:  # Adjustment: to a physical count of that day (or by a difference, as the workbook gives it)
+            on_day = _qty_on(db, item["id"], wh["id"], date)
+            if d.get("diff") not in (None, ""):
+                diff = num(d.get("diff"), "adjustment quantity", allow_negative=True)
+            else:
+                diff = num(d.get("counted"), "counted quantity") - on_day
             if abs(diff) < 1e-9:
                 raise ValidationError("The count matches the books. No adjustment is required.")
-            rate = lvl["avg_cost"] or to_minor(num(d.get("rate"), "unit cost"))
-            value = int(round(abs(diff) * rate))
+            given = d.get("rate") not in (None, "") and num(d.get("rate"), "unit cost") > 0
+            if diff > 0 and given:          # a gain at the unit cost written on the count
+                value = to_minor(diff * num(d.get("rate"), "unit cost"))
+                mid = _new_move(db, item["id"], wh["id"], date, diff, "Adjustment", note, value=value, fixed=1,
+                                rate=num(d.get("rate"), "unit cost") * 100)
+            else:                           # a loss at its FIFO / average cost; a gain at the cost of what is on hand
+                mid = _new_move(db, item["id"], wh["id"], date, diff, "Adjustment", note)
+                value, unit = cost_of(mid, (mid,))
+                if diff > 0 and not value and not unit:
+                    raise ValidationError(f"{item['name']} has no cost in {wh['name']} yet: enter the unit cost of what was found")
             adj = db.acct("stock_adjust")
             eid = None
             if value:
@@ -925,12 +978,8 @@ def stock_move(db, d, user=""):
                          [{"account": adj, "debit": to_major(value)}, {"account": inv, "credit": to_major(value)}])
                 eid = _insert_entry(db, date=date, kind="Stock Adjustment", user=user, lines=lines,
                                     memo=f"Count adjustment — {item['name']} @ {wh['name']} ({diff:+g})")
-            moves = [(wh["id"], diff, rate, None)]
-        for wid, q, r, bu in moves:
-            db.conn.execute("INSERT INTO stock_moves(item_id,warehouse_id,date,qty,rate,bu_id,entry_id,kind,note) "
-                            "VALUES (?,?,?,?,?,?,?,?,?)", (item["id"], wid, date, q, r, bu, eid, typ,
-                                                           text(d.get("note"))))
-            _recompute_level(db, item["id"], wid)
+            _booked_now(db, mid, value, eid)
+            settle(mid, f"stock count of {date}")
         return eid
 
 
@@ -1000,14 +1049,14 @@ def stock_report(db, warehouse_id=None, q=None):
     last = ("(SELECT {} FROM stock_moves m WHERE m.item_id=i.id AND m.qty>0 AND m.kind='Receipt' "
             "ORDER BY m.date DESC, m.id DESC LIMIT 1)")
     rows = db.q("SELECT i.id AS item_id, i.name, i.sku, i.category, i.unit, i.reorder_level, w.id AS warehouse_id, w.name AS warehouse, "
-                f"l.qty, l.avg_cost, {last.format('m.rate')} AS last_rate, {last.format('m.date')} AS last_date "
+                f"l.qty, l.avg_cost, l.value AS value_minor, {last.format('m.rate')} AS last_rate, {last.format('m.date')} AS last_date "
                 "FROM stock_levels l JOIN stock_items i ON i.id=l.item_id "
                 "JOIN warehouses w ON w.id=l.warehouse_id" + (" WHERE " + " AND ".join(w) if w else "") +
                 " ORDER BY i.name, w.name", p)
     from . import stockplan
     mins = {(m["item_id"], m["warehouse_id"]): m for m in stockplan.levels(db, warehouse_id)} if rows else {}
     for r in rows:
-        r["value"] = to_major(r["qty"] * r["avg_cost"])
+        r["value"] = to_major(r.pop("value_minor"))
         r["avg_cost"] = to_major(r["avg_cost"])
         r["last_rate"] = to_major(r["last_rate"]) if r["last_rate"] is not None else None
         m = mins.get((r["item_id"], r["warehouse_id"]))     # the warehouse's own minimum, else the item's (stockplan)
@@ -1020,7 +1069,11 @@ def stock_report(db, warehouse_id=None, q=None):
 # ------------------------------------------------------------- BOQ & extracts
 def _lines_in(raw):
     out = []
+    if raw not in (None, "") and not isinstance(raw, list):
+        raise ValidationError("The lines are a list of lines")
     for i, ln in enumerate(raw or []):
+        if not isinstance(ln, dict):
+            raise ValidationError(f"Line {i + 1} is not a line")
         desc = text(ln.get("description"), maxlen=2000)
         if not desc:
             continue

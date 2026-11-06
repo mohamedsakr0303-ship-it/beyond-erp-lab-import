@@ -210,8 +210,9 @@ async function creditNote(page) {
   expect(await page.inputValue("[name=ref_number]") === "INV-D001", "credit note does not name its invoice");
   await page.fill("[name=number]", "CN-E2E-1");
   await page.fill("[name=eta_reason]", "E2E returned tiles");
-  const n = (await page.$$("tr[data-i] .l-qty")).length;   // credit 1,000 of the first line only
-  for (let i = 1; i < n; i++) await page.fill(`tr[data-i='${i}'] .l-qty`, "0");
+  // keep the first line only: each ✕ redraws the table (renumbered), so the second line is always data-i 1
+  for (let i = 0; i < 20 && (await page.$$("tr[data-i]")).length > 1; i++) await page.click("tr[data-i='1'] [data-a=lerm]", { timeout: 5000 });
+  expect((await page.$$("tr[data-i]")).length === 1, "lines left after deleting");
   await page.fill("tr[data-i='0'] .l-qty", "1");
   await page.fill("tr[data-i='0'] .l-price", "1000");
   await page.click("[data-a=xpost]");

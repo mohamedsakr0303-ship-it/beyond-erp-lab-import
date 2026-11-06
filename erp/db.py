@@ -293,6 +293,15 @@ CREATE TABLE IF NOT EXISTS stock_moves (
     note TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ix_sm_item ON stock_moves(item_id, warehouse_id);
+-- Stock cost adjustments (stockcost.py): a movement re-costed after an earlier-dated one was added or removed. Each
+-- adjustment entry names its movement and the entry that movement was posted with (undone together).
+CREATE TABLE IF NOT EXISTS stock_recosts (
+    entry_id INTEGER PRIMARY KEY REFERENCES journal_entries(id) ON DELETE CASCADE,
+    move_id INTEGER NOT NULL,
+    origin_entry INTEGER,
+    delta INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_sr_origin ON stock_recosts(origin_entry);
 -- E-invoice templates: the tax-authority details of a kind of document, for certain customers or a certain reason
 CREATE TABLE IF NOT EXISTS einv_templates (
     code TEXT PRIMARY KEY,
@@ -2294,6 +2303,7 @@ class Database:
         if not self.conn.execute("SELECT 1 FROM tax_codes").fetchone():
             self.conn.executemany("INSERT INTO tax_codes(code,name,name_ar,kind,rate,eta_type,eta_subtype) "
                                   "VALUES (?,?,?,?,?,?,?)", DEFAULT_TAX_CODES)
+        self._migrate_stock_costing()
         for k, v in ETA_SETTINGS.items():
             self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES (?,?)", (k, v))
         for k, v in DEFAULT_SETTINGS.items():  # settings added by later versions
@@ -2301,6 +2311,26 @@ class Database:
         if not self.conn.execute("SELECT 1 FROM settings WHERE key='docs_seeded'").fetchone():
             self.seed_documents()
             self.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('docs_seeded','1')")
+
+    def _migrate_stock_costing(self):
+        """Stock costing (stockcost.py): each movement keeps its value, the value its entries carry so far (booked), and a
+        transfer's arrival names its departure. Books that already hold stock keep the moving average they were costed
+        with until an administrator switches them to FIFO; new books cost by FIFO."""
+        have = self._add_cols("stock_moves", [("value", "INTEGER"), ("booked", "INTEGER"), ("link_id", "INTEGER"),
+                                              ("fixed", "INTEGER NOT NULL DEFAULT 1")])
+        self._add_cols("stock_levels", [("value", "INTEGER NOT NULL DEFAULT 0")])
+        if "value" not in have:
+            self.conn.execute("UPDATE stock_moves SET value=CAST(ROUND(ABS(qty)*rate) AS INTEGER)")
+            self.conn.execute("UPDATE stock_moves SET booked=value")
+            self.conn.execute("UPDATE stock_moves SET fixed=0 WHERE qty<0 OR kind='Transfer'")
+            # a transfer's arrival is the row right after its departure (same item, date and quantity)
+            self.conn.execute("""UPDATE stock_moves SET link_id=(SELECT o.id FROM stock_moves o WHERE o.id=stock_moves.id-1
+                                 AND o.kind='Transfer' AND o.qty<0 AND o.item_id=stock_moves.item_id AND o.date=stock_moves.date
+                                 AND ABS(o.qty+stock_moves.qty)<1e-9) WHERE kind='Transfer' AND qty>0""")
+            self.conn.execute("UPDATE stock_levels SET value=CAST(ROUND(qty*avg_cost) AS INTEGER)")
+        if not self.conn.execute("SELECT 1 FROM settings WHERE key='stock_costing'").fetchone():
+            old = self.conn.execute("SELECT 1 FROM stock_moves LIMIT 1").fetchone()
+            self.conn.execute("INSERT INTO settings(key,value) VALUES ('stock_costing',?)", ("average" if old else "fifo",))
 
     # the placeholder letterhead logo and watermark of earlier versions (the green "iB" mark): books still showing it
     # get the current BeyondERP mark. Anything a company uploaded is never touched.

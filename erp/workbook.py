@@ -242,7 +242,10 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
             for i, c in enumerate(cols, start=1):
                 cell = ws.cell(ri, i)
                 if c["kind"] == "calc":
-                    f = c["calc"]
+                    f = c["calc0"] if ri == FIRST_DATA_ROW and c.get("calc0") else c["calc"]
+                    if "[[^" in f:     # this sheet's column over the rows above this one (never itself: no circular formulas)
+                        for tok in set(re.findall(r"\[\[\^([^\]]+)\]\]", f)):
+                            f = f.replace(f"[[^{tok}]]", f"${letters[tok]}${FIRST_DATA_ROW}:${letters[tok]}${ri - 1}")
                     if "[[" in f:
                         for tok in set(re.findall(r"\[\[[^\]]+\]\]", f)):
                             f = f.replace(tok, xref[tok])
@@ -954,6 +957,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
         au.column_dimensions[L(i)].width = [58, 16, 16, 14, 12][i - 1]
     jv = colmap["Journal Vouchers"]
     ov = colmap["Business Units"]["overhead_pct"]
+    sm = colmap["Stock Moves"]
     checks = [
         ("Trial balance: closing debits = closing credits", f"='Trial Balance'!I{tr_tb(tb_last)}",
          f"='Trial Balance'!J{tr_tb(tb_last)}"),
@@ -968,6 +972,10 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
          "=" + "+".join(f"SUM({rng(sh['name'], '_bad')})" for sh in POSTING_SHEETS), "=0"),
         ("Overhead allocation % across business units ≤ 100%",
          f"=SUM('Business Units'!{ov}{FIRST_DATA_ROW}:{ov}3000)", "=MIN(1,B{r})"),
+        # FIFO is costed in row order: by date, and on a day what comes in from outside (receipts, count gains) first
+        ("Stock Moves rows in date order (receipts and count gains first on a day)", "=" + _sm_order(colmap["Stock Moves"]), "=0"),
+        ("No warehouse takes out more than it holds (Stock Moves)",
+         f"=SUMPRODUCT(('Stock Moves'!{sm['x_oq']}{FIRST_DATA_ROW}:{sm['x_oq']}20000-'Stock Moves'!{sm['x_ohq']}{FIRST_DATA_ROW}:{sm['x_ohq']}20000>0.000001)*1)", "=0"),
     ]
     for i, (lbl, a, b) in enumerate(checks):
         r = 4 + i
@@ -1780,6 +1788,17 @@ EXTRA_SHEET_MODULE = {"Extract Print": "sales.extracts", "Crew Pay Calculator": 
                       "Tax Summary": "tax", "BU Profitability": "business_units.profitability"}
 NEVER_HIDDEN = {"Cover", "Partner Pack", "Dashboard", "Settings", "Chart of Accounts", "Journal Vouchers", "Trial Balance", "Income Statement",
                 "Balance Sheet", "Cash Flow", "Model Audit"}
+
+
+def _sm_order(c):
+    """Rows of Stock Moves out of order: dated before the row above, or coming in from outside after a row that goes out
+    on the same day."""
+    f, n = FIRST_DATA_ROW, 20000
+    d0, d1 = f"'Stock Moves'!{c['date']}{f}:{c['date']}{n - 1}", f"'Stock Moves'!{c['date']}{f + 1}:{c['date']}{n}"
+    t0, t1 = f"'Stock Moves'!{c['type']}{f}:{c['type']}{n - 1}", f"'Stock Moves'!{c['type']}{f + 1}:{c['type']}{n}"
+    q0, q1 = f"'Stock Moves'!{c['qty']}{f}:{c['qty']}{n - 1}", f"'Stock Moves'!{c['qty']}{f + 1}:{c['qty']}{n}"
+    gain = lambda t, q: f"(({t}=\"Receipt\")+({t}=\"Adjustment\")*({q}>0))"
+    return (f"SUMPRODUCT(({d1}<>\"\")*(({d1}<{d0})+({d1}={d0})*{gain(t1, q1)}*(1-{gain(t0, q0)})))")
 
 
 def _hide_list(db, hide=None):

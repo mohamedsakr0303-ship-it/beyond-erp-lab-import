@@ -559,10 +559,13 @@ DEFAULT_WORK_ITEMS = {   # per business type: (item, unit, rate) — rates are b
 
 def crew_qty(ln):
     """Quantity of one measured line = count × length/width × height/depth (blank dimensions count as 1)."""
-    q = float(ln.get("count") or 0)
+    from .accounting import num
+    if not isinstance(ln, dict):
+        raise ValidationError("Each measured line has a count and its dimensions")
+    q = num(ln.get("count") or 0, "count")
     for k in ("dim1", "dim2", "dim3"):
         if ln.get(k) not in (None, "", 0, "0"):
-            q *= float(ln[k])
+            q *= num(ln[k], "dimension")
     return round(q, 4)
 
 
@@ -570,7 +573,7 @@ def crew_calc(lines):
     out, total, qty = [], 0.0, 0.0
     for ln in lines or []:
         q = crew_qty(ln)
-        amt = round(q * float(ln.get("rate") or 0), 2)
+        amt = round(q * num(ln.get("rate") or 0, "rate"), 2)
         out.append({**ln, "qty": q, "amount": amt})
         total += amt
         qty += q

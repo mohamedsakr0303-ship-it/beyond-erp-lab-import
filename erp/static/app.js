@@ -2203,11 +2203,11 @@ async function openVoucher(id) {
   if (edit && live) {
     if (full) btns.push(`<button class="btn danger" type="button" data-a="vvoid" data-id="${e.id}">${t("void")}</button>`, `<button class="btn" type="button" data-a="vrev" data-id="${e.id}">${t("reverse")}</button>`);
     if (e.doc) btns.push(`<button class="btn pri" type="button" data-a="vform">${t("edit")}</button>`);
-    if (!["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Sales Invoice"].includes(e.kind) && !(e.meta && e.meta.items) && (can("accounting.journal", "edit") || (drafting && can("accounting.journal", "add"))))
+    if (!["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Stock Cost Adjustment", "Sales Invoice"].includes(e.kind) && !(e.meta && e.meta.items) && (can("accounting.journal", "edit") || (drafting && can("accounting.journal", "add"))))
       btns.push(`<button class="btn" type="button" data-a="vedit" data-id="${e.id}">${e.doc ? L2("Edit lines", "تعديل البنود") : t("edit")}</button>`);
   }
   const DUP_MOD = e.doc ? DOC_MOD[e.doc] : "accounting.journal";
-  if (e.doc ? can(DUP_MOD, "add") : (can("accounting.journal", "add") && !["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Sales Invoice"].includes(e.kind)))
+  if (e.doc ? can(DUP_MOD, "add") : (can("accounting.journal", "add") && !["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Stock Cost Adjustment", "Sales Invoice"].includes(e.kind)))
     btns.push(`<button class="btn" type="button" data-a="vdup">${t("duplicate")}</button>`);
   const rcOk = can("accounting.recurring", "add") && (e.doc ? !["supplier_discount"].includes(e.doc) : e.kind === "Journal Voucher");
   if (rcOk && live) btns.push(`<button class="btn" type="button" data-a="vrc">↻ ${L2("Make recurring", "جعله متكرراً")}</button>`);
@@ -3529,8 +3529,9 @@ function sheetGrid(o) {
     const r0 = op === "del" ? Math.min(first, lines.length - 1) : first + shift;
     redraw(lines, { a: { r: r0, c: 0 }, b: { r: op === "del" ? r0 : r0 + idx.length - 1, c: 0 } }); };
   o.api = { toggle: k => toggle(selRows(), k), color: (k, v) => restyle(selRows(), st => ({ ...st, [k]: v })), align: v => restyle(selRows(), st => ({ ...st, align: v })),
-    plain: () => restyle(selRows(), () => ({})), rows: (op, tr) => rowOp(selRows(tr), op) };
-  const page = tbl.closest(".page"); if (page) page._gridSet = lines => o.setLines(lines);   // undo / redo put lines back
+    plain: () => restyle(selRows(), () => ({})), rows: (op, tr) => rowOp(selRows(tr), op),
+    delRow: tr => rowOp([tr], "del") };     // a line's own ✕: redrawn (renumbered) and one step of the screen's undo
+  const page = tbl.closest(".page"); if (page) { page._gridSet = lines => o.setLines(lines); page._grid = o.api; }   // undo / redo put lines back
   rows().forEach(paintLine);
   if (carry && carry.sel) { const s0 = carry.sel; setTimeout(() => { const i = at(s0.a.r, s0.a.c); if (i) { i.focus(); select(s0.a, s0.b); } }, 0); }
   if (o.readOnly) return o.api;
@@ -3735,7 +3736,8 @@ PAGES.invoice = async (view, parts, q) => {
     const el = $("#letot"); if (el) el.textContent = `${t("total")}: ${money(s)}${fee ? ` · ${L2("Fees", "الأتعاب")}: ${money(fee)}` : ""} · ${t("vat_amt")}: ${money(vat)} · ${t("gross")}: ${money(all + vat)} · ${t("wht_amt")}: (${money(wht)}) · ${t("net_receivable")}: ${money(all + vat - wht)} ${cur()}`; };
   S.H.xcust = el => { const p = (S.boot.parties || []).find(z => z.name === el.value); if (!p) return; if (p.default_vat && !$("[name=vat_code]").value) $("[name=vat_code]").value = p.default_vat; if (p.default_wht && !$("[name=wht_code]").value) $("[name=wht_code]").value = p.default_wht; S.H.letot(); };
   S.H.leadd = () => { x = { ...x, ...header(), lines: [...readLines(true), { description: "", qty: 1, price: 0 }] }; render(); };
-  S.H.lerm = el => { el.closest("tr").remove(); S.H.letot(); };
+  S.H.lerm = el => { const pg = el.closest(".page"), tr = el.closest("tr");
+    if (pg && pg._grid && pg._grid.delRow && pg.contains($("#le"))) pg._grid.delRow(tr); else { tr.remove(); S.H.letot(); } };
   S.H.padd = el => { const r = S.cache.rates[+el.dataset.i]; x = { ...x, ...header(), lines: [...readLines(true).filter(l => l.description.trim()), { item_no: r.item_no, category: r.category, sub: r.sub, description: r.description, unit: r.unit, qty: 1, price: r.price }] }; render(); };
   S.H.xboq = async el => { if (!el.value) return; const b = await api("GET", "/api/boqs/" + el.value); x = { ...x, ...header(), bu_id: b.bu_id, lines: b.lines.map(l => ({ ...l, contract_qty: l.qty, qty: 0 })) }; render(); };
   const feeBody = () => feesOn ? Object.fromEntries(Object.entries(fees).filter(([, v]) => v !== "" && v != null && +v).map(([k, v]) => [k, `${+v}%`])) : {};
@@ -3886,7 +3888,8 @@ PAGES.boq = async (view, parts, q = {}) => {
   S.H.letot = () => { let s = 0, c = 0; $$("#le tbody tr").forEach(tr => { const q2 = +$(".l-qty", tr).value || 0; const a = q2 * (+$(".l-price", tr).value || 0); s += a; c += q2 * (+($(".l-cost", tr) || {}).value || 0); $(".l-amt", tr).textContent = money(a); });
     const el = $("#letot"); if (el) el.textContent = `${t("budget")}: ${money(s)} · ${t("cost")}: ${money(c)} · ${t("margin")}: ${pct(s ? 1 - c / s : 0)}`; };
   S.H.leadd = () => { b = { ...b, ...header(), lines: [...readLines(true), { description: "", qty: 1, price: 0, cost: 0 }] }; render(); };
-  S.H.lerm = el => { el.closest("tr").remove(); S.H.letot(); };
+  S.H.lerm = el => { const pg = el.closest(".page"), tr = el.closest("tr");
+    if (pg && pg._grid && pg._grid.delRow && pg.contains($("#le"))) pg._grid.delRow(tr); else { tr.remove(); S.H.letot(); } };
   S.H.padd = el => { const r = S.cache.rates[+el.dataset.i]; b = { ...b, ...header(), lines: [...readLines(true).filter(l => l.description.trim()), { item_no: r.item_no, category: r.category, sub: r.sub, description: r.description, unit: r.unit, qty: 1, price: r.price, cost: r.cost }] }; render(); };
   S.H.bsave = async () => { try { linesGapCheck(); const body = { ...header(), lines: readLines() }; const r = isNew ? await api("POST", "/api/boqs", body) : await api("PUT", "/api/boqs/" + b.id, body); toast(t("saved")); location.hash = "#/boq/" + r.id; if (!isNew) route(); } catch (e) { fail(e); } };
   S.H.bdel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; await api("DELETE", "/api/boqs/" + b.id).catch(fail); location.hash = "#/boqs"; };
@@ -4011,7 +4014,7 @@ PAGES.stock = async (view, parts, q) => {
     filterBar(q, ["warehouse", ["q", "stkq", L2("Name, code or category", "الاسم أو الكود أو التصنيف")]]) +
     `<datalist id="stkq">${(d.items || []).map(x => { const more = [x.sku, x.category].filter(Boolean).join(" · ");
       return `<option value="${esc(x.name)}">${esc(x.name + (more ? " — " + more : ""))}</option>`; }).join("")}</datalist>` +
-    `<div class="card"><h2>${t("inventory")} — ${money(tot)} ${cur()}</h2>${d.levels.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${esc(L2("Minimum", "الحد الأدنى"))}</th><th class="num">${t("avg_cost")}</th><th class="num">${esc(L2("Last purchase price", "آخر سعر شراء"))}</th><th class="num">${t("value")}</th><th></th></tr></thead><tbody>
+    `<div class="card"><h2>${t("inventory")} — ${money(tot)} ${cur()} <span class="chip" title="${esc(L2("How issues and transfers are costed (Settings → System)", "طريقة تقييم الصرف والتحويل (الإعدادات ← النظام)"))}">${esc(d.costing === "average" ? L2("Moving average", "المتوسط المتحرك") : "FIFO")}</span></h2>${d.levels.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${esc(L2("Minimum", "الحد الأدنى"))}</th><th class="num">${t("avg_cost")}</th><th class="num">${esc(L2("Last purchase price", "آخر سعر شراء"))}</th><th class="num">${t("value")}</th><th></th></tr></thead><tbody>
       ${SLV.rows.map(r => { const vis = r.low && ["both", "visual"].includes(r.alert_mode);
         return `<tr class="${vis ? "stk-low" : ""}"><td>${esc(r.name)} ${vis ? `<span class="chip ${r.qty <= 0 ? "bad" : "warn"}">${esc(r.qty <= 0 ? L2("Out of stock", "نفد") : L2("At or below minimum", "عند الحد الأدنى أو أقل"))}</span>` : ""}${r.sku ? `<div class="lines">${esc(r.sku)}</div>` : ""}</td><td>${esc(r.warehouse)}</td><td>${esc(r.unit)}</td><td class="num ${r.qty < 0 || vis ? "neg" : ""}">${numf(r.qty)}</td><td class="num">${r.min ? numf(r.min) : "—"}</td><td class="num">${money(r.avg_cost)}</td>
       <td class="num">${r.last_rate != null ? money(r.last_rate) + `<div class="lines">${fd(r.last_date)}</div>` : "—"}</td><td class="num">${money(r.value)}</td>
@@ -6249,6 +6252,7 @@ PAGES.settings = async (view, parts, q) => {
       <div>${Object.entries(sys.counts).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ")}<br><span class="muted">${sys.backups.length} backups: ${esc(sys.backups.slice(0, 3).join(", "))}</span></div></div>
       ${ed ? `<div class="row" style="margin-top:10px"><label class="f">${t("backups_keep")}<input id="bkeep" type="number" value="${esc(st.backup_keep || 14)}" style="max-width:100px"></label><button class="btn" data-a="maint">${t("maintenance")}</button><a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a></div>` : ""}</div>
     ${STATIC ? "" : `<div class="card" id="liccard"><h2>${L2("Licence", "الترخيص")}</h2><div class="muted">${t("loading")}</div></div>`}
+    <div class="card" id="costcard"><h2>${esc(L2("Stock costing", "تقييم المخزون"))}</h2><div class="muted">${t("loading")}</div></div>
     <div class="card" id="lockcard"><h2>${t("lock_date")}</h2><div class="row"><input type="date" name="lock_date" value="${esc(st.lock_date || "")}" style="max-width:200px" ${ed ? "" : "disabled"}>${ed ? `<button class="btn" data-a="locksave">${t("save")}</button>` : ""}</div><p class="muted">${t("lock_note")}</p>${ed ? `<a class="btn sm" href="#/year-end">${esc(L2("Year-end close", "إقفال السنة المالية"))}</a>` : ""}</div>
     ${S.boot.user.is_super ? `<div class="card"><h2>${esc(L2("Two-step sign-in", "التحقق بخطوتين"))}</h2><label class="f">${esc(L2("Required for", "إلزامي لـ"))}<select data-change="tsreq" style="max-width:360px">${[["", L2("No one (optional)", "لا أحد (اختياري)")], ["admins", L2("Administrators", "المسؤولين")], ["all", L2("All users", "جميع المستخدمين")]].map(([v, l]) => `<option value="${v}" ${(st.two_step_required || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
       <p class="muted">${esc(L2("Affected users must set it up in their profile before continuing. If a user loses their phone and recovery codes, disable it for them in Users.", "يجب على المستخدمين المعنيين تفعيله من ملفهم الشخصي قبل المتابعة. إن فقد مستخدم هاتفه ورموز الاسترداد، عطّله له من المستخدمين."))}</p></div>` : ""}
@@ -6282,6 +6286,27 @@ PAGES.settings = async (view, parts, q) => {
   })();
   S.H.tsreq = async el => { try { await api("PUT", "/api/settings", { two_step_required: el.value }); await refreshBoot(); toast(t("saved")); } catch (e) { fail(e); } };
   S.H.dupset = async el => { try { await api("PUT", "/api/settings", { duplicate_check: el.checked ? "" : "off" }); await refreshBoot(); toast(t("saved")); } catch (e) { fail(e); } };
+  (async () => {     // how stock is costed: FIFO or moving average, switched with a preview of what changes
+    const box = $("#costcard"); if (!box || !can("stock.balances")) { if (box) box.remove(); return; }
+    let c; try { c = await api("GET", "/api/stock/costing"); } catch (e) { box.remove(); return; }
+    const NAMES = { fifo: L2("FIFO: first in, first out", "الوارد أولاً يُصرف أولاً (FIFO)"), average: L2("Moving average", "المتوسط المرجح المتحرك") };
+    const may = ed && S.boot.user && S.boot.user.is_super;
+    box.innerHTML = `<h2>${esc(L2("Stock costing", "تقييم المخزون"))}</h2>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><select id="costm" ${may ? "" : "disabled"}>${Object.entries(NAMES).map(([k, l]) => `<option value="${k}" ${k === c.method ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+        ${may ? `<button class="btn" data-a="costprev">${esc(L2("Preview the change", "معاينة التغيير"))}</button>` : ""}</div>
+      <p class="muted">${esc(L2("Each warehouse is costed on its own, in date order. FIFO issues the oldest stock first at what it cost; the moving average re-averages on every receipt. A movement entered with an earlier date re-costs the later ones: their difference is posted as a dated Stock Cost Adjustment entry, never by changing posted entries.", "كل مخزن يُقيَّم وحده بترتيب التاريخ. في FIFO يُصرف أقدم مخزون أولاً بتكلفته؛ وفي المتوسط المتحرك يُعاد حساب المتوسط مع كل استلام. الحركة المسجلة بتاريخ سابق تعيد تقييم الحركات اللاحقة: يُرحَّل الفرق بقيد «تسوية تكلفة مخزون» بتاريخه، دون تعديل أي قيد مرحَّل."))}
+        ${c.adjustments ? ` ${esc(L2(`${c.adjustments} adjustment entries so far.`, `عدد قيود التسوية حتى الآن: ${c.adjustments}.`))}` : ""}</p><div id="costout"></div>`;
+    S.H.costprev = async () => {
+      const how = $("#costm").value, out = $("#costout");
+      try { const r = await api("POST", "/api/stock/costing", { method: how, preview: true });
+        out.innerHTML = `<div class="banner ${r.items.length ? "warn" : "ok"}">${esc(r.items.length ? L2(`Switching to ${NAMES[how]} re-costs ${r.items.length} item(s): ${money(r.total)} on the cost accounts in all, posted as dated adjustment entries.`, `التحويل إلى ${NAMES[how]} يعيد تقييم ${r.items.length} صنف: ${money(r.total)} إجمالاً على حسابات التكلفة، تُرحَّل بقيود تسوية مؤرخة.`) : L2("Nothing changes: every movement already has this cost.", "لا تغيير: كل الحركات بهذه التكلفة بالفعل."))}</div>
+          ${r.items.length ? `<div class="tbl"><table><tbody>${r.items.map(i => `<tr><td>${esc(i.item)}</td><td class="num">${money(i.change)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+          ${r.short.length ? `<div class="banner err">${esc(L2("These stores were already short at some point (left as they are):", "هذه المخازن كان رصيدها بالسالب في وقت ما (تُركت كما هي):"))}<br>${r.short.map(esc).join("<br>")}</div>` : ""}
+          ${how !== c.method || r.items.length ? `<button class="btn pri" data-a="costdo" data-m="${how}">${esc(L2("Apply", "تطبيق"))}</button>` : ""}`;
+      } catch (e) { fail(e); } };
+    S.H.costdo = async el => { if (!await uiConfirm(L2("Re-cost the stock now? Adjustment entries are posted on each movement's date.", "إعادة تقييم المخزون الآن؟ تُرحَّل قيود التسوية بتاريخ كل حركة."))) return;
+      try { const r = await api("POST", "/api/stock/costing", { method: el.dataset.m, preview: false }); toast(L2(`Done: ${r.items.length} item(s) re-costed.`, `تم: إعادة تقييم ${r.items.length} صنف.`)); route(); } catch (e) { fail(e); } };
+  })();
   S.H.locksave = async () => { try { await api("PUT", "/api/settings", { lock_date: $("[name=lock_date]").value }); await refreshBoot(); toast(t("saved")); } catch (e) { fail(e); } };
   S.H.erase = async () => {
     const scope = ($("input[name=escope]:checked") || {}).value, word = $("#econfirm").value;
@@ -12222,7 +12247,7 @@ PAGES["stock-plan"] = async (view, parts, q) => {
     try { const r = await api("POST", "/api/stock-plan/apply", { items: [...new Set(sug.map(x => x.item_id))] }); toast(L2(`${r.applied} minimum(s) updated.`, `تم تحديث ${r.applied} حد أدنى.`)); route(); } catch (e) { fail(e); } };
   view.innerHTML = top.replace(`<div class="row" style="gap:10px;margin:8px 0">`, `<div class="row" style="gap:10px;margin:8px 0">${whSel}`) +
     `<div class="kpis">${kpiBox(L2("Items forecast", "أصناف متوقعة"), String(rows.length))}${kpiBox(L2("Run out within 30 days", "تنفد خلال 30 يوماً"), String(soon.length), soon.length ? "neg" : "")}
-      ${kpiBox(L2(`Fall to their minimum within ${horizon} month(s)`, `تصل إلى حدها الأدنى خلال ${horizon} شهر`), String(fall.length), fall.length ? "neg" : "")}${kpiBox(L2(`Expected to go out (${horizon} month(s), at average cost)`, `الصادر المتوقع (${horizon} شهر، بمتوسط التكلفة)`), outVal)}</div>
+      ${kpiBox(L2(`Fall to their minimum within ${horizon} month(s)`, `تصل إلى حدها الأدنى خلال ${horizon} شهر`), String(fall.length), fall.length ? "neg" : "")}${kpiBox(L2(`Expected to go out (${horizon} month(s), at today's unit cost)`, `الصادر المتوقع (${horizon} شهر، بتكلفة الوحدة الحالية)`), outVal)}</div>
     ${sug.length && ed ? `<div class="banner info row" style="gap:8px">${esc(L2(`${sug.length} suggested minimum(s) differ from the ones set (based on past use and delivery time).`, `${sug.length} حد أدنى مقترح يختلف عن المحدد (بناءً على الاستهلاك السابق ومدة التوريد).`))}<span class="spacer"></span><button class="btn sm pri" data-a="spapply">${esc(L2("Apply suggestions", "تطبيق المقترحات"))}</button></div>` : ""}
     <div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th class="num">${t("on_hand")}</th><th>${esc(L2("Out per month", "الصادر شهرياً"))}</th>
       ${d.ahead.map(m => `<th class="num">${esc(spMonth(m))}<div class="lines">${esc(L2("in / out", "وارد / صادر"))}</div></th>`).join("")}<th class="num">${esc(L2("Balance after", "الرصيد بعدها"))}</th><th class="num">${esc(L2("Days of cover", "أيام التغطية"))}</th><th class="num">${esc(L2("Minimum", "الحد الأدنى"))}<div class="lines">${esc(L2("set / suggested", "محدد / مقترح"))}</div></th><th>${esc(L2("Method", "الطريقة"))}</th></tr></thead><tbody>

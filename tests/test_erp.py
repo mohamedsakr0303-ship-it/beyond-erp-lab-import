@@ -3932,7 +3932,7 @@ class SiteModules(unittest.TestCase):
         r = a.stock_report(self.db, None, "PIPE-01")[0]
         self.assertEqual((r["avg_cost"], r["last_rate"], r["last_date"]), (120, 140, "2026-03-05"))
         t = reports.stock_table(self.db, q="PIPE-01")
-        self.assertEqual([c["label"] for c in t["columns"]][5:8], ["Avg cost", "Last purchase price", "Last purchased on"])
+        self.assertEqual([c["label"] for c in t["columns"]][5:8], ["Unit cost (on hand)", "Last purchase price", "Last purchased on"])
         self.assertEqual(t["rows"][0]["cells"][:1] + t["rows"][0]["cells"][5:8], ["PIPE-01", 120, 140, "2026-03-05"])
 
     def test_duplicate_items_found_merged_and_prevented(self):
