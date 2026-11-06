@@ -12266,7 +12266,8 @@ PAGES["stock-plan"] = async (view, parts, q) => {
 };
 PAGES["stock-counts"] = async (view, parts, q) => {
   const rows = await api("GET", "/api/stock-counts?" + qs(q));
-  S.H.scnew = () => drawer(L2("Start stock count", "بدء الجرد"), form([{ k: "warehouse_id", l: t("warehouse") + " *", type: "select", opts: whOpts() }, { k: "date", l: t("date"), type: "date", v: today() },
+  S.H.scnew = () => drawer(L2("Start stock count", "بدء الجرد"), form([{ k: "warehouse_id", l: t("warehouse") + " *", type: "select", req: 1,
+      opts: [...(whOpts().length > 1 ? [["", L2("Choose the warehouse", "اختر المخزن")]] : []), ...whOpts()] }, { k: "date", l: t("date"), type: "date", v: today() },
       { k: "counted_by", l: L2("Counted by", "القائم بالجرد"), v: (S.boot.user.full_name || S.boot.user.username) }, { k: "include_zero", l: L2("Include zero-balance items", "تضمين الأصناف ذات الرصيد الصفري"), type: "checkbox" },
       { k: "notes", l: t("notes"), type: "textarea", span: "spanall" }]) + `<p class="muted" style="font-size:.85em">${L2("The count sheet lists current book quantities; enter the physical count. Movements during the count are taken into account.", "تعرض ورقة الجرد أرصدة الدفاتر الحالية؛ أدخل الكميات الفعلية. تؤخذ الحركات أثناء الجرد في الاعتبار.")}</p>`,
     async v => { const r = await api("POST", "/api/stock-counts", v); closeDrawer(); location.hash = "#/stock-count/" + r.id; return false; });
@@ -12322,7 +12323,8 @@ function eqForm(e) {
 }
 function usageForm(e) {
   drawer(L2("Working hours / fuel", "ساعات التشغيل / الوقود"), form([
-    { k: "equipment_id", l: L2("Equipment", "المعدة") + " *", type: "select", opts: (S.eqList || []).map(x => [x.id, `${x.code} — ${x.name}`]), v: e ? e.id : "" },
+    { k: "equipment_id", l: L2("Equipment", "المعدة") + " *", type: "select", req: 1, v: e ? e.id : "",     // chosen, never the first machine by default
+      opts: [...((S.eqList || []).length > 1 && !e ? [["", L2("Choose the machine", "اختر المعدة")]] : []), ...(S.eqList || []).map(x => [x.id, `${x.code} — ${x.name}`])] },
     { k: "bu_id", l: t("bu") + " *", type: "select", opts: buOpts(""), v: e && e.bu_id || "" }, { k: "date", l: t("date"), type: "date", v: today() },
     { k: "hours", l: L2("Hours worked", "ساعات التشغيل"), type: "number" }, { k: "operator", l: L2("Operator", "المشغل"), list: "eqop" },
     { k: "fuel_qty", l: L2("Fuel (litres)", "الوقود (لتر)"), type: "number" }, { k: "fuel_cost", l: L2("Fuel cost", "تكلفة الوقود"), type: "number" },
@@ -12334,7 +12336,8 @@ function usageForm(e) {
 }
 function maintForm(e, plan) {
   drawer(L2("Maintenance / repair", "صيانة / إصلاح"), form([
-    { k: "equipment_id", l: L2("Equipment", "المعدة") + " *", type: "select", opts: (S.eqList || []).map(x => [x.id, `${x.code} — ${x.name}`]), v: e ? e.id : "" },
+    { k: "equipment_id", l: L2("Equipment", "المعدة") + " *", type: "select", req: 1, v: e ? e.id : "",     // chosen, never the first machine by default
+      opts: [...((S.eqList || []).length > 1 && !e ? [["", L2("Choose the machine", "اختر المعدة")]] : []), ...(S.eqList || []).map(x => [x.id, `${x.code} — ${x.name}`])] },
     { k: "plan_id", l: L2("Maintenance plan", "خطة الصيانة"), type: "select", opts: [["", "—"], ...(S.eqPlans || []).filter(p => !e || p.equipment_id === e.id).map(p => [p.id, `${p.code || ""} ${p.title}`])], v: plan ? plan.id : "" },
     { k: "kind", l: t("type"), type: "select", opts: [["service", L2("Service", "صيانة دورية")], ["repair", L2("Repair", "إصلاح")], ["inspection", L2("Inspection", "فحص")]], v: "service" },
     { k: "date", l: t("date"), type: "date", v: today() }, { k: "description", l: t("description"), span: "spanall" },
