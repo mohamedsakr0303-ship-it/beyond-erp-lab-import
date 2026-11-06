@@ -369,8 +369,8 @@ def read_legacy_workbook(path):
         _read_design_offer(sheet("design offer"), data, notes)
     if data.get("_facility"):
         data["Settings"].append({"key": "funding_mode", "value": "facility"})
-        notes.append(f"Funding facility (V1.9+): what the funding partner fronts is owed to him (the workbook's account "
-                     f"{data['_facility']}), so the app's funding account is a liability (facility mode), not his capital. "
+        notes.append(f"Funding facility (V1.9+): what the funding partner fronts is owed to that partner (the workbook's account "
+                     f"{data['_facility']}), so the app's funding account is a liability (facility mode), not the partner's capital. "
                      "Equity → If a partner leaves shows the facility: limit, fronted today and once suppliers are paid, peak, "
                      "weekly statement.")
     data.pop("_facility", None)
@@ -772,8 +772,8 @@ def _read_partner_loans(ws, data, notes):
         if m and not any(x.get("key") == "funding_partner" for x in data.get("Settings", [])):
             # the partner whose own account is the company's bank (section 5): his money in is worked out live
             data.setdefault("Settings", []).append({"key": "funding_partner", "value": m.group(1).strip()})
-            notes.append(f"Funding partner: {m.group(1).strip()} — the company's money runs through his account "
-                         "(Equity → If a partner leaves shows his money in and out).")
+            notes.append(f"Funding partner: {m.group(1).strip()} — the company's money runs through their account "
+                         "(Equity → If a partner leaves shows their money in and out).")
         cells = [ws.cell(r, c).value for c in range(1, min(ws.max_column, 16) + 1)]
         label = " ".join(str(v) for v in cells if isinstance(v, str)).lower()
         nums = [v for v in cells if isinstance(v, (int, float)) and not isinstance(v, bool)]
@@ -792,7 +792,7 @@ def _read_partner_loans(ws, data, notes):
                 nums = [v for v in cells if isinstance(v, (int, float)) and not isinstance(v, bool)]
                 if nums:
                     data.setdefault("Settings", []).append({"key": "funding_limit", "value": str(nums[-1])})
-                    notes.append(f"Funding limit {nums[-1]:,.2f} (Balances Tracker) — shown against his money in the company.")
+                    notes.append(f"Funding limit {nums[-1]:,.2f} (Balances Tracker) — shown against their money in the company.")
         if "partner loans" in head.lower() and not start_row:
             start_row = r
     if not start_row:
@@ -817,7 +817,7 @@ def _read_partner_loans(ws, data, notes):
                           "rate": 0, "interest_type": "none", "fixed_interest": 0, "term_months": months,
                           "frequency": 1, "first_due": "", "schedule_type": "equal" if months else "none", "schedule": "[]",
                           "status": "active", "closed_on": "", "notes": "Interest-free. The workbook's plan only advises; "
-                          "record repayments here (cash, or settled from his profit share by a decision).", "created_at": ""})
+                          "record repayments here (cash, or settled from their profit share by a decision).", "created_at": ""})
         break
     if loans:
         data.setdefault("_extras", {}).setdefault("loans", []).extend(loans)
@@ -913,11 +913,11 @@ def _read_journal(wb, ws, data, notes, codes):
                      "shows what was used and at what price).")
     if funded:
         notes.append(f"Every payment and receipt ({len(funded)} entries) goes through {funder}'s funding account "
-                     f"({FUNDING_ACCOUNT}) instead of the bank — his money in the company is their total, live.")
+                     f"({FUNDING_ACCOUNT}) instead of the bank — their money in the company is the total of these, live.")
     if auto:
         notes.append(f"{', '.join(auto)} recalculated themselves in the workbook (work in progress, funding top-up). They "
                      "were not copied as fixed snapshots: the app keeps each project's work in progress up to date itself"
-                     + (" and the funding partner's account carries his money" if funder else "") + ".")
+                     + (" and the funding partner's account carries their money" if funder else "") + ".")
 
 
 def _read_invoice_register(wb, data, notes):
