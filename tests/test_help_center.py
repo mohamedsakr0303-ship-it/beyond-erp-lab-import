@@ -13,6 +13,16 @@ OWNER = "owner@platform.test"
 AGENT = "agent@platform.test"
 
 
+class Migrations(unittest.TestCase):
+    def test_every_migration_has_its_own_version(self):
+        """Supabase keys migrations by the number before the name: two files with one number make the second one
+        look applied (it never runs) and the deploy fail."""
+        from collections import Counter
+        files = sorted((Path(__file__).resolve().parent.parent / "supabase" / "migrations").glob("*.sql"))
+        twice = {v: n for v, n in Counter(f.name.split("_", 1)[0] for f in files).items() if n > 1}
+        self.assertEqual(twice, {})
+
+
 @unittest.skipUnless(pgtest.available(), "PostgreSQL is not installed")
 class HelpCenter(unittest.TestCase):
     @classmethod
@@ -49,7 +59,7 @@ class HelpCenter(unittest.TestCase):
                         self.assertTrue(src.rsplit(".", 1)[0].endswith("-" + lang), f"{g['q']}: {src} in the {lang} answer")
         cats = {c["key"] for c in self.ws.as_user("visitor@x.test").rpc("help_center")["categories"]}
         self.assertTrue({"projects", "partners"} <= cats)
-        mig = Path(__file__).resolve().parent.parent / "supabase" / "migrations" / "20261107000000_help_guides.sql"
+        mig = Path(__file__).resolve().parent.parent / "supabase" / "migrations" / "20261107090000_help_guides.sql"
         self.ws.sql(mig.read_text(encoding="utf-8"))                       # again: nothing is added twice
         self.assertEqual(len([f for f in self.agent.rpc("console_help")["faq"] if f["updated_by"] == "BeyondERP"]), 10)
 
