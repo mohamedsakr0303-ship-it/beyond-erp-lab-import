@@ -231,6 +231,8 @@ def build(make_zip=False):
     for f in ("app.css", "i18n.js", "app.js", "assistant.jpg"):
         shutil.copy(ROOT / "erp" / "static" / f, OUT / f)
     shutil.copytree(ROOT / "erp" / "static" / "icons", OUT / "icons", dirs_exist_ok=True)   # app icon choices
+    if (ROOT / "erp" / "static" / "help").is_dir():      # pictures and clips used by the Help & FAQ guides
+        shutil.copytree(ROOT / "erp" / "static" / "help", OUT / "help", dirs_exist_ok=True)
     for f in (ROOT / "erp" / "static" / "vendor").glob("*"):   # fonts, 3D model viewer (loaded only when a model is shown)
         if f.is_dir():
             shutil.copytree(f, OUT / "vendor" / f.name, dirs_exist_ok=True)
@@ -275,6 +277,7 @@ def build(make_zip=False):
                                   "  Permissions-Policy: camera=(self), microphone=(self), geolocation=(self), payment=()\n"
                                   "  X-Robots-Tag: noai, noimageai\n"
                                   "/vendor/*\n  Cache-Control: public, max-age=31536000, immutable\n"
+                                  "/help/*\n  Cache-Control: public, max-age=86400\n"
                                   "/build.json\n  Cache-Control: no-store\n", encoding="utf-8")
     size = sum(p.stat().st_size for p in OUT.rglob("*") if p.is_file())
     print(f"Built {OUT} ({size / 1048576:.1f} MB)")

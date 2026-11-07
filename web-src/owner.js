@@ -1341,6 +1341,12 @@ PAGES.bugs = async view => {
     filters: [{ k: "st", l: L("Status", "الحالة"), type: "select", opts: [["open", L("Not closed", "غير مغلقة")], ["closed", L("Closed", "مغلقة")]], test: (t, v) => v === "open" ? t.status !== "closed" : t.status === "closed" }] }));
 };
 
+// the answer's light formatting, as the app shows it (erp/static/app.js, helpMd)
+const HELP_FORMAT = () => L("Formatting: ## heading · - list · 1. numbered list · > note · | a | b | table (then |---|---|) · **bold** · *italic* · "
+  + "[text](#/screen) · ![caption](help/picture.jpg or clip.webm) on its own line, from the site's help/ folder.",
+  "التنسيق: ## عنوان · - قائمة · 1. قائمة مرقمة · > ملاحظة · | أ | ب | جدول (ثم |---|---|) · **عريض** · *مائل* · "
+  + "[نص](#/شاشة) · ![وصف](help/picture.jpg أو clip.webm) في سطر مستقل، من مجلد help/ في الموقع.");
+
 // Help & FAQ: categories and questions in both languages (what customers read in the app's Help & FAQ)
 PAGES.help = async view => {
   const d = await rpc("console_help"), cats = d.categories, catName = k => { const c = cats.find(x => x.key === k); return c ? ((S.lang === "ar" && c.name_ar) || c.name) : "—"; };
@@ -1348,7 +1354,8 @@ PAGES.help = async view => {
       { k: "category", l: L("Category", "التصنيف"), type: "select", v: f ? f.category || "" : "", opts: [["", "—"], ...cats.map(c => [c.key, (S.lang === "ar" && c.name_ar) || c.name])] },
       { k: "sort", l: L("Order", "الترتيب"), type: "number", v: f ? f.sort : 0 },
       { k: "q", l: L("Question", "السؤال"), v: f ? f.q : "", req: 1 }, { k: "q_ar", l: L("Question (Arabic)", "السؤال (عربي)"), v: f ? f.q_ar : "", dir: "rtl" },
-      { k: "a", l: L("Answer", "الإجابة"), type: "area", rows: 7, v: f ? f.a : "", req: 1 }, { k: "a_ar", l: L("Answer (Arabic)", "الإجابة (عربي)"), type: "area", rows: 7, v: f ? f.a_ar : "", dir: "rtl" },
+      { k: "a", l: L("Answer", "الإجابة"), type: "area", rows: 7, v: f ? f.a : "", req: 1, help: HELP_FORMAT() },
+      { k: "a_ar", l: L("Answer (Arabic)", "الإجابة (عربي)"), type: "area", rows: 7, v: f ? f.a_ar : "", dir: "rtl" },
       { k: "published", l: L("Published (customers see it)", "منشور (يراه العملاء)"), type: "check", v: f ? f.published : true, span: 1 }]),
     async v => { await rpc("console_help_faq", { p: { ...v, id: f ? f.id : null, sort: +v.sort || 0 } }); toast(L("Saved.", "تم الحفظ.")); },
     { wide: true, extra: f ? `<button type="button" class="btn danger" data-a="faqdel" data-id="${f.id}">${esc(L("Delete", "حذف"))}</button>` : "" });

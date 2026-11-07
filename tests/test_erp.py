@@ -3207,6 +3207,78 @@ class Legacy(unittest.TestCase):
         self.assertEqual(x["total"], 81256.0)
         self.assertTrue(all(ln["category"] for ln in x["lines"]))
 
+    @unittest.skipUnless(__import__("shutil").which("node"), "node is not installed")
+    def test_help_answers_format_safely(self):
+        """Help & FAQ answers: light formatting only. Markup typed into an answer stays text, pictures and clips come
+        only from the site's help/ folder, links only to the app's screens or https, and two tables stay two tables."""
+        import re
+        import subprocess
+        src = (ROOT / "erp" / "static" / "app.js").read_text(encoding="utf-8")
+        grab = lambda rx: re.search(rx, src, re.M | re.S).group(0)  # noqa: E731
+        code = "\n".join([grab(r"^const esc = .*?$"), grab(r"^const HELP_MEDIA = .*?$"), grab(r"^function helpInline\(.*?\n\}\n"),
+                          grab(r"^function helpMd\(.*?\n\}\n")])
+        cases = {
+            "xss": "<script>alert(1)</script> <img src=x onerror=alert(1)>",
+            "media": "![ok](help/fifo-moves-en.jpg)\n\n![clip](help/clip-stock-issue-en.webm)\n\n![bad](https://evil.test/x.jpg)\n\n![bad2](help/../x.jpg)",
+            "links": "[screen](#/stock) [site](https://mybeyonderp.com) [js](javascript:alert(1))",
+            "tables": "| A | Debit |\n|---|---|\n| x | 1,000.00 |\n\n| B | Credit |\n|---|---|\n| y | 2.00 |\n| B2 | C2 |\n|---|---|\n| z | 3 |",
+            "text": "## Title\n- one\n- two\n\n> note *it* and **bold**",
+        }
+        js = code + "\nconst C = " + json.dumps(cases) + ";\nconsole.log(JSON.stringify(Object.fromEntries(Object.entries(C).map(([k, v]) => [k, helpMd(v)]))));"
+        out = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+        self.assertNotIn("<script", out["xss"])
+        self.assertNotIn("<img", out["xss"])
+        self.assertIn("&lt;script&gt;", out["xss"])
+        self.assertIn('<img src="help/fifo-moves-en.jpg"', out["media"])
+        self.assertIn('<video src="help/clip-stock-issue-en.webm"', out["media"])
+        self.assertNotIn('"https://evil.test', out["media"])                       # neither loaded nor linked
+        self.assertEqual(out["media"].count("<img"), 1)
+        self.assertIn('href="#/stock"', out["links"])
+        self.assertIn('href="https://mybeyonderp.com"', out["links"])
+        self.assertNotIn('href="javascript', out["links"])
+        self.assertEqual(out["tables"].count("<table>"), 3)
+        self.assertIn('<th class="num">Debit</th>', out["tables"])
+        self.assertIn("<h4>Title</h4>", out["text"])
+        self.assertIn("<li>two</li>", out["text"])
+        self.assertIn("<i>it</i>", out["text"])
+        self.assertIn("<b>bold</b>", out["text"])
+
+    def test_every_import_note_is_written_in_both_languages(self):
+        """Each note an import writes for the reader carries its Arabic (textl10n.Note), so nobody reading in Arabic
+        gets an English explanation of what happened to their data."""
+        import ast
+        bare = []
+        for f in ("legacy.py", "interchange.py"):
+            tree = ast.parse((ROOT / "erp" / f).read_text(encoding="utf-8"))
+            for n in ast.walk(tree):
+                if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "append"
+                        and isinstance(n.func.value, ast.Name) and n.func.value.id == "notes"):
+                    arg = n.args[0] if n.args else None
+                    if not (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id in ("N", "Note") and len(arg.args) == 2):
+                        bare.append(f"{f}:{n.lineno}")
+        self.assertEqual(bare, [])
+
+    def test_import_notes_follow_the_readers_language(self):
+        from erp import auth, server, textl10n
+        n = textl10n.Note("Rows imported", "استُوردت الصفوف")
+        self.assertEqual((str(n), textl10n.note(n, "ar"), textl10n.note(n, "en")), ("Rows imported", "استُوردت الصفوف", "Rows imported"))
+        future = (datetime.date.today() + datetime.timedelta(days=40)).isoformat()
+        body = json.dumps({"Business Units": [{"code": "P1", "name": "Project 1"}],
+                           "Receipt Vouchers": [{"date": future, "voucher": "RV-9", "amount": 100, "party": "Client", "bu_code": "P1"}]}).encode()
+        got = {}
+        for lang in ("en", "ar"):
+            db = Database(":memory:")
+            auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
+            app = type("App", (), {})()
+            app.db, app.backup = db, (lambda *a_, **k: None)
+            tok, _ = auth.login(db, "boss", "pw123456")
+            r = server.handle(app, "POST", "/api/import?format=json&mode=append",
+                              {"x-session": tok, "x-requested-with": "BeyondERP", "x-lang": lang, "content-type": "application/json"}, body)
+            self.assertEqual(r.status, 200, r.body)
+            got[lang] = [x for x in json.loads(r.body)["notes"] if future in x]
+        self.assertTrue(got["en"] and "dated after today" in got["en"][0], got)
+        self.assertTrue(got["ar"] and "بتاريخ بعد اليوم" in got["ar"][0] and "سندات القبض" in got["ar"][0], got)
+
 
 def _sqljs_runner(raw):
     """sql.js's JSON contract (see web-src/bridge.js), emulated with real SQLite."""

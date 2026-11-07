@@ -2045,7 +2045,14 @@ body:has(.drawer-bg) .schat-b,body:has(.drawer-bg) .schat-peek{display:none}   /
 .help-cats a:hover{background:var(--hover)}.help-cats a.on{background:var(--chip);font-weight:700}
 .help-q{border-bottom:1px solid var(--line);padding:10px 2px}.help-q:last-child{border-bottom:0}
 .help-q summary{cursor:pointer;font-weight:600;display:flex;gap:8px;align-items:center;justify-content:space-between}
-.help-a{margin-top:8px;white-space:pre-wrap;color:var(--ink);opacity:.9}
+.help-a{margin-top:8px;color:var(--ink);line-height:1.6;max-width:880px}
+.help-a p{margin:0 0 10px}.help-a h4{margin:18px 0 6px;font-size:1.05em}.help-a h5{margin:14px 0 4px;font-size:.98em}
+.help-a ul,.help-a ol{margin:0 0 10px;padding-inline-start:22px}.help-a li{margin:3px 0}
+.help-a code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:.92em}
+.help-a .help-tbl{margin:6px 0 12px}.help-a .help-tbl table{font-size:.92em}
+.help-note{border-inline-start:3px solid var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);padding:8px 12px;border-radius:6px;margin:0 0 12px}
+.help-fig{margin:8px 0 14px}.help-fig img,.help-fig video{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px}
+.help-fig figcaption{font-size:.86em;opacity:.75;margin-top:4px}
 .help-results,.help-sug{margin-top:10px;border:1px solid var(--line);border-radius:12px;padding:6px 12px;background:var(--card-bg,var(--panel))}
 .help-sug>b{display:block;margin:6px 0 2px}
 .help-cta{display:flex;gap:12px;align-items:center;flex-wrap:wrap}

@@ -2253,7 +2253,10 @@ def stock_moves(ctx):
                     f"ORDER BY m.date DESC, m.id DESC LIMIT ? OFFSET ?", p + [limit, offset])
     for r in rows:
         r["rate"] = to_major(r["rate"])
-        r["value"] = round(r["qty"] * r["rate"], 2)
+        # the movement's own cost (FIFO / average, exact to the cent as booked), signed like its quantity;
+        # quantity × the rounded unit cost would be off by cents (150 × 146.67 = 22,000.50 for a 22,000.00 issue)
+        r["value"] = (to_major(abs(r["value"])) * (-1 if r["qty"] < 0 else 1)) if r.get("value") is not None \
+            else round(r["qty"] * r["rate"], 2)
     return ok({"rows": rows})
 
 
@@ -5186,8 +5189,12 @@ def _future_dated(data):
                     refs.append((ref, d))
         if refs:
             shown = ", ".join(f"{a} ({b})" if a != b else a for a, b in refs[:8]) + (" …" if len(refs) > 8 else "")
-            out.append(f"{sheet}: {len(refs)} dated after today ({today}) — {shown}. They are imported as dated, so balances and "
-                       "aging as of today leave them out; if a date is a typo, fix it in the file and import again.")
+            from .workbook_ar import sheet_names
+            out.append(textl10n.Note(
+                f"{sheet}: {len(refs)} dated after today ({today}) — {shown}. They are imported as dated, so balances and "
+                "aging as of today leave them out; if a date is a typo, fix it in the file and import again.",
+                f"{sheet_names().get(sheet, sheet)}: {len(refs)} بتاريخ بعد اليوم ({today}) — {shown}. تُستورد بتواريخها، فلا تدخل في "
+                "الأرصدة وأعمار الديون حتى اليوم؛ إن كان التاريخ خطأً فصححه في الملف واستورد مرة أخرى."))
     return out
 
 
@@ -5235,7 +5242,7 @@ def do_import(ctx):
         res = interchange.import_data(ctx.db, data, mode=mode, dry_run=dry, user=ctx.user["username"])
     except interchange.ImportErrors as e:
         return ok({"ok": False, "error": str(e), "errors": e.errors}, 400)
-    res["notes"] = res.get("notes", []) + data.get("_notes", []) + _future_dated(data)
+    res["notes"] = [textl10n.note(n, ctx.lang) for n in res.get("notes", []) + data.get("_notes", []) + _future_dated(data)]
     if not dry:
         ctx.db.set_setting("onboarding", "done")
     ctx.log("import" + (".dry" if dry else ""), json.dumps(res["counts"]))
@@ -6443,6 +6450,12 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
             data = json.loads(reply.body)
             if isinstance(data, dict) and isinstance(data.get("error"), str):
                 data["error"] = textl10n.error(data["error"], "ar")
+                for e in data.get("errors") or []:       # an import's problems, row by row
+                    if isinstance(e, dict) and isinstance(e.get("error"), str):
+                        e["error"] = textl10n.import_row_error(e["error"], e.get("sheet"), "ar")
+                        if isinstance(e.get("sheet"), str):
+                            from .workbook_ar import sheet_names
+                            e["sheet"] = sheet_names().get(e["sheet"], e["sheet"])
                 reply.body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
         except ValueError:
             pass

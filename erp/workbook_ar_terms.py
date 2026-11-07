@@ -299,7 +299,7 @@ CODES_AR = {
     "maintenance": "صيانة", "warranty": "ضمان", "insurance": "تأمين", "software": "برامج", "support": "دعم فني", "addon": "إضافة",
     "low": "منخفضة", "normal": "عادية", "high": "عالية",
     "todo": "لم تبدأ", "doing": "جارية", "blocked": "متوقفة", "done": "منتهية",
-    "client": "عقد عميل", "sub": "عقد مقاول باطن",
+    "client": "عقد عميل", "sub": "عقد باطن",
     "draft": "مسودة", "active": "سارٍ", "completed": "مكتمل", "terminated": "منتهٍ بالفسخ",
     "advance": "دفعة مقدمة", "release": "رد المحتجزات",
     "submitted": "مقدَّم", "approved": "معتمد", "rejected": "مرفوض", "ordered": "صدر به أمر شراء", "cancelled": "ملغى",

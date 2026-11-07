@@ -176,6 +176,48 @@ def table(t, lang):
     return t
 
 
+_COLS = {}
+
+
+def _column_ar(name):
+    """The Arabic heading of an import column ("Business Unit" → "وحدة الأعمال"), or None."""
+    if not _COLS:
+        from .interchange import SHEETS
+        for sh in SHEETS:
+            for c in sh["cols"]:
+                if c.get("ar") and re.search("[\u0600-\u06FF]", c["ar"]):
+                    _COLS.setdefault(c["en"], c["ar"])
+                    _COLS.setdefault(c["en"].lower(), c["ar"])
+    return _COLS.get(name) or _COLS.get(name.lower())
+
+
+def import_row_error(msg, sheet, lang):
+    """One row problem of an import in the reader's language, naming the columns as that sheet's own headings."""
+    if lang != "ar" or not isinstance(msg, str):
+        return msg
+    m = re.fullmatch(r"missing (.+)", msg)
+    if m and sheet:
+        from .interchange import SHEET_BY_NAME
+        cols = {c["en"].lower(): c["ar"] for c in (SHEET_BY_NAME.get(sheet) or {}).get("cols", []) if c.get("ar")}
+        return "ناقص: " + "، ".join(cols.get(x.lower()) or _column_ar(x) or x for x in m.group(1).split(", "))
+    return error(msg, lang)
+
+
+class Note(str):
+    """A note in English that also carries its Arabic (what an import did, for the person reading it). str() is the English."""
+    def __new__(cls, en, ar=""):
+        n = super().__new__(cls, en)
+        n.ar = ar
+        return n
+
+
+def note(n, lang):
+    """A note in the reader's language: its own Arabic when it carries one, else the server's message translation."""
+    if lang != "ar" or not isinstance(n, str):
+        return n
+    return getattr(n, "ar", "") or error(n, "ar")
+
+
 _ERR = []       # (regex, Arabic) for the server's messages, longest fixed text first so a general one never wins
 
 
@@ -186,9 +228,12 @@ def error(msg, lang, depth=0):
     from . import errors_ar
     if msg in errors_ar.MESSAGES:
         return errors_ar.MESSAGES[msg]
-    field = errors_ar.FIELDS.get(msg) or errors_ar.FIELDS.get(msg[:1].lower() + msg[1:])
+    field = errors_ar.FIELDS.get(msg) or errors_ar.FIELDS.get(msg[:1].lower() + msg[1:]) or _column_ar(msg)
     if field:
         return field
+    m = re.fullmatch(r"missing (.+)", msg)          # an import row without required columns: "missing Date, Amount"
+    if m:
+        return "ناقص: " + "، ".join(_column_ar(x) or error(x, lang, depth + 1) for x in m.group(1).split(", "))
     if not _ERR:
         for en, ar in sorted(errors_ar.MESSAGES.items(), key=lambda p: -len(p[0].replace("{}", ""))):
             if "{}" in en:

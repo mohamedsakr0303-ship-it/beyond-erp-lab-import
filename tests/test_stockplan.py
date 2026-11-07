@@ -353,6 +353,24 @@ class Api(unittest.TestCase):
                           json.dumps(b or {}).encode())
         return r.status, json.loads(r.body or b"{}")
 
+    def test_movements_list_shows_each_movements_booked_cost(self):
+        """An issue costed 22,000.00 by FIFO shows 22,000.00, not 150 × its rounded unit cost (22,000.50)."""
+        self.db.x("INSERT INTO business_units(code,name) VALUES ('P1','Project 1')")
+        mv = lambda **d: acc.stock_move(self.db, {"item": "Cement", "unit": "bag", "warehouse": "Main Store", **d}, "boss")  # noqa: E731
+        mv(type="Receipt", date="2026-03-01", qty=100, rate=150, vendor="S", paid=0)
+        mv(type="Receipt", date="2026-03-10", qty=100, rate=160, vendor="S", paid=0)
+        mv(type="Issue", date="2026-03-15", qty=150, bu_code="P1")
+        mv(type="Receipt", date="2026-03-05", qty=50, rate=140, vendor="S", paid=0)      # entered late: the issue is re-costed
+        st, r = self.call("GET", "/api/stock/moves")
+        issue = next(x for x in r["rows"] if x["kind"] == "Issue")
+        self.assertEqual((st, issue["value"]), (200, -22000.0))
+        booked = self.db.one("SELECT SUM(l.credit-l.debit) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                             "WHERE l.account='1200' AND e.kind IN ('Material Issue','Stock Cost Adjustment') AND e.status='posted'")["n"]
+        self.assertEqual(booked, 2200000)
+        used = [x for x in acc.materials_used(self.db)["rows"] if x["source"] == "issued"] if isinstance(acc.materials_used(self.db), dict) \
+            else [x for x in acc.materials_used(self.db) if x["source"] == "issued"]
+        self.assertEqual([x["amount"] for x in used], [22000.0])
+
     def test_settings_bell_forecast_and_permissions(self):
         receive(self.db, "Main Store", "Cement", 30, 10, month_day(1, 3))
         iid = item_id(self.db, "Cement")

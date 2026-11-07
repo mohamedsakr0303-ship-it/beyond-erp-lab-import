@@ -992,10 +992,12 @@ def materials_used(db, bu_id=None, q=None, date_from=None, date_to=None, limit=5
                       FROM material_lines m JOIN journal_entries e ON e.id=m.entry_id
                       WHERE {live} AND m.warehouse_id IS NULL"""):
         rows.append({**r, "source": "bought", "from": r["party"] or ""})
-    for r in db.q(f"""SELECT s.entry_id, s.date, s.bu_id, i.name AS description, i.unit, -s.qty AS qty, s.rate, w.name AS wh,
+    for r in db.q(f"""SELECT s.entry_id, s.date, s.bu_id, i.name AS description, i.unit, -s.qty AS qty, s.rate, s.value, w.name AS wh,
                              e.party, e.kind FROM stock_moves s JOIN stock_items i ON i.id=s.item_id JOIN warehouses w ON w.id=s.warehouse_id
                       JOIN journal_entries e ON e.id=s.entry_id WHERE {live} AND s.kind='Issue' AND s.qty<0 AND s.bu_id IS NOT NULL"""):
-        rows.append({**r, "amount": int(round(r["qty"] * r["rate"])), "source": "issued", "from": r.pop("wh")})
+        value = r.pop("value")       # the issue's own FIFO / average cost, as booked
+        rows.append({**r, "amount": abs(value) if value is not None else int(round(r["qty"] * r["rate"])), "source": "issued",
+                     "from": r.pop("wh")})
     mats = [a["code"] for a in db.q("SELECT code FROM accounts WHERE role='materials' OR subtype='materials'")]
     if mats:
         marks = ",".join("?" * len(mats))

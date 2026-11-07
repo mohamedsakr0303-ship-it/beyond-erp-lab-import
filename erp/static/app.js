@@ -5869,7 +5869,7 @@ async function contactView(id) {
       ${p.bank_details ? `<button type="button" class="btn sm" data-a="cvbank">⧉ ${esc(L2("Copy bank details", "نسخ بيانات البنك"))}</button>` : ""}</div>
     <div class="kpis">${kpiBox(L2("Payable", "مستحق لهم"), money(owe), owe > 0 ? "neg" : "")}${kpiBox(L2("Receivable", "مستحق لنا"), money(owed))}${kpiBox(L2("Purchases", "المشتريات"), money(d.spent))}${d.earned ? kpiBox(L2("Sales", "المبيعات"), money(d.earned)) : ""}${kpiBox(L2("Vouchers", "السندات"), numf(d.vouchers))}</div>
     <div class="tbl"><table><tbody>${row(L2("Contact person", "مسؤول الاتصال"), p.contact_person)}${row(L2("Trade / specialty", "النشاط / التخصص"), p.specialty)}${row(t("phone"), [p.phone, p.phone2].filter(Boolean).join(" / "), 1)}${row("WhatsApp", p.whatsapp, 1)}${row(t("email"), p.email, 1)}
-      ${row(L2("Vehicle / plate no.", "المركبة / رقم اللوحة"), p.vehicle)}${row(L2("Address", "العنوان"), [p.street, p.building, p.region, p.governate].filter(Boolean).join("، "))}${row(L2("Bank details", "البيانات البنكية"), p.bank_details)}${row(t("tax_id"), p.tax_id || p.national_id, 1)}${row(t("notes"), p.notes)}</tbody></table></div>
+      ${row(L2("Vehicle / plate no.", "المركبة / رقم اللوحة"), p.vehicle)}${row(L2("Address", "العنوان"), [p.street, p.building, p.region, p.governate].filter(Boolean).join(S.lang === "ar" ? "، " : ", "))}${row(L2("Bank details", "البيانات البنكية"), p.bank_details)}${row(t("tax_id"), p.tax_id || p.national_id, 1)}${row(t("notes"), p.notes)}</tbody></table></div>
     ${d.balances.length ? `<h4 class="fsec">${esc(L2("Open balances", "الأرصدة المفتوحة"))}</h4><div class="tbl"><table><thead><tr><th>${t("account")}</th><th class="num">${L2("Payable", "مستحق لهم")}</th><th class="num">${L2("Receivable", "مستحق لنا")}</th></tr></thead><tbody>${d.balances.map(b => `<tr><td>${esc(b.account)} — ${esc(aname(b))}</td><td class="num">${b.we_owe ? money(b.we_owe) : ""}</td><td class="num">${b.owes_us ? money(b.owes_us) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
     <h4 class="fsec">${esc(L2("Recent vouchers", "أحدث السندات"))}${d.first ? ` <span class="muted" style="font-weight:400">· ${fd(d.first)} → ${fd(d.last)}</span>` : ""}</h4>
     ${d.recent.length ? `<div class="tbl"><table><tbody>${d.recent.map(e => `<tr class="click" data-a="openv" data-id="${e.id}"><td>${fd(e.date)}</td><td>${esc(tl(e.kind))}</td><td>${esc(e.memo)}</td><td class="num">${money(e.amount)}</td></tr>`).join("")}</tbody></table></div>`
@@ -10204,7 +10204,7 @@ PAGES.industry = async (view) => {
   view.innerHTML = `<div class="banner info">${L2("Choose the company's business type. Each template enables the relevant modules, adds required accounts and sets payroll departments, job titles, pay items and crew work items. A ready Excel workbook is available for each type.", "اختر نوع نشاط الشركة. يفعّل كل قالب الأقسام المناسبة، ويضيف الحسابات اللازمة، ويضبط أقسام الرواتب والمسميات الوظيفية وبنود الأجر وبنود أعمال الأطقم. يتوفر مصنف Excel جاهز لكل نوع.")}</div>
     <div class="grid g2">${d.types.map(ty => `<div class="card"><h2>${esc(S.lang === "ar" ? ty.name_ar : ty.name)} ${d.current === ty.key ? `<span class="chip ok">${L2("Current", "الحالي")}</span>` : ""}</h2>
       <ul>${(S.lang === "ar" && ty.guide_ar && ty.guide_ar.length ? ty.guide_ar : ty.guide).map(g => `<li>${esc(g)}</li>`).join("")}</ul>
-      <p class="muted">${L2("Business units:", "وحدات الأعمال:")}: ${esc(S.lang === "ar" && ty.bu_ar ? ty.bu_ar : ty.bu)} · ${L2("Hidden", "مخفي")}: ${esc(ty.hide.map(m => t("mod_" + m)).join("، "))}${ty.accounts.length ? `<br>${L2("Adds", "يضيف")}: ${ty.accounts.map(a => esc(a.code + " " + (S.lang === "ar" ? a.name_ar : a.name))).join(" · ")}` : ""}<br>${L2("Crew work items", "بنود أعمال الأطقم")}: ${ty.work_items.map(w => esc(S.lang === "ar" ? `${w.item_ar || w.item} (${w.unit_ar || w.unit})` : `${w.item} (${w.unit})`)).join(" · ")}</p>
+      <p class="muted">${L2("Business units", "وحدات الأعمال")}: ${esc(S.lang === "ar" && ty.bu_ar ? ty.bu_ar : ty.bu)} · ${L2("Hidden", "مخفي")}: ${esc(ty.hide.map(m => t("mod_" + m)).join(S.lang === "ar" ? "، " : ", "))}${ty.accounts.length ? `<br>${L2("Adds", "يضيف")}: ${ty.accounts.map(a => esc(a.code + " " + (S.lang === "ar" ? a.name_ar : a.name))).join(" · ")}` : ""}<br>${L2("Crew work items", "بنود أعمال الأطقم")}: ${ty.work_items.map(w => esc(S.lang === "ar" ? `${w.item_ar || w.item} (${w.unit_ar || w.unit})` : `${w.item} (${w.unit})`)).join(" · ")}</p>
       <div class="row">${ed ? `<button class="btn ${d.current === ty.key ? "" : "pri"}" data-a="indapply" data-k="${ty.key}">${L2("Apply to this company", "تطبيق على هذه الشركة")}</button>` : ""}${S.boot.user.is_admin && (dm.empty || S.boot.user.is_super) ? `<button class="btn" data-a="inddemo" data-k="${ty.key}">▶ ${L2("View demo", "عرض البيانات التجريبية")}</button>` : ""}<a class="btn" href="/api/templates/workbook?type=${ty.key}&lang=${S.lang}">⇩ ${L2("Excel template", "قالب Excel")}</a></div></div>`).join("")}</div>`;
 };
 
@@ -14625,9 +14625,75 @@ PAGES.insights = async (view, parts, q) => {
 // ------------------------------------------------------------ Help & FAQ: questions by category, problems already solved, search
 // Shared solved issues carry only a title and how it was resolved (written by the team, nothing about who reported it).
 const helpT = (x, k) => S.lang === "ar" && x[k + "_ar"] ? x[k + "_ar"] : x[k];
+// An answer's light formatting. Everything is escaped first; then only these marks mean something:
+//   ## heading · ### smaller heading · "- " list · "1. " numbered list · "> " note · | a | b | table (first row = headings)
+//   **bold** · `code` · [text](#/screen or https://…) · ![caption](help/file.jpg|png|webp|webm|mp4) on its own line
+// Pictures and clips come only from the site's own help/ folder. Plain answers (no marks) read as before.
+const HELP_MEDIA = /^help\/[a-z0-9][a-z0-9_-]{0,80}\.(jpg|jpeg|png|webp|webm|mp4)$/;
+function helpInline(s) {
+  return esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/(^|[\s(«“"'])\*([^*\s][^*]*?)\*(?=$|[\s.,;:!?)»”"'،؛])/g, "$1<i>$2</i>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((#\/[^\s)]*|https:\/\/[^\s)]+)\)/g, (m, t2, href) => `<a href="${href}"${href.startsWith("https:") ? ' target="_blank" rel="noopener"' : ""}>${t2}</a>`);
+}
+function helpMd(text) {
+  const lines = String(text || "").replace(/\r/g, "").split("\n"), out = [];
+  let i = 0;
+  const cells = l => l.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+  while (i < lines.length) {
+    const l = lines[i], t0 = l.trim();
+    if (!t0) { i++; continue; }
+    const media = t0.match(/^!\[([^\]]*)\]\(([^)\s]+)\)$/);
+    if (media) {
+      const [, cap, src] = media;
+      if (HELP_MEDIA.test(src)) {
+        const vid = /\.(webm|mp4)$/.test(src);
+        out.push(`<figure class="help-fig">${vid ? `<video src="${esc(src)}" controls muted playsinline loop preload="metadata"></video>`
+          : `<img src="${esc(src)}" alt="${esc(cap)}" loading="lazy">`}${cap ? `<figcaption>${helpInline(cap)}</figcaption>` : ""}</figure>`);
+      } else out.push(`<p>${esc(t0)}</p>`);          // anything else stays plain text: never loaded, never a link
+      i++; continue;
+    }
+    if (/^#{2,3} /.test(t0)) { out.push(t0.startsWith("### ") ? `<h5>${helpInline(t0.slice(4))}</h5>` : `<h4>${helpInline(t0.slice(3))}</h4>`); i++; continue; }
+    if (t0.startsWith("|")) {
+      const rows = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) { rows.push(lines[i]); i++; }
+      // a "|---|" row marks the row above it as headings; a second one starts the next table
+      const sep = r => /^\s*\|[\s:|-]+\|\s*$/.test(r), tables = [];
+      rows.forEach((r, k) => {
+        if (sep(r)) return;
+        if (sep(rows[k + 1] || "") || !tables.length) tables.push({ head: cells(r), body: [] });
+        else tables[tables.length - 1].body.push(cells(r));
+      });
+      const num = c => /^\**[−-]?[\d,]+(\.\d+)?%?\**$/.test(c);
+      for (const tb of tables) {
+        const numCol = tb.head.map((_, j) => tb.body.some(r => num(r[j] || "")) && tb.body.every(r => !r[j] || num(r[j]) || /^\*\*[^*]+\*\*$/.test(r[j])));
+        out.push(`<div class="tbl help-tbl"><table><thead><tr>${tb.head.map((c, j) => `<th${numCol[j] ? ' class="num"' : ""}>${helpInline(c)}</th>`).join("")}</tr></thead><tbody>${tb.body.map(r =>
+          `<tr>${r.map((c, j) => `<td${numCol[j] || num(c) ? ' class="num"' : ""}>${helpInline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      }
+      continue;
+    }
+    if (/^(- |\d+\. )/.test(t0)) {
+      const ordered = /^\d+\. /.test(t0), items = [];
+      while (i < lines.length && (ordered ? /^\d+\. /.test(lines[i].trim()) : /^- /.test(lines[i].trim()))) {
+        items.push(lines[i].trim().replace(/^(- |\d+\. )/, "")); i++;
+      }
+      out.push(`<${ordered ? "ol" : "ul"}>${items.map(x => `<li>${helpInline(x)}</li>`).join("")}</${ordered ? "ol" : "ul"}>`);
+      continue;
+    }
+    if (t0.startsWith("> ")) {
+      const q = [];
+      while (i < lines.length && lines[i].trim().startsWith("> ")) { q.push(lines[i].trim().slice(2)); i++; }
+      out.push(`<div class="help-note">${q.map(helpInline).join("<br>")}</div>`);
+      continue;
+    }
+    const p = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{2,3} |\||- |\d+\. |> |!\[)/.test(lines[i].trim())) { p.push(lines[i].trim()); i++; }
+    out.push(`<p>${p.map(helpInline).join("<br>")}</p>`);
+  }
+  return out.join("");
+}
 const helpItem = (x, open) => { const solved = x.src === "solved" || x.resolution !== undefined;
   return `<details class="help-q" ${open ? "open" : ""}><summary><span dir="auto">${esc(helpT(x, x.q !== undefined ? "q" : "title"))}</span>${solved ? ` <span class="chip ok">${esc(L2("Solved", "تم الحل"))}</span>` : ""}</summary>
-    <div class="help-a" dir="auto">${esc(helpT(x, x.body !== undefined ? "body" : x.resolution !== undefined ? "resolution" : "a"))}</div></details>`; };
+    <div class="help-a" dir="auto">${helpMd(helpT(x, x.body !== undefined ? "body" : x.resolution !== undefined ? "resolution" : "a"))}</div></details>`; };
 function helpSuggest(input, box) {
   let tm = null, last = "";
   input.addEventListener("input", () => { clearTimeout(tm); tm = setTimeout(async () => {

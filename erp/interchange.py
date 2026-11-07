@@ -14,6 +14,7 @@ import io
 import json
 import re
 
+from .textl10n import Note
 from . import accounting as acc
 from . import bankrec, custody, loans, payroll, recurring, rentals, sales, xlsafe
 from .db import ETA_SECRETS, SUBTYPES, to_major, to_minor
@@ -1937,10 +1938,12 @@ def docs_to_rows(db, data):
                                                          "category": ln["category"], "sub": ln["sub"], "item_no": ln["item_no"],
                                                          "description": ln["description"], "unit": ln["unit"], "qty": ln["qty"],
                                                          "price": ln["price"], "cost": ln["cost"] if ln["cost"] else ""})
-            notes.append(f"Sheet '{d['title']}': {len(d['lines'])} BOQ lines as '{title}'" + ("" if bu else " (no matching project — link it on the BOQ screen)"))
+            notes.append(Note(f"Sheet '{d['title']}': {len(d['lines'])} BOQ lines as '{title}'" + ("" if bu else " (no matching project — link it on the BOQ screen)"),
+                              f"ورقة «{d['title']}»: {len(d['lines'])} سطر مقايسة باسم «{title}»" + ("" if bu else " (لا يوجد مشروع مطابق — اربطها من شاشة المقايسة)")))
             continue
         if not bu:
-            notes.append(f"Sheet '{d['title']}': no project matches '{client}' / '{location}' — add the project, then import again")
+            notes.append(Note(f"Sheet '{d['title']}': no project matches '{client}' / '{location}' — add the project, then import again",
+                              f"ورقة «{d['title']}»: لا يوجد مشروع يطابق «{client}» / «{location}» — أضف المشروع ثم استورد مرة أخرى"))
             continue
         number = " ".join(str(m.get("number") or d["title"]).split())
         title = f"Contract BOQ — {client or location or bu}"
@@ -1969,7 +1972,8 @@ def docs_to_rows(db, data):
                 "number": number, "date": m.get("date", ""), "bu_code": bu, "boq_title": title, "status": "Draft", "customer": client,
                 "prev_paid": d["paid"] if d["paid"] is not None else "",
                 "fees": "; ".join(f"{k or '*'}={v * 100:g}%" for k, v in d["fees"].items()) if d["fees"] else ""})
-            notes.append(f"Sheet '{d['title']}': invoice '{number}' ({n} executed lines) for {bu} as a draft")
+            notes.append(Note(f"Sheet '{d['title']}': invoice '{number}' ({n} executed lines) for {bu} as a draft",
+                              f"ورقة «{d['title']}»: الفاتورة «{number}» ({n} سطر منفذ) لـ{bu} كمسودة"))
     return notes
 
 

@@ -9,6 +9,7 @@ self.addEventListener("activate", e => e.waitUntil(self.clients.claim()));
 self.addEventListener("fetch", e => {
   const r = e.request, url = new URL(r.url);
   if (r.method !== "GET" || url.origin !== self.location.origin || url.pathname.includes("/downloads/")) return;
+  if (r.headers.has("range")) return;       // video clips (Help & FAQ) are read in parts: a partial reply cannot be cached
   if (url.pathname.includes("/packs/")) {   // never changes once published: stored copy first
     e.respondWith(caches.open(CACHE).then(c => c.match(r).then(hit => hit || fetch(r).then(res => { if (res.ok) c.put(r, res.clone()); return res; }))));
     return;

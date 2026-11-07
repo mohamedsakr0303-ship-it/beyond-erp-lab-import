@@ -14,6 +14,16 @@ import datetime as _dt
 import re
 
 from . import accounting as acc
+from .textl10n import Note as N
+
+# how the Partner Equity & Dividends policy items read in Arabic (import notes)
+_POLICY_AR = {"reserve_early_pct": "نسبة الاحتياطي المبكرة", "reserve_early_until": "تُطبق النسبة المبكرة حتى",
+              "capital_goal": "هدف رأس مال الشركة", "buffer_months": "أشهر المصروفات المحتفظ بها",
+              "repay_funder_first": "سداد الشريك الممول أولاً"}
+_POLICY_EN = {"reserve_early_pct": "early reserve rate", "reserve_early_until": "early rate applies until",
+              "capital_goal": "company capital goal", "buffer_months": "months of overhead kept",
+              "repay_funder_first": "repay the funding partner first"}
+_STATUS_AR = {"Draft": "مسودة", "Issued": "صادرة", "Paid": "مدفوعة", "Posted": "مرحّلة", "Cancelled": "ملغاة"}
 
 COST_ACCOUNTS = {"materials": "5010", "subcontractor": "5020", "direct labor": "5030", "direct labour": "5030",
                  "site preparation": "5040", "equipment rental": "5050", "transport": "5060"}
@@ -135,8 +145,10 @@ def read_legacy_workbook(path):
                 contract = _get(row, _col(h, "contract value"))
                 codes.add(code)
                 if str(basis or "").lower().startswith("measured"):
-                    notes.append(f"{code}: billing basis '{basis}' (V1.4) imported as Fixed Price — revenue comes from its "
-                                 "measured BOQ invoices, exactly like the workbook.")
+                    notes.append(N(f"{code}: billing basis '{basis}' (V1.4) imported as Fixed Price — revenue comes from its "
+                                   "measured BOQ invoices, exactly like the workbook.",
+                                   f"{code}: أساس الفوترة «{basis}» (الإصدار V1.4) استُورد كسعر ثابت (مقطوعية) — الإيراد يأتي من "
+                                   "فواتير المقايسة المقاسة تماماً كما في المصنف."))
                 data["Business Units"].append({
                     "code": code, "name": name, "type": "" if _v(_get(row, _col(h, "project type"))) == "TBD"
                     else _v(_get(row, _col(h, "project type"))) or "", "location": _v(_get(row, _col(h, "location"))) or "",
@@ -163,8 +175,10 @@ def read_legacy_workbook(path):
                         num = next((x for x in rr[i + 1:] if isinstance(x, (int, float))), None)
                         if num is not None:
                             data["Settings"].append({"key": "expected_cost_pct", "value": num})
-                            notes.append(f"Default expected project cost: {num:.0%} of revenue (Master Project Register) — the cost still "
-                                         "to come on running projects is held back from distributable profit.")
+                            notes.append(N(f"Default expected project cost: {num:.0%} of revenue (Master Project Register) — the cost still "
+                                           "to come on running projects is held back from distributable profit.",
+                                           f"التكلفة المتوقعة الافتراضية للمشروع: {num:.0%} من الإيراد (سجل المشروعات الرئيسي) — التكلفة "
+                                           "المتبقية على المشروعات الجارية تُحجز من الربح القابل للتوزيع."))
             break
 
     # V1.3+: the Cost Allocation sheet's first rule is what untagged shared costs follow — use its split exactly
@@ -172,8 +186,9 @@ def read_legacy_workbook(path):
     if rule:
         for bu in data["Business Units"]:
             bu["overhead_pct"] = rule["split"].get(bu["code"], 0)
-        notes.append(f"Shared overhead split taken from the Cost Allocation sheet's '{rule['name']}' rule: "
-                     + ", ".join(f"{c} {v:.2%}" for c, v in rule["split"].items()) + ".")
+        split = ", ".join(f"{c} {v:.2%}" for c, v in rule["split"].items())
+        notes.append(N(f"Shared overhead split taken from the Cost Allocation sheet's '{rule['name']}' rule: {split}.",
+                       f"توزيع المصروفات المشتركة مأخوذ من قاعدة «{rule['name']}» في ورقة توزيع التكاليف: {split}."))
     _read_allocation_rules(sheet("cost allocation"), codes, data, notes)
     # the original workbook shared company overhead evenly across active projects — start from the same split
     active = [b for b in data["Business Units"] if b["status"] not in ("Completed", "Closed")]
@@ -182,8 +197,10 @@ def read_legacy_workbook(path):
         for b in active:
             b["overhead_pct"] = base
         active[0]["overhead_pct"] = round(1 - base * (len(active) - 1), 6)
-        notes.append(f"Shared overhead is split evenly across the {len(active)} active business units, as in the "
-                     "original workbook — change the percentages any time (Business Units → Shared overhead allocation).")
+        notes.append(N(f"Shared overhead is split evenly across the {len(active)} active business units, as in the "
+                       "original workbook — change the percentages any time (Business Units → Shared overhead allocation).",
+                       f"المصروفات المشتركة موزعة بالتساوي على وحدات الأعمال النشطة ({len(active)}) كما في المصنف الأصلي — "
+                       "يمكنك تغيير النسب في أي وقت (وحدات الأعمال ← توزيع المصروفات المشتركة)."))
 
     # ---- price list
     ws = sheet("rate matrix")
@@ -290,8 +307,10 @@ def read_legacy_workbook(path):
                     party = vendor or f"On-account: {desc}"[:60]
                     journal(date, f"Supplier advance — {desc}", party,
                             [(SUPPLIER_ADVANCES, paid or total, 0), ("1020", 0, paid or total)], code)
-                    notes.append(f"Row {i}: '{desc}' ({total:,.2f}) booked as a supplier advance (asset 1310), "
-                                 "not an expense. Reclassify to cost with a journal voucher once the work is done.")
+                    notes.append(N(f"Row {i}: '{desc}' ({total:,.2f}) booked as a supplier advance (asset 1310), "
+                                   "not an expense. Reclassify to cost with a journal voucher once the work is done.",
+                                   f"الصف {i}: «{desc}» ({total:,.2f}) سُجل كدفعة مقدمة لمورد (أصل 1310) وليس كمصروف. "
+                                   "أعد تصنيفه إلى تكلفة بقيد يومية بعد تنفيذ العمل."))
                     continue
                 gross = total + savings
                 if abs(qty * rate - gross) > 0.01:
@@ -309,7 +328,8 @@ def read_legacy_workbook(path):
                 if extra > 0.005:
                     journal(date, f"Payment above cost — {desc}", vendor or "Unnamed supplier",
                             [(SUPPLIER_ADVANCES, extra, 0), ("1020", 0, extra)], code)
-                    notes.append(f"Row {i}: paid {extra:,.2f} more than the cost — kept as a supplier advance.")
+                    notes.append(N(f"Row {i}: paid {extra:,.2f} more than the cost — kept as a supplier advance.",
+                                   f"الصف {i}: المدفوع يزيد على التكلفة بمبلغ {extra:,.2f} — احتُفظ به كدفعة مقدمة للمورد."))
             break
 
     # ---- operating expenses
@@ -369,10 +389,13 @@ def read_legacy_workbook(path):
         _read_design_offer(sheet("design offer"), data, notes)
     if data.get("_facility"):
         data["Settings"].append({"key": "funding_mode", "value": "facility"})
-        notes.append(f"Funding facility (V1.9+): what the funding partner fronts is owed to that partner (the workbook's account "
-                     f"{data['_facility']}), so the app's funding account is a liability (facility mode), not the partner's capital. "
-                     "Equity → If a partner leaves shows the facility: limit, fronted today and once suppliers are paid, peak, "
-                     "weekly statement.")
+        notes.append(N(f"Funding facility (V1.9+): what the funding partner fronts is owed to that partner (the workbook's account "
+                       f"{data['_facility']}), so the app's funding account is a liability (facility mode), not the partner's capital. "
+                       "Owners' Equity → Partners' Equity Statement shows the facility: limit, fronted today and once suppliers are paid, "
+                       "peak, weekly statement.",
+                       f"تسهيل تمويلي (الإصدار V1.9 وما بعده): ما يدفعه الشريك الممول عن الشركة مستحق له (الحساب {data['_facility']} "
+                       "في المصنف)، لذا حساب التمويل في البرنامج التزام (وضع التسهيل) وليس رأس مال الشريك. تعرض حقوق الملكية ← "
+                       "قائمة حقوق الشركاء التسهيل: الحد، والمدفوع اليوم وبعد سداد الموردين، والذروة، والكشف الأسبوعي."))
     data.pop("_facility", None)
     data.pop("_remap", None)
     data.pop("_rules", None)
@@ -518,19 +541,29 @@ def _read_allocation_rules(ws, codes, data, notes):
         if plus_ovh is not None:
             data["Settings"].append({"key": "costplus_overhead", "value": "yes" if plus_ovh else "no"})
         if rules:
-            notes.append(f"Cost Allocation: {len(rules)} rules imported (Business Units → Cost Allocation Rules); '{default}' is the "
-                         "default for shared costs with no rule or an unknown rule name, as in the workbook"
-                         + (" — project weights converted to shares of each pool" if weights else "") + ". "
-                         "Rules can also spread costs evenly, by revenue, cost, hours, headcount or area, per account and per period.")
+            notes.append(N(f"Cost Allocation: {len(rules)} rules imported (Business Units → Cost Allocation Rules); '{default}' is the "
+                           "default for shared costs with no rule or an unknown rule name, as in the workbook"
+                           + (" — project weights converted to shares of each pool" if weights else "") + ". "
+                           "Rules can also spread costs evenly, by revenue, cost, hours, headcount or area, per account and per period.",
+                           f"توزيع التكاليف: استُوردت {len(rules)} قاعدة (وحدات الأعمال ← قواعد توزيع التكاليف)؛ «{default}» هي القاعدة "
+                           "الافتراضية للتكاليف المشتركة التي بلا قاعدة أو باسم قاعدة غير معروف، كما في المصنف"
+                           + (" — حُوّلت أوزان المشروعات إلى حصص من كل وعاء" if weights else "") + ". "
+                           "يمكن للقواعد أيضاً توزيع التكاليف بالتساوي أو حسب الإيراد أو التكلفة أو الساعات أو عدد العاملين أو المساحة، "
+                           "لكل حساب ولكل فترة."))
         if plus_ovh is not None:
-            notes.append("Project overhead (expense lines tagged to a project) " + ("counts" if plus_ovh else "does not count")
-                         + " in the Cost-Plus fee base, as set on the Cost Allocation sheet.")
+            notes.append(N("Project overhead (expense lines tagged to a project) " + ("counts" if plus_ovh else "does not count")
+                           + " in the Cost-Plus fee base, as set on the Cost Allocation sheet.",
+                           "المصروفات غير المباشرة للمشروع (سطور المصروفات المرتبطة بمشروع) "
+                           + ("تدخل" if plus_ovh else "لا تدخل") + " في وعاء نسبة التكلفة المضافة، كما في ورقة توزيع التكاليف."))
         even = [n for n, sp, _b in rules if len(sp) == len(cols) and len(set(round(v, 8) for v in sp.values())) == 1]
         if even:
-            notes.append(f"{', '.join(even)}: equal shares across every project, kept as fixed percentages so the figures match the "
-                         "workbook. Switch the method to 'Even' to include new projects automatically.")
+            notes.append(N(f"{', '.join(even)}: equal shares across every project, kept as fixed percentages so the figures match the "
+                           "workbook. Switch the method to 'Even' to include new projects automatically.",
+                           f"{'، '.join(even)}: حصص متساوية على كل المشروعات، احتُفظ بها كنسب ثابتة لتطابق أرقام المصنف. "
+                           "غيّر الطريقة إلى «بالتساوي» لتشمل المشروعات الجديدة تلقائياً."))
         if skipped:
-            notes.append("Cost Allocation rules not imported: " + ", ".join(skipped) + ".")
+            notes.append(N("Cost Allocation rules not imported: " + ", ".join(skipped) + ".",
+                           "قواعد توزيع لم تُستورد: " + "، ".join(skipped) + "."))
         return
 
 
@@ -561,8 +594,10 @@ def _read_quick_estimator(ws, data, notes):
                 "price": _f(_get(row, _col(h, "unit rate"))), "cost": _f(_get(row, _col(h, "unit cost")))})
             n += 1
         if n:
-            notes.append(f"Quick Estimator: {n} lines imported as the BOQ '{title}'" + (f" ({area:g} m²)" if area else "")
-                         + " — open it under Estimating → BOQs to keep pricing it or turn it into an invoice.")
+            notes.append(N(f"Quick Estimator: {n} lines imported as the BOQ '{title}'" + (f" ({area:g} m²)" if area else "")
+                           + " — open it under Estimating & Tendering → Bills of Quantities (BOQ) to keep pricing it or turn it into an invoice.",
+                           f"التسعير السريع: استُورد {n} سطر كمقايسة «{title}»" + (f" ({area:g} م²)" if area else "")
+                           + " — افتحها من التسعير والعطاءات ← المقايسات (جداول الكميات) لمتابعة تسعيرها أو تحويلها إلى فاتورة."))
         return
 
 
@@ -583,8 +618,10 @@ def _read_forecast_mixes(ws, data, notes):
                 data["Forecast Mixes"].append({"category": str(cat).strip(), **mix})
                 n += 1
         if n:
-            notes.append(f"Price forecast: {n} cost-category mixes imported (Reports → Forecast). The sheet's own quarterly "
-                         "driver rates were not copied; the forecast uses the latest published figures (Fetch latest).")
+            notes.append(N(f"Price forecast: {n} cost-category mixes imported (Forecasting). The sheet's own quarterly "
+                           "driver rates were not copied; the forecast uses the latest published figures (Fetch latest).",
+                           f"توقعات الأسعار: استُورد {n} من مكونات فئات التكلفة (التنبؤات والتوقعات). لم تُنسخ معدلات المؤشرات "
+                           "الربع سنوية من المصنف؛ تستخدم التوقعات أحدث الأرقام المنشورة (جلب أحدث البيانات)."))
         return
 
 
@@ -605,9 +642,15 @@ def _read_policy(ws, data, notes):
     for k, v in found.items():
         data["Settings"].append({"key": k, "value": v})
     if found:
-        notes.append("Distribution policy (Partner Equity & Dividends): " + ", ".join(
-            f"{k.replace('_', ' ')} {v:.0%}" if k == "reserve_early_pct" else f"{k.replace('_', ' ')} {v:,.0f}" if isinstance(v, float)
-            else f"{k.replace('_', ' ')} {'yes' if v == '1' else 'no'}" for k, v in found.items()) + ".")
+        def shown(k, v, ar):
+            name = (_POLICY_AR if ar else _POLICY_EN).get(k, k.replace("_", " "))
+            if k == "reserve_early_pct":
+                return f"{name} {v:.0%}"
+            if isinstance(v, float):
+                return f"{name} {v:,.0f}"
+            return f"{name} {('نعم' if v == '1' else 'لا') if ar else ('yes' if v == '1' else 'no')}"
+        notes.append(N("Distribution policy (Partner Equity & Dividends): " + ", ".join(shown(k, v, False) for k, v in found.items()) + ".",
+                       "سياسة التوزيع (حقوق الشركاء والتوزيعات): " + "، ".join(shown(k, v, True) for k, v in found.items()) + "."))
 
 
 def _read_new_accounts(ws, data, notes):
@@ -618,7 +661,7 @@ def _read_new_accounts(ws, data, notes):
     app = {c: (n, t, r) for c, n, t, _s, r in DEFAULT_ACCOUNTS}
     known = set(app) | set(V13_ACCOUNTS)
     taken = set(known)
-    added, moved = [], []
+    added, moved, moved_ar = [], [], []
     remap = data.setdefault("_remap", {})
     for hr, h in _headers(ws, ["code", "account name", "type"], scan=10):
         rows = [r for r in ws.iter_rows(min_row=hr + 1, values_only=True)]
@@ -642,6 +685,9 @@ def _read_new_accounts(ws, data, notes):
                 remap[code] = new
                 data.setdefault("Chart of Accounts", []).append({"code": new, "name": name, "type": typ, "subtype": _COA_SUBTYPE[typ]})
                 moved.append(f"{code} {name} → {new} ({code} is “{app[code][0]}” in the app)")
+                from .db import ACCOUNT_NAMES_AR, PRO_NAMES
+                app_ar = (PRO_NAMES.get(code) or ("", "", ""))[2] or ACCOUNT_NAMES_AR.get(code) or app[code][0]
+                moved_ar.append(f"{code} {name} → {new} ({code} في البرنامج هو «{app_ar}»)")
                 continue
             if code in known:
                 continue
@@ -654,9 +700,11 @@ def _read_new_accounts(ws, data, notes):
             added.append(f"{code} {name}")
         break
     if added:
-        notes.append("Accounts added from the workbook's chart of accounts: " + ", ".join(added) + ".")
+        notes.append(N("Accounts added from the workbook's chart of accounts: " + ", ".join(added) + ".",
+                       "حسابات أضيفت من دليل حسابات المصنف: " + "، ".join(added) + "."))
     if moved:
-        notes.append("Account numbers that mean something else in the app, kept under a new number: " + "; ".join(moved) + ".")
+        notes.append(N("Account numbers that mean something else in the app, kept under a new number: " + "; ".join(moved) + ".",
+                       "أرقام حسابات لها معنى آخر في البرنامج، احتُفظ بها برقم جديد: " + "؛ ".join(moved_ar) + "."))
 
 
 _TAX_WORDS = ("tax", "vat", "ضريب", "withholding", "خصم وتحصيل", "stamp", "دمغة")
@@ -726,7 +774,8 @@ def _read_design_offer(ws, data, notes):
     data.setdefault("_extras", {}).setdefault("offers", []).append(
         {"number": f"DESIGN-{date}-{client}"[:60], "type_name": "Design Package", "date": date, "client": client, "project": project,
          "status": "Draft", "content": _json.dumps(content, ensure_ascii=False), "replace_same": True})
-    notes.append(f"Design Offer: {client} — {project}, {total:,.2f} less {_f(inp.get('discount')):,.2f} — added to Sales → Offers as a draft.")
+    notes.append(N(f"Design Offer: {client} — {project}, {total:,.2f} less {_f(inp.get('discount')):,.2f} — added to Quotations as a draft.",
+                   f"عرض التصميم: {client} — {project}، {total:,.2f} يخصم منه {_f(inp.get('discount')):,.2f} — أضيف إلى عروض الأسعار كمسودة."))
 
 
 def _read_negotiations(ws, data, notes):
@@ -734,7 +783,7 @@ def _read_negotiations(ws, data, notes):
     app's negotiation report shows it (quoted, saving, kept or passed on). The amounts are already in the journal."""
     if ws is None:
         return
-    found = []
+    found, found_ar = [], []
     for hr, h in _headers(ws, ["deal ref", "quoted", "saving"], scan=10):
         for row in ws.iter_rows(min_row=hr + 1, values_only=True):
             ref = _v(_get(row, _col(h, "deal ref")))
@@ -745,16 +794,19 @@ def _read_negotiations(ws, data, notes):
             mode = "keep" if treat.startswith("keep") else "pass"
             rows = [r for r in data.get("Journal Vouchers", []) if str(r.get("deal_ref") or "").strip() == str(ref).strip()]
             if not rows:
-                notes.append(f"Negotiation Register: deal {ref} has no journal entry with that Deal Ref — not linked.")
+                notes.append(N(f"Negotiation Register: deal {ref} has no journal entry with that Deal Ref — not linked.",
+                               f"سجل التفاوض: الصفقة {ref} ليس لها قيد يحمل مرجع الصفقة نفسه — لم تُربط."))
                 continue
             je = rows[-1]["voucher"]      # the settling entry (the last one carrying this deal)
             for r in data["Journal Vouchers"]:
                 if r["voucher"] == je:
                     r.update(quoted=round(_f(_get(row, _col(h, "quoted"))), 2), savings=saving, negotiation=mode)
             found.append(f"{ref} ({saving:,.2f}, {'kept' if mode == 'keep' else 'passed to the client'})")
+            found_ar.append(f"{ref} ({saving:,.2f}، {'احتُفظ به' if mode == 'keep' else 'لصالح العميل'})")
         break
     if found:
-        notes.append("Negotiation Register: " + "; ".join(found) + " — linked to their journal entries (Purchasing → Negotiations).")
+        notes.append(N("Negotiation Register: " + "; ".join(found) + " — linked to their journal entries (Negotiated Savings).",
+                       "سجل التفاوض: " + "؛ ".join(found_ar) + " — رُبطت بقيودها (مكاسب التفاوض مع الموردين)."))
 
 
 def _read_partner_loans(ws, data, notes):
@@ -772,8 +824,10 @@ def _read_partner_loans(ws, data, notes):
         if m and not any(x.get("key") == "funding_partner" for x in data.get("Settings", [])):
             # the partner whose own account is the company's bank (section 5): his money in is worked out live
             data.setdefault("Settings", []).append({"key": "funding_partner", "value": m.group(1).strip()})
-            notes.append(f"Funding partner: {m.group(1).strip()} — the company's money runs through their account "
-                         "(Equity → If a partner leaves shows their money in and out).")
+            notes.append(N(f"Funding partner: {m.group(1).strip()} — the company's money runs through their account "
+                           "(Owners' Equity → Partners' Equity Statement shows their money in and out).",
+                           f"الشريك الممول: {m.group(1).strip()} — أموال الشركة تمر عبر حسابه "
+                           "(تعرض حقوق الملكية ← قائمة حقوق الشركاء أمواله الداخلة والخارجة)."))
         cells = [ws.cell(r, c).value for c in range(1, min(ws.max_column, 16) + 1)]
         label = " ".join(str(v) for v in cells if isinstance(v, str)).lower()
         nums = [v for v in cells if isinstance(v, (int, float)) and not isinstance(v, bool)]
@@ -792,7 +846,8 @@ def _read_partner_loans(ws, data, notes):
                 nums = [v for v in cells if isinstance(v, (int, float)) and not isinstance(v, bool)]
                 if nums:
                     data.setdefault("Settings", []).append({"key": "funding_limit", "value": str(nums[-1])})
-                    notes.append(f"Funding limit {nums[-1]:,.2f} (Balances Tracker) — shown against their money in the company.")
+                    notes.append(N(f"Funding limit {nums[-1]:,.2f} (Balances Tracker) — shown against their money in the company.",
+                                   f"حد التمويل {nums[-1]:,.2f} (متابعة الأرصدة) — يظهر مقابل أمواله في الشركة."))
         if "partner loans" in head.lower() and not start_row:
             start_row = r
     if not start_row:
@@ -821,9 +876,12 @@ def _read_partner_loans(ws, data, notes):
         break
     if loans:
         data.setdefault("_extras", {}).setdefault("loans", []).extend(loans)
-        notes.append("Partner loans (Balances Tracker): " + "; ".join(
+        notes.append(N("Partner loans (Balances Tracker): " + "; ".join(
             f"{x['party']} {x['opening_balance'] / 100:,.2f} still owed, {x['term_months']} months from {x['start_date']}" for x in loans) +
-            " — added to Loans & custody → Loans as already in the books (the journal entry is not posted twice).")
+            " — added to Loans & Borrowings as already in the books (the journal entry is not posted twice).",
+            "سلف الشركاء (متابعة الأرصدة): " + "؛ ".join(
+            f"{x['party']} {x['opening_balance'] / 100:,.2f} متبقٍ، المدة {x['term_months']} شهر من {x['start_date']}" for x in loans) +
+            " — أضيفت إلى القروض والتمويل كمسجلة في الدفاتر بالفعل (لا يُرحّل القيد مرتين)."))
 
 
 def _read_journal(wb, ws, data, notes, codes):
@@ -899,25 +957,38 @@ def _read_journal(wb, ws, data, notes, codes):
         n += 1
     archived = [t for t in ("Project Costing", "Operating Expenses", "Payroll", "Income Tracker")
                  if any(t.lower() in w.title.lower() for w in wb.worksheets)]
-    notes.append(f"General Journal: {n} entries imported line for line (the workbook's own source of truth)" +
-                 (f"; the archive sheets ({', '.join(archived)}) were not imported, so nothing is counted twice." if archived else "."))
+    notes.append(N(f"General Journal: {n} entries imported line for line (the workbook's own source of truth)" +
+                   (f"; the archive sheets ({', '.join(archived)}) were not imported, so nothing is counted twice." if archived else "."),
+                   f"دفتر اليومية العامة: استُورد {n} قيد سطراً بسطر (المصدر الأساسي في المصنف)" +
+                   (f"؛ لم تُستورد أوراق الأرشيف ({'، '.join(archived)}) حتى لا يُحسب شيء مرتين." if archived else ".")))
     if mapped:
-        notes.append("Account codes that mean something else in the app were moved: " + ", ".join(sorted(mapped)) + ".")
+        notes.append(N("Account codes that mean something else in the app were moved: " + ", ".join(sorted(mapped)) + ".",
+                       "نُقلت أكواد حسابات لها معنى آخر في البرنامج: " + "، ".join(sorted(mapped)) + "."))
     if staged[0]:
-        notes.append(f"{staged[0]} entries carry a project stage (used for ownership by stage).")
+        notes.append(N(f"{staged[0]} entries carry a project stage (used for ownership by stage).",
+                       f"{staged[0]} قيد يحمل مرحلة مشروع (تُستخدم للملكية حسب المرحلة)."))
     if unknown_rules:
-        notes.append("Journal lines name allocation rules that are not on the Cost Allocation sheet: " + ", ".join(sorted(unknown_rules))
-                     + " — they follow the default rule.")
+        notes.append(N("Journal lines name allocation rules that are not on the Cost Allocation sheet: " + ", ".join(sorted(unknown_rules))
+                       + " — they follow the default rule.",
+                       "سطور قيود تذكر قواعد توزيع غير موجودة في ورقة توزيع التكاليف: " + "، ".join(sorted(unknown_rules))
+                       + " — تتبع القاعدة الافتراضية."))
     if items[0]:
-        notes.append(f"{items[0]} materials lines with quantity, unit and rate imported as material lines (Projects → Materials used "
-                     "shows what was used and at what price).")
+        notes.append(N(f"{items[0]} materials lines with quantity, unit and rate imported as material lines (Projects & Contracts → "
+                       "Materials Used shows what was used and at what price).",
+                       f"استُورد {items[0]} سطر خامات بالكمية والوحدة والسعر كسطور خامات (تعرض المشروعات والعقود ← الخامات المستخدمة "
+                       "ما استُخدم وبأي سعر)."))
     if funded:
-        notes.append(f"Every payment and receipt ({len(funded)} entries) goes through {funder}'s funding account "
-                     f"({FUNDING_ACCOUNT}) instead of the bank — their money in the company is the total of these, live.")
+        notes.append(N(f"Every payment and receipt ({len(funded)} entries) goes through {funder}'s funding account "
+                       f"({FUNDING_ACCOUNT}) instead of the bank — their money in the company is the total of these, live.",
+                       f"كل المدفوعات والمقبوضات ({len(funded)} قيد) تمر عبر حساب التمويل الخاص بـ{funder} ({FUNDING_ACCOUNT}) بدلاً من "
+                       "البنك — أمواله في الشركة هي مجموعها، محدّثاً باستمرار."))
     if auto:
-        notes.append(f"{', '.join(auto)} recalculated themselves in the workbook (work in progress, funding top-up). They "
-                     "were not copied as fixed snapshots: the app keeps each project's work in progress up to date itself"
-                     + (" and the funding partner's account carries their money" if funder else "") + ".")
+        notes.append(N(f"{', '.join(auto)} recalculated themselves in the workbook (work in progress, funding top-up). They "
+                       "were not copied as fixed snapshots: the app keeps each project's work in progress up to date itself"
+                       + (" and the funding partner's account carries their money" if funder else "") + ".",
+                       f"{'، '.join(auto)} كانت تُعاد حسابها تلقائياً في المصنف (أعمال تحت التنفيذ، استكمال التمويل). لم تُنسخ كأرقام "
+                       "ثابتة: يحدّث البرنامج الأعمال تحت التنفيذ لكل مشروع بنفسه"
+                       + (" ويحمل حساب الشريك الممول أمواله" if funder else "") + "."))
 
 
 def _read_invoice_register(wb, data, notes):
@@ -941,10 +1012,16 @@ def _read_invoice_register(wb, data, notes):
             ret = _f(_get(row, _col(h, "retention held")))
             extra = (f" Its advance recovery ({abs(adv):,.2f}) and retention ({abs(ret):,.2f}) are not on the app invoice — "
                      "settle them against client advances / retention with a receipt or journal voucher.") if adv or ret else ""
+            extra_ar = (f" استرداد الدفعة المقدمة ({abs(adv):,.2f}) والمحتجزات ({abs(ret):,.2f}) ليست على فاتورة البرنامج — "
+                        "سوّها مقابل الدفعات المقدمة من العملاء / المحتجزات بسند قبض أو قيد يومية.") if adv or ret else ""
             posted = str(_v(_get(row, _col(h, "posted to journal"))) or "").lower().startswith("yes")
             tail = (" It is already in the General Journal (the workbook posted it), so do NOT post it again — keep it as "
                     "the invoice document only.") if posted else " Check it under Sales Invoices and press 'Save & post' when it is issued."
-            notes.append(f"Invoice '{num}' ({bu}, {status} in the workbook) imported as a DRAFT with all its lines.{tail}{extra}")
+            tail_ar = (" وهي مسجلة بالفعل في دفتر اليومية (رحّلها المصنف)، فلا ترحّلها مرة أخرى — احتفظ بها كمستند فاتورة فقط.") \
+                if posted else " راجعها من فواتير المبيعات واضغط «حفظ وترحيل» عند إصدارها."
+            notes.append(N(f"Invoice '{num}' ({bu}, {status} in the workbook) imported as a DRAFT with all its lines.{tail}{extra}",
+                           f"الفاتورة «{num}» ({bu}، حالتها في المصنف: {_STATUS_AR.get(str(status), status)}) استُوردت كمسودة بكل سطورها.{tail_ar}"
+                           f"{extra_ar}"))
         break
     if lines is None:   # V1.4: no Invoice Lines sheet — each invoice's lines are on its own 'Invoice N' sheet
         _invoice_sheet_lines(wb, data, notes)
@@ -1027,7 +1104,8 @@ def _invoice_sheet_lines(wb, data, notes):
     for inv in data["Sales Invoices"]:
         hit = sheets.get(_norm_invoice(inv["number"]))
         if hit is None:
-            notes.append(f"Invoice '{inv['number']}': no sheet with its lines was found — add the lines in the app.")
+            notes.append(N(f"Invoice '{inv['number']}': no sheet with its lines was found — add the lines in the app.",
+                           f"الفاتورة «{inv['number']}»: لم توجد ورقة بسطورها — أضف السطور في البرنامج."))
             continue
         ws, d = hit
         inv["boq_title"], _ = _contract_boq(data, ws, d, inv["bu_code"], done)
@@ -1048,11 +1126,16 @@ def _fill_invoice(data, inv, ws, d, notes):
     if d["fees"]:
         inv["fees"] = _fees_text(d["fees"])
     adj = sum(1 for ln in d["lines"] if ln.get("adjusted"))
-    notes.append(f"Invoice '{inv['number']}': {n} executed lines read from the '{ws.title}' sheet"
-                 + (f", {var} of them work outside the BOQ (numbered V-01…)" if var else "")
-                 + (f"; {adj} line(s) carry a hand-made actual total in the sheet — kept exactly (their completion % adjusted)" if adj else "")
-                 + (f"; paid by the owner so far: {d['paid']:,.2f}" if d["paid"] is not None else "")
-                 + (f"; fees: {_fees_text(d['fees'])}" if d["fees"] else "") + ".")
+    notes.append(N(f"Invoice '{inv['number']}': {n} executed lines read from the '{ws.title}' sheet"
+                   + (f", {var} of them work outside the BOQ (numbered V-01…)" if var else "")
+                   + (f"; {adj} line(s) carry a hand-made actual total in the sheet — kept exactly (their completion % adjusted)" if adj else "")
+                   + (f"; paid by the owner so far: {d['paid']:,.2f}" if d["paid"] is not None else "")
+                   + (f"; fees: {_fees_text(d['fees'])}" if d["fees"] else "") + ".",
+                   f"الفاتورة «{inv['number']}»: قُرئ {n} سطر منفذ من ورقة «{ws.title}»"
+                   + (f"، منها {var} أعمال خارج المقايسة (مرقمة V-01…)" if var else "")
+                   + (f"؛ {adj} سطر يحمل إجمالياً فعلياً مكتوباً يدوياً في الورقة — احتُفظ به كما هو (مع تعديل نسبة الإنجاز)" if adj else "")
+                   + (f"؛ المدفوع من المالك حتى الآن: {d['paid']:,.2f}" if d["paid"] is not None else "")
+                   + (f"؛ الرسوم: {_fees_text(d['fees'])}" if d["fees"] else "") + "."))
 
 
 def _read_boq_and_invoices(wb, data, notes, register=False):
@@ -1078,8 +1161,10 @@ def _read_boq_and_invoices(wb, data, notes, register=False):
                                           "qty": ln["qty"], "price": ln["price"], "cost": ln["cost"] if ln["cost"] else ""})
                 n += 1
             if n:
-                notes.append(f"Sheet '{ws.title}': {n} BOQ lines imported as '{title}'"
-                             + ("" if bu else " (no matching business unit — link it from the BOQ screen)") + ".")
+                notes.append(N(f"Sheet '{ws.title}': {n} BOQ lines imported as '{title}'"
+                               + ("" if bu else " (no matching business unit — link it from the BOQ screen)") + ".",
+                               f"ورقة «{ws.title}»: استُورد {n} سطر مقايسة باسم «{title}»"
+                               + ("" if bu else " (لا توجد وحدة أعمال مطابقة — اربطها من شاشة المقايسة)") + "."))
         elif kind == "invoice":
             d = _doc(ws)
             m = d["meta"]
@@ -1090,7 +1175,8 @@ def _read_boq_and_invoices(wb, data, notes, register=False):
                 continue
             bu = _find_bu(data, m.get("location"), m.get("client"))
             if not bu:
-                notes.append(f"Sheet '{ws.title}': no business unit matches '{m.get('client', '')}' / '{m.get('location', '')}' — skipped.")
+                notes.append(N(f"Sheet '{ws.title}': no business unit matches '{m.get('client', '')}' / '{m.get('location', '')}' — skipped.",
+                               f"ورقة «{ws.title}»: لا توجد وحدة أعمال تطابق «{m.get('client', '')}» / «{m.get('location', '')}» — تم تخطيها."))
                 continue
             boq_title, contract = _contract_boq(data, ws, d, bu, done)
             inv = {"number": number, "date": m.get("date", ""), "bu_code": bu, "boq_title": boq_title, "status": "Draft",
@@ -1100,6 +1186,9 @@ def _read_boq_and_invoices(wb, data, notes, register=False):
             if len(data["Invoice Lines"]) > before:
                 data["Sales Invoices"].append(inv)
                 known.add(_norm_invoice(number))
-                notes.append(f"Sheet '{ws.title}': progress billing '{number}' imported for {bu} as a DRAFT"
-                             + (f" with its contract BOQ ({contract} lines)" if contract else "")
-                             + " — open it under Sales Invoices, check it and press 'Save & post' to book it.")
+                notes.append(N(f"Sheet '{ws.title}': progress billing '{number}' imported for {bu} as a DRAFT"
+                               + (f" with its contract BOQ ({contract} lines)" if contract else "")
+                               + " — open it under Sales Invoices, check it and press 'Save & post' to book it.",
+                               f"ورقة «{ws.title}»: استُورد المستخلص «{number}» لـ{bu} كمسودة"
+                               + (f" مع مقايسة العقد ({contract} سطر)" if contract else "")
+                               + " — افتحه من فواتير المبيعات وراجعه واضغط «حفظ وترحيل» لتسجيله."))
