@@ -262,6 +262,7 @@ class LocalService(unittest.TestCase):
         bs.ETA_HOSTS = self._hosts
         self.srv.shutdown()
         self.eta.shutdown()
+        self.eta.server_close()
 
     def call(self, method, path, body=None, key=True, origin="https://mybeyonderp.com"):
         h = {"Content-Type": "application/json", "Origin": origin}
@@ -299,19 +300,86 @@ class LocalService(unittest.TestCase):
         st, v, _ = self.call("POST", "/v1/verify", {"document": signed})
         self.assertTrue(v["valid"], v)
 
+    def raw(self, method, path, data=None, headers=None):
+        """One request as a browser would send it, without following redirects."""
+        import http.client
+        c = http.client.HTTPConnection("127.0.0.1", self.srv.port, timeout=20)
+        h = {"Host": f"localhost:{self.srv.port}", **(headers or {})}
+        if data is not None:
+            h.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        c.request(method, path, body=data, headers=h)
+        r = c.getresponse()
+        out = r.status, dict(r.headers), r.read().decode("utf-8", "replace")
+        c.close()
+        return out
+
+    def form_token(self):
+        import re
+        st, _, page = self.raw("GET", "/")
+        self.assertEqual(st, 200)
+        return re.search(r'name="token" value="([^"]+)"', page).group(1)
+
     def test_the_settings_page_is_local_and_not_changeable_from_other_sites(self):
         with urllib.request.urlopen(self.url + "/") as r:
             page = r.read().decode()
-        self.assertIn(self.key, page)                                                 # shown on this computer
-        self.assertNotIn("Access-Control-Allow-Origin", r.headers)                    # other sites can't read it
+            self.assertIn(self.key, page)                                             # shown on this computer
+            self.assertNotIn("Access-Control-Allow-Origin", r.headers)                # other sites can't read it
+            self.assertIn("frame-ancestors 'none'", r.headers["Content-Security-Policy"])   # nor show it in a frame
+            self.assertEqual(r.headers["X-Frame-Options"], "DENY")
+            # "no-referrer" would make browsers send Origin: null with the form, and the Signer would refuse its own page
+            self.assertEqual(r.headers["Referrer-Policy"], "same-origin")
         req = urllib.request.Request(self.url + "/", headers={"Origin": "https://evil.example"})
         with self.assertRaises(urllib.error.HTTPError):
             urllib.request.urlopen(req)
-        forged = urllib.request.Request(self.url + "/settings", data=b"admin=wrong&eta_client_id=x", method="POST",
-                                        headers={"Origin": "https://evil.example", "Content-Type": "application/x-www-form-urlencoded"})
-        with urllib.request.urlopen(forged) as r:
-            self.assertIn("expired", r.read().decode())
+        # another website posting the form: refused before anything is read, even with the page's own token
+        tok = self.form_token()
+        st, _, _ = self.raw("POST", "/settings", f"token={tok}&do=save&eta_client_id=x".encode(), {"Origin": "https://evil.example"})
+        self.assertEqual(st, 403)
+        st, _, _ = self.raw("POST", "/settings", f"token={tok}&do=save&eta_client_id=x".encode(), {"Origin": "null"})
+        self.assertEqual(st, 403)
+        # the Signer's own window without the page's token (an old page, or a guess): nothing changes
+        st, h, _ = self.raw("POST", "/settings", b"token=wrong&do=save&eta_client_id=x", {"Origin": f"http://localhost:{self.srv.port}"})
+        self.assertEqual((st, h["Location"]), (303, "/?m=expired"))
         self.assertEqual(self.app.cfg.get("eta_client_id"), "id")                     # unchanged
+
+    def test_a_web_page_renamed_to_this_computer_is_refused(self):
+        # DNS rebinding: evil.example made to point at 127.0.0.1 still arrives with its own name in the Host header
+        for path in ("/", "/v1/hello", "/v1/status"):
+            st, h, body = self.raw("GET", path, headers={"Host": f"evil.example:{self.srv.port}", "X-Signer-Key": self.key})
+            self.assertEqual(st, 403, path)
+            self.assertNotIn(self.key, body)
+        st, _, _ = self.raw("OPTIONS", "/v1/sign", headers={"Host": "evil.example", "Origin": "https://evil.example"})
+        self.assertEqual(st, 403)
+        for host in (f"localhost:{self.srv.port}", f"127.0.0.1:{self.srv.port}", f"LOCALHOST:{self.srv.port}"):
+            self.assertEqual(self.raw("GET", "/v1/hello", headers={"Host": host})[0], 200, host)
+
+    def test_changes_from_the_signers_own_window(self):
+        own = {"Origin": f"http://localhost:{self.srv.port}"}
+        tok = self.form_token()
+        st, h, _ = self.raw("POST", "/settings", f"token={tok}&do=save&mode=pfx&eta_client_id=new-id&pin_minutes=abc".encode(), own)
+        self.assertEqual((st, h["Location"]), (303, "/?m=saved"))                    # then shown again, so a reload never posts twice
+        self.assertEqual((self.app.cfg.get("eta_client_id"), self.app.cfg.get("pin_minutes")), ("new-id", 30))
+        self.assertEqual(self.app.cfg.get("eta_client_secret"), "good")              # a blank secret field keeps the secret
+        self.assertIn("Saved.", self.raw("GET", "/?m=saved")[2])
+        old = self.app.cfg.get("pairing_key")
+        st, h, _ = self.raw("POST", "/settings", f"token={tok}&do=newkey".encode(), own)
+        self.assertEqual(h["Location"], "/?m=newkey")
+        self.assertNotEqual(self.app.cfg.get("pairing_key"), old)
+        self.assertEqual(self.call("GET", "/v1/status")[0], 401)                     # the old key no longer works
+        stopped = []
+        self.app.on_quit = lambda: stopped.append(1)
+        st, _, page = self.raw("POST", "/settings", f"token={tok}&do=quit".encode(), own)
+        self.assertEqual(st, 200)
+        self.assertIn("has stopped", page)
+        threading.Event().wait(0.8)
+        self.assertEqual(stopped, [1])
+
+    def test_a_second_start_finds_the_running_signer(self):
+        self.assertTrue(bs.running(self.srv.port))
+        self.assertFalse(bs.running(1))                                              # nothing there
+        self.assertEqual(bs.page_url(47321), "http://localhost:47321/")             # what the window opens: a name, not an address
+        with self.assertRaises(OSError):
+            bs.Service(self.srv.port)                                                # the port is already the Signer's
 
     def test_the_tax_authority_through_the_signer(self):
         self.call("POST", "/v1/unlock", {"pin": "secret-pw"})
@@ -339,6 +407,44 @@ class LocalService(unittest.TestCase):
         st, r, _ = self.call("GET", "/v1/eta/test")
         self.assertEqual(st, 400)
 
+
+
+class Packaging(unittest.TestCase):
+    """The Windows build: one name for the installer everywhere, a windowed program with BEYONDERP's details, and an
+    ERP that links to whatever the build published."""
+
+    def read(self, rel):
+        return (ROOT / rel).read_text(encoding="utf-8-sig")
+
+    def test_the_installer_is_built_published_and_offered_under_one_name(self):
+        import re
+        iss, spec, wf = self.read("packaging/signer.iss"), self.read("packaging/signer.spec"), self.read(".github/workflows/deploy.yml")
+        self.assertIn("OutputBaseFilename=BeyondERP-Signer-Setup", iss)
+        self.assertIn("dist-installer/BeyondERP-Signer-Setup.exe", wf)                # published on the release
+        self.assertIn("pyinstaller packaging/signer.spec", wf)
+        self.assertIn("packaging\\signer.iss", wf)
+        self.assertNotIn("--console", wf)                                             # no console window any more
+        self.assertIn('"BeyondERP-Signer-Setup.exe"', self.read("packaging/collect_downloads.py"))
+        self.assertIn("console=False", spec)
+        for want in ('"CompanyName", "BEYONDERP"', '"LegalCopyright", COPYRIGHT', "Copyright (c) 2026 BEYONDERP. All rights reserved."):
+            self.assertIn(want, spec)
+        for want in ("AppPublisher=BEYONDERP", "AppCopyright={#Copyright}", "PrivilegesRequired=lowest", "LicenseFile=EULA.txt",
+                     'Name: "arabic"', "--background", "uninsdeletevalue"):
+            self.assertIn(want, iss)
+        # the installer's start-with-Windows value is the one the Signer's own switch reads and writes
+        self.assertIn('ValueName: "{#Name}"', iss)
+        self.assertIn('#define Name "BeyondERP Signer"', iss)
+        src = self.read("signer/beyond_signer.py")
+        self.assertIn('RUN_KEY, RUN_NAME = r"Software\\Microsoft\\Windows\\CurrentVersion\\Run", "BeyondERP Signer"', src)
+        self.assertEqual(re.search(r'#define Exe "([^"]+)"', iss).group(1), 'BeyondERP-Signer.exe')
+        self.assertIn('name="BeyondERP-Signer"', spec)
+
+    def test_the_erp_links_to_the_published_signer_and_shows_no_address(self):
+        js = self.read("erp/static/app.js")
+        self.assertNotIn('href="downloads/BeyondERP-Signer.exe"', js)                 # taken from the downloads list instead
+        self.assertIn('f.kind === "signer-windows"', js)
+        self.assertNotIn("keep its window open", js)
+        self.assertNotIn('ph: "http://127.0.0.1:47321', js)
 
 if __name__ == "__main__":
     unittest.main()

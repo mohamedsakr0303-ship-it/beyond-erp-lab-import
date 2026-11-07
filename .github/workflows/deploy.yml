@@ -178,13 +178,22 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
           & $iscc "/DAppVersion=$v" /DOnline packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
-      # BeyondERP Signer: signs e-invoices with the company's USB token on the computer it is plugged into
+      # BeyondERP Signer: signs e-invoices with the company's USB token on the computer it is plugged into. A windowed
+      # program (no console) with BEYONDERP's name, copyright and version in its properties, in a normal installer
+      # (BeyondERP-Signer-Setup.exe: Start menu, start with Windows, uninstaller). A problem here never holds back the
+      # ERP's own installers, which are published either way.
       - name: BeyondERP Signer (Windows)
         if: runner.os == 'Windows'
+        continue-on-error: true
         shell: pwsh
         run: |
           pip install -r signer/requirements.txt
-          pyinstaller --onefile --console --name BeyondERP-Signer --icon packaging/icon.ico --distpath dist-signer --workpath build-signer signer/beyond_signer.py
+          pyinstaller packaging/signer.spec --noconfirm --distpath dist-signer --workpath build-signer
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $v = (Select-String -Path signer/beyond_signer.py -Pattern '^VERSION = "([^"]+)"').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVersion=$v" packaging\signer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Mac apps
         if: runner.os == 'macOS'
@@ -199,8 +208,10 @@ jobs:
         run: |
           gh release view desktop-app >/dev/null 2>&1 || gh release create desktop-app --prerelease \
             --title "BeyondERP desktop app (latest build)" --notes "The connected desktop app: opens the BeyondERP website in its own window. Built from main; also offered on the website."
-          files=$(ls dist-installer/BeyondERP-Setup.exe BeyondERP-mac.zip dist-signer/BeyondERP-Signer.exe 2>/dev/null || true)
+          files=$(ls dist-installer/BeyondERP-Setup.exe BeyondERP-mac.zip dist-installer/BeyondERP-Signer-Setup.exe 2>/dev/null || true)
           if [ -n "$files" ]; then gh release upload desktop-app $files --clobber; fi
+          # the Signer now comes as an installer: the older single program (with a console window) is no longer offered
+          if [ -f dist-installer/BeyondERP-Signer-Setup.exe ]; then gh release delete-asset desktop-app BeyondERP-Signer.exe -y 2>/dev/null || true; fi
 
   web:
     needs: [test, database, desktop]

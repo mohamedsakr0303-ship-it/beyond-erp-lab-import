@@ -2,3 +2,6 @@
 PyKCS11>=1.5.12
 asn1crypto>=1.5
 cryptography>=41
+# on Windows: the icon by the clock (open, start with Windows, quit)
+pystray>=0.19; sys_platform == "win32"
+Pillow>=10; sys_platform == "win32"

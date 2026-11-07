@@ -37,22 +37,35 @@ live_files = {f["file"]: f for f in live.get("files", [])}
 reused = False
 # Only the connected desktop app (a small launcher that opens the website) is public. The offline editions carry the whole
 # app, so they are never put on the website (nor built by Actions while the repository is public).
-wanted = [("windows", "BeyondERP-Setup.exe"), ("mac", "BeyondERP-mac.zip"),
-          ("signer-windows", "BeyondERP-Signer.exe")]      # the e-invoice signer for the computer with the USB token
+wanted = [("windows", ["BeyondERP-Setup.exe"]), ("mac", ["BeyondERP-mac.zip"]),
+          # the e-invoice signer for the computer with the USB token: its installer; the older single program only
+          # until a desktop build has made the installer
+          ("signer-windows", ["BeyondERP-Signer-Setup.exe", "BeyondERP-Signer.exe"])]
 files = []
-for kind, name in wanted:
-    found = next(iter(sorted(src.rglob(name))), None) or (ROOT / name if (ROOT / name).exists() else None)
-    if not found and name in live_files:
-        try:  # not rebuilt this time: keep the one the site already offers
-            (out / name).write_bytes(fetch(f"{site}/downloads/{name}", 300))
-            files.append(live_files[name])
-            reused = True
-            print(f"{name}: kept from the live site")
-            continue
-        except OSError as e:
-            print(f"::warning::{name} could not be copied from the live site ({e})")
+
+
+def built(name):
+    return next(iter(sorted(src.rglob(name))), None) or (ROOT / name if (ROOT / name).exists() else None)
+
+
+for kind, names in wanted:
+    name, found = next(((n, built(n)) for n in names if built(n)), (names[0], None))
     if not found:
-        print(f"::warning::{name} was not built — the download page will say so")
+        kept = False
+        for n in names:
+            if n not in live_files:
+                continue
+            try:  # not rebuilt this time: keep the one the site already offers
+                (out / n).write_bytes(fetch(f"{site}/downloads/{n}", 300))
+                files.append({**live_files[n], "kind": kind})
+                reused = kept = True
+                print(f"{n}: kept from the live site")
+                break
+            except OSError as e:
+                print(f"::warning::{n} could not be copied from the live site ({e})")
+        if kept:
+            continue
+        print(f"::warning::{names[0]} was not built — the download page will say so")
         continue
     if found.stat().st_size > LIMIT:
         print(f"::warning::{name} is {found.stat().st_size / 1048576:.1f} MB — over the 25 MB hosting limit, left out")

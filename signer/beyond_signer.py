@@ -1,19 +1,24 @@
 """BeyondERP Signer — signs Egyptian e-invoices with the company's token and talks to the Tax Authority (ETA).
 
 It runs on the computer the USB token (or e-seal certificate file) is plugged into, and only answers that computer
-(127.0.0.1). The ERP, open in a browser or the desktop app on the same computer, sends it a document; the Signer
+(localhost). The ERP, open in a browser or the desktop app on the same computer, sends it a document; the Signer
 signs it with the token (CAdES-BES, as ETA requires for documentTypeVersion 1.0) and, when asked, submits it and
 fetches statuses, the official printout, received documents, cancels and rejections. The ETA client secret lives
 here, encrypted on this computer, never in the books.
 
   Pairing   The ERP must send this Signer's pairing key (X-Signer-Key) with every call, so no other website the person
-            visits can use the token. The key is shown on the Signer's settings page (http://127.0.0.1:47321/).
+            visits can use the token. The key is shown in the Signer's own window (Start menu → BeyondERP Signer).
   PIN       The token PIN is typed in the ERP, sent only to this computer, and kept in memory for a few minutes
             (Settings → PIN timeout), or remembered here, encrypted, if the person chooses.
   Storage   On Windows the secrets (ETA client secret, PIN, certificate-file password) are encrypted with DPAPI for
             the signed-in Windows user; elsewhere the settings file is readable by its owner only.
 
-Run:  BeyondERP-Signer.exe   (or: python beyond_signer.py [--port 47321] [--no-browser])
+  Desktop   On Windows it is installed like any program (BeyondERP-Signer-Setup.exe), has no console window, keeps an
+            icon by the clock (open, start with Windows, quit) and shows its settings in a window of its own.
+  Local     Only this computer's own names are answered (localhost, 127.0.0.1, ::1): a web page that points its own
+            site name at this computer is refused, and the settings change only from the Signer's own window.
+
+Run:  BeyondERP Signer from the Start menu   (or: python beyond_signer.py [--port 47321] [--background] [--tray])
 """
 import base64
 import datetime as _dt
@@ -23,7 +28,10 @@ import http.server
 import json
 import os
 import secrets
+import shutil
+import socket
 import socketserver
+import subprocess
 import sys
 import threading
 import time
@@ -32,7 +40,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 PORT = 47321
 ETA_HOSTS = {"preprod": ("https://id.preprod.eta.gov.eg", "https://api.preprod.invoicing.eta.gov.eg",
                          "https://preprod.invoicing.eta.gov.eg"),
@@ -89,7 +97,7 @@ def _open(v):
 
 
 DEFAULTS = {"mode": "pkcs11", "driver": "", "cert_id": "", "pfx_path": "", "pin_minutes": 30, "remember_pin": False,
-            "eta_env": "preprod", "eta_client_id": "", "pairing_key": "", "admin_token": "", "lang": "en"}
+            "eta_env": "preprod", "eta_client_id": "", "pairing_key": "", "lang": "en"}
 
 
 class Config:
@@ -103,12 +111,8 @@ class Config:
                     self.data.update(json.load(f))
             except (OSError, ValueError):
                 pass
-        changed = False
-        for k in ("pairing_key", "admin_token"):
-            if not self.data.get(k):
-                self.data[k] = secrets.token_urlsafe(18)
-                changed = True
-        if changed:
+        if not self.data.get("pairing_key"):
+            self.data["pairing_key"] = secrets.token_urlsafe(18)
             self.save()
 
     def get(self, k):
@@ -454,6 +458,8 @@ class App:
     def __init__(self, cfg=None):
         self.cfg = cfg or Config()
         self.keys, self.eta = Keys(self.cfg), ETA(self.cfg)
+        self.form_token = secrets.token_urlsafe(24)       # the settings page's own: changes only from a page shown here
+        self.on_quit = None                               # "Stop the Signer" on the settings page
 
     # what the ERP may call (all need the pairing key)
     def route(self, method, path, q, body):
@@ -530,23 +536,40 @@ class App:
         found = [d for d in DRIVERS if os.path.exists(d)]
         rows = "".join(f"<option value='{e(d)}' {'selected' if c.get('driver') == d else ''}>{e(d)}</option>" for d in found)
         cert = st.get("certificate") or {}
-        return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BeyondERP Signer</title><style>
-:root{{--bg:#f4f6f8;--panel:#fff;--ink:#17222b;--muted:#5f6c77;--line:#dde3e8;--acc:#0f8f84}}
-@media (prefers-color-scheme:dark){{:root{{--bg:#0e1519;--panel:#152027;--ink:#e6eef2;--muted:#9aabb5;--line:#26343d;--acc:#3cc8b9}}}}
-body{{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;padding:24px 16px}}
-main{{max-width:760px;margin:0 auto;display:grid;gap:16px}}h1{{margin:0;font-size:1.5rem}}h2{{margin:0 0 8px;font-size:1.05rem}}
+        tok = f'<input type="hidden" name="token" value="{e(self.form_token)}">'
+        note = MESSAGES.get(msg)
+        ready = bool(st.get("present"))
+        auto = ""
+        if autostart_supported():
+            on = autostart()
+            auto = f"""<form method="post" action="/settings" class="line">{tok}<input type="hidden" name="do" value="autostart"><input type="hidden" name="on" value="{'0' if on else '1'}">
+<div><b>Start with Windows · التشغيل مع Windows</b><div class="muted">{'On: the Signer starts by itself when you sign in.' if on else 'Off: start it from the Start menu before you sign invoices.'}</div></div>
+<button class="ghost">{'Turn off · إيقاف' if on else 'Turn on · تشغيل'}</button></form>"""
+        return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BeyondERP Signer</title><link rel="icon" href="/icon.png"><style>
+:root{{--bg:#f4f6f8;--panel:#fff;--ink:#17222b;--muted:#5f6c77;--line:#dde3e8;--acc:#0f8f84;--on-acc:#fff;--bad:#c0392b}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#0e1519;--panel:#152027;--ink:#e6eef2;--muted:#9aabb5;--line:#26343d;--acc:#3cc8b9;--on-acc:#062420;--bad:#ff7b6b}}}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;padding:20px 16px 28px}}
+main{{max-width:760px;margin:0 auto;display:grid;gap:14px}}h1{{margin:0;font-size:1.35rem}}h2{{margin:0 0 8px;font-size:1.02rem}}
+header{{display:flex;gap:12px;align-items:center}}header img{{width:44px;height:44px;border-radius:10px}}header .pill{{margin-inline-start:auto}}
+.pill{{font-size:.82rem;font-weight:600;padding:4px 10px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}}
 .card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}}label{{display:grid;gap:4px;font-weight:600;font-size:.9rem}}
-input,select{{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}}
+input,select{{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);min-width:0}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}}.muted{{color:var(--muted);font-size:.88rem}}
-button{{font:inherit;font-weight:600;padding:9px 16px;border-radius:8px;border:0;background:var(--acc);color:#fff;cursor:pointer}}
-code{{background:var(--bg);padding:3px 6px;border-radius:6px;font-size:1.05rem;letter-spacing:.04em;user-select:all}}
-.ok{{color:var(--acc)}}.bad{{color:#c0392b}}.msg{{padding:10px 12px;border-radius:8px;background:var(--bg)}}</style></head><body><main>
-<h1>BeyondERP Signer <span class="muted">{VERSION}</span></h1>
-{f'<div class="msg">{e(msg)}</div>' if msg else ''}
-<div class="card"><h2>Pairing key · مفتاح الربط</h2><p>In the ERP: Tax → E-invoicing → BeyondERP Signer, paste this key once on this computer.</p>
-<p><code>{e(c.get('pairing_key'))}</code></p><p class="muted">Keep this window running while you sign. Anyone with this key and the token PIN can sign as the company.</p></div>
-<form class="card" method="post" action="/settings"><input type="hidden" name="admin" value="{e(c.get('admin_token'))}">
+button{{font:inherit;font-weight:600;padding:9px 16px;border-radius:8px;border:0;background:var(--acc);color:var(--on-acc);cursor:pointer}}
+button.ghost{{background:none;color:var(--ink);border:1px solid var(--line)}}button.warn{{background:none;color:var(--bad);border:1px solid var(--line)}}
+.key{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}code{{background:var(--bg);padding:6px 10px;border-radius:8px;font-size:1.05rem;letter-spacing:.04em;user-select:all;word-break:break-all}}
+.line{{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line)}}.line:first-of-type{{border-top:0}}
+.ok{{color:var(--acc)}}.bad{{color:var(--bad)}}.msg{{padding:10px 12px;border-radius:10px;background:var(--panel);border:1px solid var(--acc)}}
+footer{{text-align:center}}</style></head><body><main>
+<header><img src="/icon.png" alt=""><div><h1>BeyondERP Signer</h1><div class="muted">Version {VERSION} · works on this computer only · يعمل على هذا الجهاز فقط</div></div>
+<span class="pill {'ok' if ready else 'bad'}">{'Ready · جاهز' if ready else 'Not ready · غير جاهز'}</span></header>
+{f'<div class="msg" role="status">{e(note)}</div>' if note else ''}
+<section class="card"><h2>Pairing key · مفتاح الربط</h2><p>In the ERP, open E-invoicing → Settings → BeyondERP Signer and paste this key once on this computer.</p>
+<div class="key"><code id="pk">{e(c.get('pairing_key'))}</code><button type="button" class="ghost" id="cp">Copy · نسخ</button></div>
+<p class="muted">You can close this window: the Signer keeps working in the background, with its icon by the clock. Open this window again from that icon or the Start menu.
+Anyone with this key and the token PIN can sign as the company.</p></section>
+<form class="card" method="post" action="/settings">{tok}<input type="hidden" name="do" value="save">
 <h2>Signing key · مفتاح التوقيع</h2><div class="grid">
 <label>Uses<select name="mode"><option value="pkcs11" {'selected' if c.get('mode') == 'pkcs11' else ''}>USB token</option><option value="pfx" {'selected' if c.get('mode') == 'pfx' else ''}>Certificate file (.pfx / .p12)</option></select></label>
 <label>Token driver<select name="driver"><option value="">Find it automatically</option>{rows}</select></label>
@@ -555,29 +578,48 @@ code{{background:var(--bg);padding:3px 6px;border-radius:6px;font-size:1.05rem;l
 <label>Certificate file password<input name="pfx_password" type="password" placeholder="unchanged"></label>
 <label>Keep the PIN for (minutes)<input name="pin_minutes" type="number" min="1" max="720" value="{e(str(c.get('pin_minutes')))}"></label>
 <label style="grid-column:1/-1;display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" name="remember_pin" {'checked' if c.get('remember_pin') else ''}> Remember the PIN on this computer (encrypted for this Windows user)</label></div>
-<p class="muted">Status: {'<b class="ok">token present</b>' if st.get('present') else '<b class="bad">' + e(st.get('problem') or 'not ready') + '</b>'}
+<p class="muted">Status: {'<b class="ok">token present</b>' if ready else '<b class="bad">' + e(st.get('problem') or 'not ready') + '</b>'}
 {(' · ' + e(cert.get('subject', '')) + ' · valid to ' + e(cert.get('valid_to', ''))) if cert else ''}</p>
 <h2>Tax Authority · مصلحة الضرائب</h2><div class="grid">
 <label>Environment<select name="eta_env"><option value="preprod" {'selected' if c.get('eta_env') == 'preprod' else ''}>Pre-production (testing)</option><option value="prod" {'selected' if c.get('eta_env') == 'prod' else ''}>Production</option></select></label>
 <label>Client ID<input name="eta_client_id" value="{e(c.get('eta_client_id'))}" autocomplete="off"></label>
 <label>Client secret<input name="eta_client_secret" type="password" placeholder="{'unchanged' if c.get('eta_client_secret') else ''}" autocomplete="off"></label></div>
 <p class="muted">From the ETA portal: your ERP system's registration (client ID and secret). Kept here, encrypted, never sent to the ERP.</p>
-<p><button>Save</button></p></form>
-<form class="card" method="post" action="/settings"><input type="hidden" name="admin" value="{e(c.get('admin_token'))}"><input type="hidden" name="new_key" value="1">
-<h2>A new pairing key</h2><p class="muted">Every computer and browser paired before will need the new key.</p><p><button>Make a new key</button></p></form>
-</main></body></html>"""
+<p><button>Save · حفظ</button></p></form>
+<section class="card"><h2>This computer · هذا الجهاز</h2>{auto}
+<form method="post" action="/settings" class="line">{tok}<input type="hidden" name="do" value="newkey">
+<div><b>A new pairing key · مفتاح ربط جديد</b><div class="muted">Every computer and browser paired before will need the new key.</div></div><button class="ghost">Make a new key</button></form>
+<form method="post" action="/settings" class="line">{tok}<input type="hidden" name="do" value="quit">
+<div><b>Stop the Signer · إيقاف البرنامج</b><div class="muted">Invoices cannot be signed until it is started again.</div></div><button class="warn">Stop</button></form></section>
+<footer class="muted">Copyright © 2026 BEYONDERP. All rights reserved.</footer>
+</main><script>
+document.getElementById("cp").onclick = function () {{
+  var b = this, k = document.getElementById("pk").textContent;
+  navigator.clipboard.writeText(k).then(function () {{ b.textContent = "Copied · تم النسخ"; setTimeout(function () {{ b.textContent = "Copy · نسخ"; }}, 1800); }});
+}};
+</script></body></html>"""
 
     def save_settings(self, form):
-        if form.get("admin") != self.cfg.get("admin_token"):
-            raise SignerError("This page has expired. Reload it.", "forbidden", 403)
-        if form.get("new_key"):
+        """A change from the settings page; returns what happened (one of MESSAGES)."""
+        if not secrets.compare_digest(str(form.get("token") or ""), self.form_token):
+            raise SignerError("This page has expired. Reload it.", "expired", 403)
+        act = form.get("do") or "save"
+        if act == "newkey":
             self.cfg.update({"pairing_key": secrets.token_urlsafe(18)})
-            return "A new pairing key was made."
+            return "newkey"
+        if act == "autostart":
+            return "autostart_on" if autostart(form.get("on") == "1") else "autostart_off"
+        if act == "quit":
+            return "quit"
+        try:
+            minutes = max(1, min(int(form.get("pin_minutes") or 30), 720))
+        except ValueError:
+            minutes = 30
         upd = {"mode": form.get("mode") if form.get("mode") in ("pkcs11", "pfx") else "pkcs11",
                "driver": (form.get("driver_path") or form.get("driver") or "").strip(),
                "pfx_path": (form.get("pfx_path") or "").strip(), "eta_env": "prod" if form.get("eta_env") == "prod" else "preprod",
                "eta_client_id": (form.get("eta_client_id") or "").strip(), "remember_pin": bool(form.get("remember_pin")),
-               "pin_minutes": max(1, min(int(form.get("pin_minutes") or 30), 720))}
+               "pin_minutes": minutes}
         if form.get("eta_client_secret"):
             upd["eta_client_secret"] = form["eta_client_secret"].strip()
         if form.get("pfx_password"):
@@ -587,12 +629,29 @@ code{{background:var(--bg);padding:3px 6px;border-radius:6px;font-size:1.05rem;l
         self.cfg.update(upd)
         self.keys.close()
         self.eta._tok = None
-        return "Saved."
+        return "saved"
+
+
+MESSAGES = {"saved": "Saved. · تم الحفظ.",
+            "newkey": "A new pairing key was made: paste it in the ERP on every computer that uses this Signer. · تم إنشاء مفتاح ربط جديد.",
+            "expired": "This page had expired, so nothing was changed. Try again. · انتهت صلاحية الصفحة ولم يتغير شيء. أعد المحاولة.",
+            "autostart_on": "The Signer will start by itself when you sign in to Windows. · سيعمل البرنامج تلقائيًا عند تسجيل الدخول.",
+            "autostart_off": "The Signer will no longer start with Windows. · لن يعمل البرنامج تلقائيًا مع Windows."}
+STOPPED_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>BeyondERP Signer</title><style>body{margin:0;display:grid;place-items:center;
+min-height:100vh;font:15px/1.5 system-ui,"Segoe UI",Tahoma,sans-serif;background:#f4f6f8;color:#17222b;text-align:center}
+@media (prefers-color-scheme:dark){body{background:#0e1519;color:#e6eef2}}</style></head><body><div><h1 style="font-size:1.3rem">The BeyondERP Signer has stopped.</h1>
+<p>تم إيقاف برنامج التوقيع.</p><p>Start it again from the Start menu before you sign invoices. You can close this window.</p></div></body></html>"""
+# what the settings page may load and do: nothing from elsewhere, never inside another site's frame
+PAGE_HEADERS = {"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self'; "
+                                           "form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                "X-Frame-Options": "DENY", "Referrer-Policy": "same-origin",   # no-referrer would make the browser send Origin: null
+                "X-Content-Type-Options": "nosniff"}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
     app = None
     server_version = "BeyondERP-Signer/" + VERSION
+    sys_version = ""
 
     def log_message(self, fmt, *args):         # quiet: only problems are printed
         pass
@@ -607,21 +666,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Private-Network", "true")    # a public site calling this computer
             self.send_header("Access-Control-Max-Age", "600")
 
-    def _send(self, status, obj=None, ctype="application/json; charset=utf-8", body=None, cors=True):
+    def _send(self, status, obj=None, ctype="application/json; charset=utf-8", body=None, cors=True, headers=None):
         data = body if body is not None else json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         if cors:
             self._cors()
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        if "Cache-Control" not in (headers or {}):
+            self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
     def _local(self):
         return self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
+    def _known_host(self):
+        # A web page can rename its own site to this computer's address (DNS rebinding); the browser then still sends
+        # that site's name here, so only this computer's own names are answered.
+        return (self.headers.get("Host") or "").strip().lower() in getattr(self.server, "hosts", ())
+
+    def _own_origin(self, origin):
+        return origin in {"http://" + h for h in getattr(self.server, "hosts", ())}
+
     def do_OPTIONS(self):
+        if not (self._local() and self._known_host()):
+            return self._send(403, {"error": "forbidden"}, cors=False)
         self.send_response(204)
         self._cors()
         self.end_headers()
@@ -629,20 +701,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _handle(self, method):
         if not self._local():
             return self._send(403, {"error": "This Signer only answers its own computer."}, cors=False)
+        if not self._known_host():
+            return self._send(403, {"error": "This Signer answers only at localhost or 127.0.0.1."}, cors=False)
         u = urllib.parse.urlsplit(self.path)
         q = dict(urllib.parse.parse_qsl(u.query))
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(min(length, 20_000_000)) if length else b""
+        if u.path == "/icon.png" and method == "GET":
+            p = _resource("icon.png")
+            if not p:
+                return self._send(404, {"error": "Not found"}, cors=False)
+            with open(p, "rb") as f:
+                return self._send(200, body=f.read(), ctype="image/png", cors=False, headers={"Cache-Control": "max-age=86400"})
         if u.path in ("/", "/settings"):
-            if self.headers.get("Origin") and method != "POST":
+            origin = self.headers.get("Origin")
+            if origin and not self._own_origin(origin):             # another website: it may neither read nor change it
                 return self._send(403, {"error": "forbidden"}, cors=False)
-            msg = ""
             if method == "POST":
                 try:
-                    msg = self.app.save_settings(dict(urllib.parse.parse_qsl(raw.decode("utf-8"))))
+                    done = self.app.save_settings(dict(urllib.parse.parse_qsl(raw.decode("utf-8"))))
                 except SignerError as e:
-                    msg = str(e)
-            return self._send(200, body=self.app.settings_page(msg).encode("utf-8"), ctype="text/html; charset=utf-8", cors=False)
+                    done = e.code if e.code in MESSAGES else "expired"
+                if done == "quit":
+                    if self.app.on_quit:
+                        threading.Timer(0.4, self.app.on_quit).start()
+                    return self._send(200, body=STOPPED_PAGE.encode("utf-8"), ctype="text/html; charset=utf-8", cors=False, headers=PAGE_HEADERS)
+                return self._send(303, body=b"", ctype="text/plain", cors=False, headers={"Location": "/?m=" + done})   # a reload never posts twice
+            if method != "GET":
+                return self._send(405, {"error": "Method not allowed"}, cors=False)
+            return self._send(200, body=self.app.settings_page(q.get("m", "")).encode("utf-8"), ctype="text/html; charset=utf-8",
+                              cors=False, headers=PAGE_HEADERS)
         if u.path == "/v1/hello":                     # no key: lets the ERP tell "not running" from "not paired"
             return self._send(200, {"signer": "BeyondERP Signer", "version": VERSION})
         key = self.headers.get("X-Signer-Key") or ""
@@ -669,28 +757,247 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    allow_reuse_address = os.name != "nt"     # on Windows that would let a second program share the port
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)    # the port is the Signer's alone
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "localhost", self.server_address[1]
 
 
-def serve(port=PORT, app=None, open_browser=True):
+class Server6(Server):
+    address_family = socket.AF_INET6
+
+
+class Service:
+    """The Signer on this computer's own addresses: 127.0.0.1 and, where the computer has it, ::1, so that
+    http://localhost answers however Windows resolves it. Nothing outside this computer can reach either."""
+
+    def __init__(self, port):
+        self.servers = [Server(("127.0.0.1", port), Handler)]
+        self.port = self.servers[0].server_address[1]
+        try:
+            self.servers.append(Server6(("::1", self.port), Handler))
+        except OSError:
+            pass                                   # no IPv6 on this computer
+        self.hosts = {f"{h}:{self.port}" for h in ("127.0.0.1", "localhost", "[::1]")}
+        for s in self.servers:
+            s.hosts = self.hosts
+        self.server_address = ("127.0.0.1", self.port)
+        self._running = []
+
+    def serve_forever(self):
+        for s in self.servers[1:]:
+            self._running.append(s)
+            threading.Thread(target=s.serve_forever, daemon=True).start()
+        self._running.append(self.servers[0])
+        self.servers[0].serve_forever()
+
+    def shutdown(self):
+        for s in self._running:
+            s.shutdown()
+        for s in self.servers:
+            s.server_close()
+        self._running = []
+
+
+def serve(port=PORT, app=None, open_browser=False):
     Handler.app = app or App()
-    srv = Server(("127.0.0.1", port), Handler)
-    url = f"http://127.0.0.1:{port}/"
-    print(f"BeyondERP Signer {VERSION} is running at {url}\nKeep this window open while you sign. Close it to stop.")
+    svc = Service(port)
     if open_browser:
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
-    return srv
+        threading.Timer(0.5, open_window, (page_url(svc.port),)).start()
+    return svc
+
+
+# ================================================================== on the desktop: its own window, the tray icon, start with Windows
+FROZEN = getattr(sys, "frozen", False)
+RUN_KEY, RUN_NAME = r"Software\Microsoft\Windows\CurrentVersion\Run", "BeyondERP Signer"
+
+
+def page_url(port=PORT):
+    return f"http://localhost:{port}/"
+
+
+def _resource(name):
+    here = os.path.dirname(os.path.abspath(__file__))
+    for base in (getattr(sys, "_MEIPASS", ""), here, os.path.join(here, "..", "packaging")):
+        p = os.path.join(base, name) if base else ""
+        if p and os.path.isfile(p):
+            return p
+    return ""
+
+
+def _local_dir():
+    """This computer only (not the roaming profile): the settings window's browser profile and the log."""
+    base = os.environ.get("LOCALAPPDATA") if os.name == "nt" else os.path.join(os.path.expanduser("~"), ".cache")
+    d = os.path.join(base or os.path.expanduser("~"), "BeyondERP Signer")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _browsers():
+    if os.name == "nt":
+        roots = [os.environ.get(k, "") for k in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA")]
+        rel = [r"Microsoft\Edge\Application\msedge.exe", r"Google\Chrome\Application\chrome.exe",
+               r"BraveSoftware\Brave-Browser\Application\brave.exe"]
+        return [os.path.join(r, x) for x in rel for r in roots if r]
+    if sys.platform == "darwin":
+        return ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]
+    return [shutil.which(x) or "" for x in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge")]
+
+
+def open_window(url):
+    """The settings in a window of their own (Edge or Chrome app mode: no tabs, no address bar), like any program's
+    window; the default browser only when neither is installed."""
+    for exe in _browsers():
+        if exe and os.path.isfile(exe):
+            try:
+                subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={os.path.join(_local_dir(), 'window')}", "--no-first-run",
+                                  "--no-default-browser-check", "--window-size=880,940"],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 creationflags=0x08000000 if os.name == "nt" else 0, close_fds=True)   # CREATE_NO_WINDOW
+                return True
+            except OSError:
+                continue
+    webbrowser.open(url)
+    return False
+
+
+def running(port=PORT):
+    """A Signer already answers on this computer (a second start then only opens its window)."""
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(f"http://127.0.0.1:{port}/v1/hello", timeout=2) as r:
+            return json.loads(r.read().decode("utf-8")).get("signer") == "BeyondERP Signer"
+    except (OSError, ValueError):
+        return False
+
+
+def autostart_supported():
+    return os.name == "nt" and FROZEN
+
+
+def autostart(enable=None):
+    """Start with Windows for the signed-in user: read it (enable=None), or turn it on or off. The installer sets the
+    same value."""
+    if not autostart_supported():
+        return False
+    import winreg
+    if enable is None:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+                return bool(winreg.QueryValueEx(k, RUN_NAME)[0])
+        except OSError:
+            return False
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+        if enable:
+            winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, f'"{sys.executable}" --background')
+        else:
+            try:
+                winreg.DeleteValue(k, RUN_NAME)
+            except FileNotFoundError:
+                pass
+    return bool(enable)
+
+
+def _arabic():
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        return (ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF) == 0x01
+    except Exception:       # noqa: BLE001
+        return False
+
+
+def notify(text, error=False):
+    """A message the person sees: a Windows message box (the Signer has no console there), else the terminal."""
+    if os.name == "nt" and FROZEN:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, text, "BeyondERP Signer", 0x10 if error else 0x40)
+        except Exception:   # noqa: BLE001
+            print(text, file=sys.stderr)
+        return
+    print(text, file=sys.stderr)
+
+
+def _log_to_file():
+    """A windowed Signer has no console: what it would print (problems only, never a secret) goes to signer.log."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        p = os.path.join(_local_dir(), "signer.log")
+        if os.path.exists(p) and os.path.getsize(p) > 1_000_000:
+            os.replace(p, p + ".1")
+        f = open(p, "a", encoding="utf-8", buffering=1)     # noqa: SIM115 — open for the life of the program
+        sys.stdout = sys.stdout or f
+        sys.stderr = sys.stderr or f
+    except OSError:
+        pass
+
+
+def tray(port):
+    """The Signer's icon by the clock: open its window, start with Windows, quit. None where it can't be shown."""
+    try:
+        import pystray
+        from PIL import Image, ImageDraw
+    except Exception:       # noqa: BLE001
+        return None
+    img = None
+    if _resource("icon.png"):
+        try:
+            img = Image.open(_resource("icon.png"))
+        except Exception:   # noqa: BLE001
+            img = None
+    if img is None:
+        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        ImageDraw.Draw(img).ellipse((4, 4, 60, 60), fill=(15, 143, 132, 255))
+    ar = _arabic()
+
+    def t(en, a):
+        return a if ar else en
+    items = [pystray.MenuItem(t("Open BeyondERP Signer", "فتح برنامج التوقيع"), lambda *_: open_window(page_url(port)), default=True)]
+    if autostart_supported():
+        items.append(pystray.MenuItem(t("Start with Windows", "التشغيل مع Windows"), lambda *_: autostart(not autostart()),
+                                      checked=lambda _item: autostart()))
+    items += [pystray.Menu.SEPARATOR, pystray.MenuItem(t("Quit", "إنهاء"), lambda icon, _item: icon.stop())]
+    return pystray.Icon("BeyondERP Signer", img, t("BeyondERP Signer is running", "برنامج التوقيع BeyondERP Signer يعمل"), pystray.Menu(*items))
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     port = int(argv[argv.index("--port") + 1]) if "--port" in argv else PORT
-    srv = serve(port, open_browser="--no-browser" not in argv)
+    background = "--background" in argv or "--no-browser" in argv       # started with Windows: no window, just the icon
+    _log_to_file()
+    if running(port):                     # already running: a second start shows its window and leaves
+        if not background:
+            open_window(page_url(port))
+        return 0
     try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        pass
+        svc = serve(port)
+    except OSError as e:
+        notify(f"BeyondERP Signer could not start: another program on this computer is using port {port}.\n\n({e})", error=True)
+        return 1
+    print(f"BeyondERP Signer {VERSION} is running on this computer: {page_url(svc.port)}", flush=True)
+    if not background:
+        threading.Timer(0.4, open_window, (page_url(svc.port),)).start()
+    icon = tray(svc.port) if (os.name == "nt" or "--tray" in argv) else None
+    if icon is None:                      # a terminal (Mac / Linux), or no tray here: runs until stopped
+        Handler.app.on_quit = svc.shutdown
+        try:
+            svc.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        return 0
+    Handler.app.on_quit = icon.stop
+    threading.Thread(target=svc.serve_forever, daemon=True).start()
+    icon.run()                            # until Quit, in the icon's menu or on the settings page
+    svc.shutdown()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

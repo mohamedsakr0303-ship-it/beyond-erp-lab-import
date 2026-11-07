@@ -3779,7 +3779,7 @@ async function signerCall(method, path, body, tries = 3) {
   if (!c.key) throw new Error(L2("Pair this computer with the BeyondERP Signer first: E-invoicing → Settings → BeyondERP Signer.", "اربط هذا الجهاز ببرنامج التوقيع BeyondERP Signer أولاً: الفاتورة الإلكترونية ← الإعدادات ← برنامج التوقيع."));
   let r, d = {};
   try { r = await fetch(c.url.replace(/\/$/, "") + path, { method, headers: { "content-type": "application/json", "x-signer-key": c.key }, body: body ? JSON.stringify(body) : undefined }); }
-  catch { throw new Error(L2("The BeyondERP Signer is not running on this computer. Start it (keep its window open while signing), then try again.", "برنامج التوقيع BeyondERP Signer لا يعمل على هذا الجهاز. شغّله (اترك نافذته مفتوحة أثناء التوقيع) ثم أعد المحاولة.")); }
+  catch { throw new Error(L2("The BeyondERP Signer is not running on this computer. Start it from the Start menu (BeyondERP Signer), then try again.", "برنامج التوقيع BeyondERP Signer لا يعمل على هذا الجهاز. شغّله من قائمة ابدأ (BeyondERP Signer) ثم أعد المحاولة.")); }
   try { d = await r.json(); } catch { d = {}; }
   if (r.status === 401 && (d.code === "pin_needed" || d.code === "bad_pin") && tries > 0) {
     const pin = await uiDialog(d.code === "bad_pin" && path === "/v1/unlock" ? L2("Wrong PIN. Enter the token PIN again:", "رقم PIN غير صحيح. أدخل رقم التوكن مرة أخرى:")
@@ -6003,10 +6003,11 @@ PAGES.einvoice = async (view, parts, q) => {
     catch (e) { out.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
   view.innerHTML = top + `<div class="grid g2">
     <div class="card"><h2>${esc(L2("BeyondERP Signer on this computer", "برنامج التوقيع على هذا الجهاز"))}</h2>
-      <p class="muted">${esc(L2("Signs with the USB token (or a certificate file) on the computer it is plugged into, and talks to the tax authority. Install it there, keep its window open, and paste its pairing key here once on that computer.", "يوقّع باستخدام التوكن (أو ملف شهادة) على الجهاز المتصل به، ويتصل بمصلحة الضرائب. ثبّته على ذلك الجهاز، واترك نافذته مفتوحة، والصق مفتاح الربط هنا مرة واحدة على ذلك الجهاز."))}</p>
-      <p><a class="btn" href="downloads/BeyondERP-Signer.exe" download>⬇ ${esc(L2("Download for Windows", "تنزيل لنظام Windows"))}</a> <span class="muted" style="font-size:.85em">${esc(L2("Mac / Linux: run signer/beyond_signer.py with Python 3.", "Mac / Linux: شغّل signer/beyond_signer.py باستخدام Python 3."))}</span></p>
-      <div class="grid g2"><label class="f">${esc(L2("Pairing key", "مفتاح الربط"))}<input id="sgkey" value="${esc(sc.key)}" autocomplete="off" placeholder="${esc(L2("Shown in the Signer's window", "يظهر في نافذة البرنامج"))}"></label>
-        <label class="f">${esc(L2("Signer address", "عنوان البرنامج"))}<input id="sgurl" value="${esc(sc.url)}" dir="ltr"></label></div>
+      <p class="muted">${esc(L2("Signs with the USB token (or a certificate file) on the computer it is plugged into, and talks to the tax authority. Install it on that computer: it runs in the background, with its icon by the clock. Then paste its pairing key here once.", "يوقّع باستخدام التوكن (أو ملف شهادة) على الجهاز المتصل به، ويتصل بمصلحة الضرائب. ثبّته على ذلك الجهاز: يعمل في الخلفية وتظهر أيقونته بجوار الساعة. ثم الصق مفتاح الربط هنا مرة واحدة."))}</p>
+      <p id="sgdl"><span class="muted">${t("loading")}</span></p>
+      <label class="f">${esc(L2("Pairing key", "مفتاح الربط"))}<input id="sgkey" value="${esc(sc.key)}" autocomplete="off" placeholder="${esc(L2("Shown in the Signer's window", "يظهر في نافذة البرنامج"))}"></label>
+      <details style="margin-top:6px"${sc.url !== SIGNER_URL ? " open" : ""}><summary class="muted" style="font-size:.85em;cursor:pointer">${esc(L2("Advanced", "متقدم"))}</summary>
+        <label class="f" style="margin-top:6px">${esc(L2("Where the ERP finds the Signer on this computer (change only if your IT team moved it)", "مكان البرنامج على هذا الجهاز (لا تغيّره إلا إذا نقله فريق الدعم الفني)"))}<input id="sgurl" value="${esc(sc.url)}" dir="ltr"></label></details>
       <div class="row" style="margin-top:8px"><button class="btn pri" data-a="sgsave">${t("save")}</button><button class="btn" data-a="sgtest">${esc(L2("Test", "اختبار"))}</button></div><div id="sgout" style="margin-top:10px"></div>
       <p class="muted" style="font-size:.82em">${esc(L2("The key is kept on this device only. Safari on Mac blocks pages from reaching the Signer; use Chrome, Edge or the desktop app there.", "يُحفظ المفتاح على هذا الجهاز فقط. يمنع Safari على Mac الصفحات من الوصول إلى البرنامج؛ استخدم Chrome أو Edge أو تطبيق سطح المكتب."))}</p></div>
     <div class="card" id="etaset"><h2>${t("eta_setup")}</h2>
@@ -6015,7 +6016,7 @@ PAGES.einvoice = async (view, parts, q) => {
         { k: "eta_doc_version", l: t("eta_version"), type: "select", opts: [["1.0", L2("1.0 (signed)", "1.0 (موقّعة)")], ["0.9", L2("0.9 (unsigned, pre-production only)", "0.9 (غير موقّعة، ما قبل الإنتاج فقط)")]], v: st.eta_doc_version },
         ...(viaSigner ? [] : [{ k: "eta_env", l: t("eta_env"), type: "select", opts: [["preprod", L2("Pre-production (testing)", "بيئة ما قبل الإنتاج (اختبار)")], ["prod", L2("Production", "بيئة الإنتاج")]], v: st.eta_env },
           { k: "eta_client_id", l: t("eta_client_id"), v: st.eta_client_id }, { k: "eta_client_secret", l: t("eta_client_secret"), type: "password", v: st.eta_client_secret },
-          { k: "eta_signer_url", l: t("eta_signer"), v: st.eta_signer_url, ph: "http://127.0.0.1:47321/v1/sign" }, { k: "eta_signer_key", l: L2("Signer pairing key", "مفتاح ربط البرنامج"), type: "password", v: st.eta_signer_key }]),
+          { k: "eta_signer_url", l: t("eta_signer"), v: st.eta_signer_url, ph: "http://localhost:47321/v1/sign" }, { k: "eta_signer_key", l: L2("Signer pairing key", "مفتاح ربط البرنامج"), type: "password", v: st.eta_signer_key }]),
         { k: "eta_activity_code", l: t("eta_activity"), v: st.eta_activity_code, ph: "4330" }, { k: "eta_branch_id", l: t("eta_branch"), v: st.eta_branch_id },
         { k: "eta_default_item_code", l: t("eta_item_code"), v: st.eta_default_item_code, ph: "EG-123456789-1001" }, { k: "eta_default_unit", l: t("eta_unit"), v: st.eta_default_unit },
         { html: `<b>${t("eta_issuer")}</b>`, span: "spanall" }, { k: "eta_governate", l: t("governate"), v: st.eta_governate }, { k: "eta_region", l: t("region"), v: st.eta_region },
@@ -6023,6 +6024,14 @@ PAGES.einvoice = async (view, parts, q) => {
       ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="etasave">${t("save")}</button>${viaSigner ? "" : `<button class="btn" data-a="etatest">${t("eta_test")}</button>`}</div>` : ""}
       <p class="muted" style="font-size:.8em">${esc(L2("The company's tax registration number is set in Settings → Company.", "يُضبط رقم التسجيل الضريبي للشركة من الإعدادات ← الشركة."))}</p></div></div>`;
   view.addEventListener("change", e => { if (e.target.name === "eta_connection" && ed) S.H.etasave(); }, { once: true });
+  // the Signer's download: the file the last build published (its installer; the older single program until then)
+  fetch("downloads/beyond-downloads.json", { cache: "no-store" }).then(r => (r.ok ? r.json() : {})).catch(() => ({})).then(d => {
+    const el = $("#sgdl"), x = ((d && d.files) || []).find(f => f.kind === "signer-windows");
+    if (!el) return;
+    el.innerHTML = (x ? `<a class="btn" href="downloads/${encodeURIComponent(x.file)}" download>⬇ ${esc(L2("Download the installer for Windows", "تنزيل برنامج التثبيت لنظام Windows"))}</a>`
+      : `<span class="muted">${esc(L2("The Windows installer is available after the next update is published.", "برنامج التثبيت لنظام Windows متاح بعد نشر التحديث القادم."))}</span>`)
+      + `<span class="muted" style="display:block;margin-top:6px;font-size:.85em">${esc(L2("Mac / Linux: run signer/beyond_signer.py with Python 3.", "Mac / Linux: شغّل signer/beyond_signer.py باستخدام Python 3."))}</span>`;
+  });
   if (!ed) $$("#etaset input, #etaset select").forEach(e => { e.disabled = true; });
   if (sc.key) S.H.sgtest();
 };
@@ -9936,8 +9945,8 @@ PAGES.download = async view => {
     card(L2("Desktop application, online (recommended)", "تطبيق سطح المكتب، متصل (مستحسن)"), `<p>${L2("Opens this site in a dedicated window. Same sign-in and books; changes appear immediately on all devices. Requires an internet connection.", "يفتح هذا الموقع في نافذة مستقلة، بنفس تسجيل الدخول والدفاتر، وتظهر التغييرات فوراً على جميع الأجهزة. يتطلب اتصالاً بالإنترنت.")}</p>
       <p><b>Windows</b> — ${dl(f("windows"), L2("Download installer (.exe)", "تنزيل برنامج التثبيت (.exe)"))}</p>
       <p><b>Mac</b> — ${dl(f("mac"), L2("Download for Mac (.zip)", "تنزيل لنظام Mac (.zip)"))}</p>`) +
-    card(L2("BeyondERP Signer (e-invoices)", "برنامج التوقيع BeyondERP Signer (الفواتير الإلكترونية)"), `<p>${L2("For the computer the e-invoicing USB token is plugged into: signs invoices with the token and sends them to the tax authority, from the invoice itself. Keep its window open while signing, and paste its pairing key in E-invoicing → Settings.", "للجهاز المتصل به توكن الفاتورة الإلكترونية: يوقّع الفواتير بالتوكن ويرسلها إلى مصلحة الضرائب من داخل الفاتورة نفسها. اترك نافذته مفتوحة أثناء التوقيع، والصق مفتاح الربط في الفاتورة الإلكترونية ← الإعدادات.")}</p>
-      <p><b>Windows</b> — ${dl(f("signer-windows"), L2("Download the Signer (.exe)", "تنزيل برنامج التوقيع (.exe)"))}</p>`) +
+    card(L2("BeyondERP Signer (e-invoices)", "برنامج التوقيع BeyondERP Signer (الفواتير الإلكترونية)"), `<p>${L2("For the computer the e-invoicing USB token is plugged into: signs invoices with the token and sends them to the tax authority, from the invoice itself. Installs like any program and runs in the background, with its icon by the clock; paste its pairing key in E-invoicing → Settings.", "للجهاز المتصل به توكن الفاتورة الإلكترونية: يوقّع الفواتير بالتوكن ويرسلها إلى مصلحة الضرائب من داخل الفاتورة نفسها. يُثبَّت مثل أي برنامج ويعمل في الخلفية وتظهر أيقونته بجوار الساعة؛ الصق مفتاح الربط في الفاتورة الإلكترونية ← الإعدادات.")}</p>
+      <p><b>Windows</b> — ${dl(f("signer-windows"), L2("Download the Signer installer (.exe)", "تنزيل برنامج تثبيت التوقيع (.exe)"))}</p>`) +
     // the offline editions carry the whole app, so they are not public: the platform owner gets them from the private
     // GitHub release that every deploy refreshes (only people with access to the private repository can open it)
     (S.billing && S.billing.is_owner ? card(L2("Offline desktop application (owner only)", "تطبيق سطح المكتب دون اتصال (للمالك فقط)"), `<p>${L2("Offline editions contain the complete application and are available to the owner only. Each release publishes the Windows and Mac installers to your private GitHub release; sign in with the repository owner's account to download.", "تحتوي النسخ دون اتصال على التطبيق كاملاً وتتاح للمالك فقط. يُنشر كل إصدار برامج التثبيت لنظامي Windows وMac على الإصدار الخاص في GitHub؛ سجّل الدخول بحساب مالك المستودع للتنزيل.")}</p>
