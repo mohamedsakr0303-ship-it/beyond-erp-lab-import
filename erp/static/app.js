@@ -2435,7 +2435,10 @@ const DOCS = {
   receipt: { title: "m_receipts", fields: () => [
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts(), req: 1 },
     { k: "amount", l: t("amount"), type: "number", req: 1 }, { k: "method", l: t("method"), type: "select", opts: payMethodOpts() },
-    { k: "credit_account", l: t("credit_account"), type: "select", opts: [[accByRole("revenue"), t("cr_revenue")], [accByRole("ar"), t("cr_ar")], [accByRole("client_advances"), t("cr_adv")], ...accts(["Revenue", "Liability"]).filter(a => ![accByRole("revenue"), accByRole("client_advances")].includes(a[0]))] },
+    // settling an invoice is the usual case: revenue was booked by the invoice, so a receipt booked as revenue again counts it twice
+    { k: "credit_account", l: t("credit_account"), type: "select", v: accByRole("ar"), opts: [[accByRole("ar"), t("cr_ar")], [accByRole("revenue"), t("cr_revenue")], [accByRole("client_advances"), t("cr_adv")], ...accts(["Revenue", "Liability"]).filter(a => ![accByRole("revenue"), accByRole("client_advances")].includes(a[0]))],
+      help: S.lang === "ar" ? "تسوية مديونية لعميل صدرت له فاتورة؛ إيراد (أساس نقدي) فقط لبيع بلا فاتورة؛ دفعة مقدمة لمال يُستلم قبل تنفيذ العمل"
+        : "Settle receivable for a customer you invoiced; Revenue (cash basis) only for a sale with no invoice; Client advance for money received before the work" },
     { k: "party", l: t("received_from"), list: "parties" }, { k: "withheld", l: t("withheld"), type: "number" },
     { k: "vat_code", l: t("vat_incl"), type: "select", opts: taxOpts("vat"), help: S.lang === "ar" ? "فقط للإيراد النقدي المسجل مباشرة؛ تُحتسب ضريبة الفواتير في الفاتورة" : "Only for cash revenue recorded directly; invoice VAT is charged on the invoice" },
     { k: "ref", l: t("ref") }, { k: "memo", l: t("memo") }] },

@@ -624,7 +624,7 @@ Move it out of ordinary receivables so aging shows what is really due now. Use a
 | **Total** | **15,000.00** | **15,000.00** |
 
 ## 5. The client pays the rest: 294,000
-339,000 − 30,000 − 15,000 = 294,000. **Receipt Voucher**, and this time choose **Credit account: Settle receivable (invoice)**:
+339,000 − 30,000 − 15,000 = 294,000. **Receipt Voucher**: **Credit account** is already **Settle receivable (invoice)**, the default:
 | Account | Debit | Credit |
 |---|---|---|
 | 1020 Cash at Bank | 294,000.00 |  |
@@ -633,7 +633,7 @@ Move it out of ordinary receivables so aging shows what is really due now. Use a
 
 ![The receipt that settles an invoice: Credit account set to "Settle receivable (invoice)"](help/pb-receipt-form-en.jpg)
 
-> **The most common mistake:** leaving the receipt on **Revenue (cash basis)**. That books the payment as new revenue, so the invoice's revenue is counted twice and the client still looks as if they owe. When an invoice exists, the receipt must **settle the receivable**.
+> **Revenue (cash basis)** is only for a sale with no invoice. Choosing it when an invoice exists books the payment as new revenue: the invoice's revenue is counted twice and the client still looks as if they owe.
 
 ## 6. At handover, the retention comes in
 Model **Client retention collected**:
@@ -685,7 +685,7 @@ Receivables 0 · Retentions 0 · Client advances 70,000 still to recover from la
 | **الإجمالي** | **15,000.00** | **15,000.00** |
 
 ## 5. العميل يسدد الباقي: 294,000
-339,000 − 30,000 − 15,000 = 294,000. **سند قبض**، واختر هذه المرة **الحساب الدائن: تسوية مديونية (فاتورة)**:
+339,000 − 30,000 − 15,000 = 294,000. **سند قبض**: **الحساب الدائن** مضبوط مسبقاً على **تسوية مديونية (فاتورة)**، وهو الاختيار الافتراضي:
 | الحساب | مدين | دائن |
 |---|---|---|
 | 1020 النقدية بالبنوك | 294,000.00 |  |
@@ -694,7 +694,7 @@ Receivables 0 · Retentions 0 · Client advances 70,000 still to recover from la
 
 ![سند القبض الذي يسوي فاتورة: الحساب الدائن «تسوية مديونية (فاتورة)»](help/pb-receipt-form-ar.jpg)
 
-> **أشهر خطأ:** ترك السند على **إيراد (أساس نقدي)**. هذا يسجل التحصيل كإيراد جديد، فيُحسب إيراد الفاتورة مرتين ويظل العميل مديناً. إذا وُجدت فاتورة، فيجب أن يسوّي السند **المديونية**.
+> **إيراد (أساس نقدي)** فقط لبيع بلا فاتورة. اختياره مع وجود فاتورة يسجل التحصيل كإيراد جديد: فيُحسب إيراد الفاتورة مرتين ويظل العميل مديناً.
 
 ## 6. عند التسليم تُحصّل المحتجزات
 نموذج **تحصيل محتجزات العميل**:
