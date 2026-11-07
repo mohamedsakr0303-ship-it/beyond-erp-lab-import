@@ -10,12 +10,15 @@
 # Each signature is timestamped, so files stay valid after the certificate itself expires.
 param([Parameter(Mandatory = $true)][string]$File)
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"   # Windows PowerShell's progress bar slows downloads to a crawl
 
 $File = (Resolve-Path $File).Path
 $tmp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
 $timestamp = "http://timestamp.digicert.com"
 $pfx = $env:SIGN_PFX_BASE64
-$es = $env:ES_USERNAME -and $env:ES_PASSWORD -and $env:ES_CREDENTIAL_ID -and $env:ES_TOTP_SECRET
+$esKeys = "ES_USERNAME", "ES_PASSWORD", "ES_CREDENTIAL_ID", "ES_TOTP_SECRET"
+$esMissing = @($esKeys | Where-Object { -not [Environment]::GetEnvironmentVariable($_) })
+$es = $esMissing.Count -eq 0
 
 function SignTool {
   $found = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
@@ -25,6 +28,9 @@ function SignTool {
 }
 
 if (-not $pfx -and -not $es) {
+  # some of eSigner's secrets but not all: a mistake in the setup, not "no certificate", so the build stops here
+  # rather than publishing unsigned files as if they were signed
+  if ($esMissing.Count -lt $esKeys.Count) { throw "SSL.com eSigner is only partly set up; missing secrets: $($esMissing -join ', ')" }
   Write-Host "::notice::Not signed (no code-signing certificate set up): $File"
   exit 0
 }
@@ -33,7 +39,8 @@ if ($pfx) {
   $cert = Join-Path $tmp ("beyonderp-sign-" + [guid]::NewGuid().ToString("N") + ".pfx")
   try {
     [IO.File]::WriteAllBytes($cert, [Convert]::FromBase64String($pfx))
-    & (SignTool) sign /f $cert /p $env:SIGN_PFX_PASSWORD /fd sha256 /tr $timestamp /td sha256 /d "BeyondERP" /du "https://mybeyonderp.com/" $File
+    $pass = if ($env:SIGN_PFX_PASSWORD) { @("/p", $env:SIGN_PFX_PASSWORD) } else { @() }   # a .pfx may have no password
+    & (SignTool) sign /f $cert @pass /fd sha256 /tr $timestamp /td sha256 /d "BeyondERP" /du "https://mybeyonderp.com/" $File
     if ($LASTEXITCODE -ne 0) { throw "signtool could not sign $File" }
   } finally {
     Remove-Item $cert -Force -ErrorAction SilentlyContinue
@@ -44,25 +51,32 @@ if ($pfx) {
   $bat = Get-ChildItem $home_ -Recurse -Filter CodeSignTool.bat -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $bat) {
     New-Item -ItemType Directory -Force $home_ | Out-Null
-    Invoke-WebRequest "https://ssl.com/download/codesigntool-for-windows/" -OutFile (Join-Path $home_ "cst.zip")
+    Invoke-WebRequest "https://ssl.com/download/codesigntool-for-windows/" -OutFile (Join-Path $home_ "cst.zip") -UseBasicParsing
     Expand-Archive (Join-Path $home_ "cst.zip") -DestinationPath $home_ -Force
     $bat = Get-ChildItem $home_ -Recurse -Filter CodeSignTool.bat | Select-Object -First 1
     if (-not $bat) { throw "CodeSignTool was not in SSL.com's download" }
   }
   $out = Join-Path $tmp ("signed-" + [guid]::NewGuid().ToString("N"))
   New-Item -ItemType Directory -Force $out | Out-Null
+  # CodeSignTool goes by the file's extension; Inno Setup hands over its uninstaller as a temporary file (uninst.e32.tmp)
+  $work = $File
+  if ([IO.Path]::GetExtension($File).ToLower() -notin ".exe", ".dll", ".msi") {
+    $work = Join-Path $tmp ("unsigned-" + [guid]::NewGuid().ToString("N") + ".exe")
+    Copy-Item $File $work -Force
+  }
   Push-Location $bat.DirectoryName
   try {
     & $bat.FullName sign "-credential_id=$($env:ES_CREDENTIAL_ID)" "-username=$($env:ES_USERNAME)" "-password=$($env:ES_PASSWORD)" `
-      "-totp_secret=$($env:ES_TOTP_SECRET)" "-input_file_path=$File" "-output_dir_path=$out"
+      "-totp_secret=$($env:ES_TOTP_SECRET)" "-input_file_path=$work" "-output_dir_path=$out"
     if ($LASTEXITCODE -ne 0) { throw "CodeSignTool could not sign $File" }
   } finally {
     Pop-Location
   }
-  $signed = Join-Path $out (Split-Path $File -Leaf)
+  $signed = Join-Path $out (Split-Path $work -Leaf)
   if (-not (Test-Path $signed)) { throw "CodeSignTool did not write the signed $File" }
   Move-Item $signed $File -Force
   Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
+  if ($work -ne $File) { Remove-Item $work -Force -ErrorAction SilentlyContinue }
 }
 
 # the signature must check out with Windows' own rules before the file is published

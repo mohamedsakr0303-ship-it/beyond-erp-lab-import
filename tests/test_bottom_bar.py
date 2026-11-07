@@ -30,6 +30,8 @@ class GlowCapsule(unittest.TestCase):
                 self.assertIn('setProperty("--pi", prev)', sync)
                 self.assertIn('"bb-leave"', sync)
                 self.assertIn('"bb-rise"', sync)
+                # cleared once faded, so showing the bar again (another style, a rotated tablet) does not replay it
+                self.assertIn('bar._leaveT = setTimeout(() => bar.classList.toggle("bb-leave", false), 450)', sync)
                 # the marker is placed by index (--bi), never slid across the bar
                 self.assertNotIn("transition", sync)
 
@@ -60,6 +62,30 @@ class GlowCapsule(unittest.TestCase):
                 self.assertIn("overflow:hidden", cap)          # its sheen and foot light stay inside it
                 self.assertIn("var(--dock-hl,", style)
                 self.assertNotIn(".dock-wave", style)
+                self.assertNotIn("[dir=rtl] html", style)               # html is the root: such a selector never matches
+
+    def test_the_themes_bar_colour_keeps_its_labels_readable(self):
+        js, css = read("erp/static/app.js"), read("erp/static/app.css")
+        theme = re.search(r"function applyTheme\(th\) \{(.*?)\n\}", js, re.S).group(1)
+        # the label colour is picked for the bar colour, and the glass shows that colour nearly solid behind it
+        self.assertIn('de.dataset.dockbar = "custom"', theme)
+        self.assertIn('st.setProperty("--dock-a", "90%")', theme)
+        self.assertIn('"--dock-a"].forEach(v => st.removeProperty(v))', theme)
+        self.assertIn('"tint", "dockbar"].forEach(k => { delete de.dataset[k]; })', theme)
+        self.assertIn("var(--dock-bg,var(--panel)) var(--dock-a,58%),transparent)", css)
+        # the classic bar (phones too) takes it and its labels follow; the liquid drop paints its own warm bar instead
+        self.assertIn("background:color-mix(in srgb,var(--dock-bg,var(--panel)) 92%,transparent)", css)
+        self.assertIn("html.dock-classic[data-dockbar] .bottombar>a:not(.on)", css)
+        self.assertIn("html.dock-classic .bottombar>.on{color:var(--dock-hl,var(--brand))}", css)
+        self.assertIn("html.dock-classic[data-dockbar] .bottombar>.on{color:color-mix(in srgb,var(--dock-hl,var(--brand)) 55%,var(--dock-ink))}", css)
+        self.assertNotIn("html.dock-liquid[data-dockbar]", css)
+        self.assertIn(".dock-liquid .bb-bg::before{content:\"\";position:absolute;inset:0;border-radius:26px;background:var(--warm)}", css)
+
+    def test_every_console_highlight_preset_shows_on_light_glass(self):
+        presets = re.search(r"const DOCK_COLORS = \[(.*?)\];", read("web-src/owner.js")).group(1)
+        for c in re.findall(r'"#([0-9a-f]{6})"', presets):
+            r, g, b = (int(c[i:i + 2], 16) for i in (0, 2, 4))
+            self.assertLess(0.2126 * r + 0.7152 * g + 0.0722 * b, 200, c)  # not near white
 
     def test_less_motion_means_no_animation_and_no_second_capsule(self):
         for app, (_js, css) in APPS.items():

@@ -32,7 +32,13 @@ GitHub → the repository → Settings → Secrets and variables → Actions →
 | A `.pfx` file | `SIGN_PFX_BASE64` (the file as base64: `base64 -w0 company.pfx` or `[Convert]::ToBase64String([IO.File]::ReadAllBytes("company.pfx"))`) and `SIGN_PFX_PASSWORD` |
 
 Then run the desktop build (Actions → deploy → Run workflow). Its log says *Signed:* for each file; right-click a
-downloaded installer → Properties → Digital Signatures shows BEYONDERP.
+downloaded installer → Properties → Digital Signatures shows BEYONDERP. If only some of eSigner's four secrets are set,
+the build stops and names the missing ones, rather than publishing unsigned installers.
 
-The secrets are only readable by the build. Anyone who can change the workflow on `main` could sign with them, so keep
-write access to the repository to the people who need it.
+Every desktop build also runs a *Signing steps check* on Windows, with no certificate: it shows that `sign.ps1` works
+and that Inno Setup hands it the files to sign, so the first build with a real certificate is not the first time those
+steps run. It never holds back the installers.
+
+The secrets are only readable by the two build steps that sign (no package installs or builds run in them). Anyone who
+can change the workflow on `main` could sign with them, so keep write access to the repository to the people who need
+it.

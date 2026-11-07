@@ -152,15 +152,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write   # publishes the installers on the "desktop-app" release
-    # BEYONDERP's code-signing certificate (packaging/sign.ps1): a .pfx file, or SSL.com eSigner in the cloud. With
-    # neither set, the Windows programs and installers are built unsigned, as before.
-    env:
-      SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
-      SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
-      ES_USERNAME: ${{ secrets.ES_USERNAME }}
-      ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
-      ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
-      ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -178,20 +169,55 @@ jobs:
           echo "$SITE" > packaging/site_url.txt
           if [ -n "$URL" ] && [ -n "$KEY" ]; then printf '{"url": "%s", "key": "%s"}' "$URL" "$KEY" > erp/workspace_preset.json; fi
       - run: pyinstaller packaging/online.spec --noconfirm --distpath dist-online --workpath build-online
-      - name: Windows installers
+      - name: Inno Setup (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+      # the signing steps on Windows itself, with no certificate: packaging/sign.ps1 parses, says "not signed", stops on a
+      # half-set-up eSigner, and Inno Setup hands it the file to sign as the installers do (a throwaway setup, not published)
+      - name: Signing steps check (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          $signer = "$pwd\packaging\sign.ps1"
+          $e = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($signer, [ref]$null, [ref]$e)
+          if ($e) { $e | ForEach-Object { Write-Host "::error::sign.ps1: $($_.Message)" }; exit 1 }
+          & powershell -NoProfile -ExecutionPolicy Bypass -File $signer dist-online\BeyondERP.exe
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::sign.ps1 failed without a certificate"; exit 1 }
+          $env:ES_USERNAME = "check"
+          & powershell -NoProfile -ExecutionPolicy Bypass -File $signer dist-online\BeyondERP.exe
+          $partial = $LASTEXITCODE
+          $env:ES_USERNAME = ""
+          if ($partial -eq 0) { Write-Host "::error::sign.ps1 did not stop on a half-set-up eSigner"; exit 1 }
+          & $iscc "/O$env:RUNNER_TEMP\signcheck" ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f') packaging\signcheck.iss
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::Inno Setup could not run the sign tool command"; exit 1 }
+          Write-Host "Signing steps check passed"
+      - name: Windows installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # BEYONDERP's code-signing certificate (packaging/sign.ps1): a .pfx file, or SSL.com eSigner in the cloud. Only
+        # the steps that sign see it (no package installs or builds run here). With none set: built unsigned, as before.
+        env:
+          SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
+          SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
           $v = (Select-String -Path erp/__init__.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
           # signed when a certificate is set up: the program first, then the installer and its uninstaller (by Inno Setup)
           $signer = "$pwd\packaging\sign.ps1"
           $sign = @()
-          if ($env:SIGN_PFX_BASE64 -or $env:ES_USERNAME) {
+          if ("$env:SIGN_PFX_BASE64$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {
             & powershell -NoProfile -ExecutionPolicy Bypass -File $signer dist-online\BeyondERP.exe
             if ($LASTEXITCODE -ne 0) { exit 1 }
-            $sign = @("/DSign", ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File "' + $signer + '" $f'))
+            $sign = @("/DSign", ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f'))
           }
           & $iscc "/DAppVersion=$v" /DOnline @sign packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -200,22 +226,37 @@ jobs:
       # (BeyondERP-Signer-Setup.exe: Start menu, start with Windows, uninstaller). A problem here never holds back the
       # ERP's own installers, which are published either way.
       - name: BeyondERP Signer (Windows)
+        id: signer_app
         if: runner.os == 'Windows'
         continue-on-error: true
         shell: pwsh
         run: |
           pip install -r signer/requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           pyinstaller packaging/signer.spec --noconfirm --distpath dist-signer --workpath build-signer
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: BeyondERP Signer installer (Windows)
+        if: runner.os == 'Windows' && steps.signer_app.outcome == 'success'
+        continue-on-error: true
+        shell: pwsh
+        # BEYONDERP's code-signing certificate (packaging/sign.ps1): a .pfx file, or SSL.com eSigner in the cloud. Only
+        # the steps that sign see it (no package installs or builds run here). With none set: built unsigned, as before.
+        env:
+          SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
+          SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
           $v = (Select-String -Path signer/beyond_signer.py -Pattern '^VERSION = "([^"]+)"').Matches[0].Groups[1].Value
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           $signer = "$pwd\packaging\sign.ps1"
           $sign = @()
-          if ($env:SIGN_PFX_BASE64 -or $env:ES_USERNAME) {
+          if ("$env:SIGN_PFX_BASE64$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {
             & powershell -NoProfile -ExecutionPolicy Bypass -File $signer "dist-signer\BeyondERP-Signer\BeyondERP-Signer.exe"
             if ($LASTEXITCODE -ne 0) { exit 1 }
-            $sign = @("/DSign", ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File "' + $signer + '" $f'))
+            $sign = @("/DSign", ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f'))
           }
           & $iscc "/DAppVersion=$v" @sign packaging\signer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }

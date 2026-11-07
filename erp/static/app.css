@@ -459,7 +459,7 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
   .bell .dd-menu{position:fixed;inset-inline:10px;bottom:calc(76px + env(safe-area-inset-bottom));top:auto;min-width:0}
   .content{padding:14px 12px calc(96px + env(safe-area-inset-bottom))}
   .bottombar{display:flex;position:fixed;z-index:40;inset-inline:10px;bottom:calc(10px + env(safe-area-inset-bottom));height:64px;align-items:center;justify-content:space-around;
-    background:color-mix(in srgb,var(--panel) 92%,transparent);backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow-lg)}
+    background:color-mix(in srgb,var(--dock-bg,var(--panel)) 92%,transparent);backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow-lg)}
   .bottombar>a,.bottombar>button{all:unset;position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.66em;font-weight:700;color:var(--muted);padding:6px 10px;border-radius:12px;cursor:pointer}
   .bottombar>a.on{color:var(--brand)}
   .bottombar .badge{top:0;inset-inline-end:6px}
@@ -2129,14 +2129,14 @@ html:not(.dock-classic) .bottombar,html.dock-all.dock-classic .bottombar{grid-te
 html.dock-all.dock-classic .bottombar .bb-bg{display:block;background:var(--dock-bg,var(--panel));border:1px solid var(--line);box-shadow:var(--shadow-lg)}
 html:not(.dock-classic) .bb-bg{display:block}
 .bb-bg{position:absolute;inset:0;border-radius:inherit;z-index:0;pointer-events:none;
-  background:color-mix(in srgb,var(--dock-bg,var(--panel)) 58%,transparent);backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
+  background:color-mix(in srgb,var(--dock-bg,var(--panel)) var(--dock-a,58%),transparent);backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
   border:1px solid color-mix(in srgb,#fff 24%,transparent);
   box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 40%,transparent),inset 0 -1px 0 color-mix(in srgb,#000 14%,transparent),0 14px 36px rgba(0,0,0,.28)}
 .bb-drop{display:none}
 html:not(.dock-classic) .bb-ind{display:block;position:absolute;top:0;bottom:0;left:6px;width:calc((100% - 12px) / 5);z-index:1;pointer-events:none;
   transform:translateX(calc(var(--bi,0) * 100%));transition:opacity .2s}
 .bottombar.bb-rise .bb-ind i,.bottombar.bb-rise .bb-ind::before,.bottombar.bb-rise .bb-ind::after{animation:bbRise .36s var(--ease) both}
-[dir=rtl] html:not(.dock-classic) .bb-ind,html[dir=rtl]:not(.dock-classic) .bb-ind{left:auto;right:6px;transform:translateX(calc(var(--bi,0) * -100%))}
+html[dir=rtl]:not(.dock-classic) .bb-ind{left:auto;right:6px;transform:translateX(calc(var(--bi,0) * -100%))}
 .bottombar.bb-none .bb-ind{opacity:0}
 html:not(.dock-classic) .bottombar>a,html:not(.dock-classic) .bottombar>button,html:not(.dock-classic) .bb-new{position:relative;z-index:2}
 html:not(.dock-classic) .bottombar>a svg.i,html:not(.dock-classic) .bottombar>button svg.i,html:not(.dock-classic) .bb-new>.btn svg.i{width:22px;height:22px;transition:transform .36s var(--ease),color .25s}
@@ -2148,6 +2148,11 @@ html.dock-classic .bb-new>.btn span{display:none}
 html:not(.dock-classic) .bottombar :focus-visible{outline:2px solid var(--glow);outline-offset:2px}
 html:not(.dock-classic):not(.dock-liquid) .bottombar>a,html:not(.dock-classic):not(.dock-liquid) .bottombar>button,html:not(.dock-classic):not(.dock-liquid) .bb-new>.btn{color:var(--dock-muted,var(--muted))}
 html:not(.dock-classic):not(.dock-liquid) .bottombar>.on,html:not(.dock-classic):not(.dock-liquid) .bb-new.on>.btn{color:var(--dock-ink,var(--ink))}
+/* the theme's own bar colour (html[data-dockbar]) under the classic bar: labels readable on it (the liquid drop keeps
+   its own warm bar and dark labels) */
+html.dock-classic[data-dockbar] .bottombar>a:not(.on),html.dock-classic[data-dockbar] .bottombar>button:not(.on){color:var(--dock-muted)}
+html.dock-classic .bottombar>.on{color:var(--dock-hl,var(--brand))}
+html.dock-classic[data-dockbar] .bottombar>.on{color:color-mix(in srgb,var(--dock-hl,var(--brand)) 55%,var(--dock-ink))}
 
 /* glow capsule (the default): the tab in use sits in a lit glass capsule inside the bar, nothing reaches past its edge.
    A new tab's capsule rises in with a small overshoot, a sheen passes over it once and its foot lights up; the tab left
@@ -2176,7 +2181,7 @@ html.dock-halo:not(.dock-classic) .bottombar>.on{color:color-mix(in srgb,var(--g
 /* the tab left behind: a copy of the capsule over it, sinking away */
 html.dock-halo .bb-ghost{display:block;position:absolute;top:0;bottom:0;left:6px;width:calc((100% - 12px) / 5);z-index:1;pointer-events:none;
   transform:translateX(calc(var(--pi,0) * 100%));opacity:0}
-html[dir=rtl].dock-halo .bb-ghost,[dir=rtl] html.dock-halo .bb-ghost{left:auto;right:6px;transform:translateX(calc(var(--pi,0) * -100%))}
+html[dir=rtl].dock-halo .bb-ghost{left:auto;right:6px;transform:translateX(calc(var(--pi,0) * -100%))}
 html.dock-halo .bottombar.bb-leave .bb-ghost{opacity:1}
 html.dock-halo .bottombar.bb-leave .bb-ghost i{animation:bbOut .34s ease-in both}
 /* a touch: light from under the finger, inside the button, then the icon dips and springs back */

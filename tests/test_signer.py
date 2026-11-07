@@ -444,16 +444,52 @@ class Packaging(unittest.TestCase):
         for k in ("SIGN_PFX_BASE64", "SIGN_PFX_PASSWORD", "ES_USERNAME", "ES_PASSWORD", "ES_CREDENTIAL_ID", "ES_TOTP_SECRET"):
             self.assertIn(f"{k}: ${{{{ secrets.{k} }}}}", wf)                          # from the repository's secrets only
             self.assertIn(k, sign)
-        self.assertEqual(wf.count('if ($env:SIGN_PFX_BASE64 -or $env:ES_USERNAME) {'), 2)  # the ERP app and the Signer
+        # any certificate secret switches signing on (a half-set-up one then stops the build instead of going unsigned)
+        on = 'if ("$env:SIGN_PFX_BASE64$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {'
+        self.assertEqual(wf.count(on), 2)                                                   # the ERP app and the Signer
         self.assertIn("dist-online\\BeyondERP.exe", wf)                                    # each program before its installer
         self.assertIn("dist-signer\\BeyondERP-Signer\\BeyondERP-Signer.exe", wf)
+        # ISCC does not take \" inside an argument: Inno Setup's $q is the quote, $f the file to sign
+        tool = "'/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f'"
+        self.assertEqual(wf.count(tool), 3)                                                 # the two installers and the check
+        self.assertNotIn("""-File "' + $signer""", wf)
         for iss in ("packaging/installer.iss", "packaging/signer.iss"):
             body = self.read(iss)
             self.assertIn("#ifdef Sign\n", body)
             self.assertIn("SignTool=beyond\nSignedUninstaller=yes\n#endif", body)        # the installer and its uninstaller
         self.assertIn("exit 0", sign)                                                       # no certificate: left unsigned, no failure
+        self.assertIn('throw "SSL.com eSigner is only partly set up', sign)                 # part of one: the build stops
         self.assertIn("/tr $timestamp /td sha256", sign)                                    # timestamped
         self.assertIn("verify /pa", sign)                                                   # checked with Windows' own rules
+        self.assertIn('@("/p", $env:SIGN_PFX_PASSWORD)', sign)                             # a .pfx without a password works
+        self.assertIn("-UseBasicParsing", sign)                                             # Windows PowerShell 5.1 can download
+        self.assertIn('-notin ".exe", ".dll", ".msi"', sign)                                # Inno's uninst.e32.tmp, for CodeSignTool
+
+    def test_only_the_steps_that_sign_see_the_certificate(self):
+        import re
+        wf = self.read(".github/workflows/deploy.yml")
+        job = wf[wf.index("\n  desktop:\n"):wf.index("\n  web:\n")]
+        head, _, body = job.partition("\n    steps:\n")
+        self.assertNotIn("\n    env:\n", head)                                             # not the whole job (pip, PyInstaller, macOS)
+        steps = {}
+        for block in re.split(r"\n      - ", "\n" + body)[1:]:
+            m = re.match(r"name: (.+)", block)
+            steps[m.group(1).strip() if m else block.splitlines()[0]] = block
+        with_secrets = sorted(n for n, b in steps.items() if "secrets.SIGN_PFX_BASE64" in b)
+        self.assertEqual(with_secrets, ["BeyondERP Signer installer (Windows)", "Windows installers"])
+        for n in with_secrets:
+            self.assertNotIn("pip install", steps[n])
+            self.assertNotIn("pyinstaller", steps[n])
+            self.assertNotIn("choco install", steps[n])
+        self.assertIn("if: runner.os == 'Windows' && steps.signer_app.outcome == 'success'", steps["BeyondERP Signer installer (Windows)"])
+        self.assertIn("id: signer_app", steps["BeyondERP Signer (Windows)"])
+        # a canary on the real Windows runner, with no certificate, that never holds back the installers
+        check = steps["Signing steps check (Windows)"]
+        self.assertIn("continue-on-error: true", check)
+        self.assertNotIn("secrets.", check)
+        self.assertIn("packaging\\signcheck.iss", check)
+        self.assertIn("SignTool=beyond", self.read("packaging/signcheck.iss"))
+        self.assertIn("Uninstallable=no", self.read("packaging/signcheck.iss"))
 
     def test_the_erp_links_to_the_published_signer_and_shows_no_address(self):
         js = self.read("erp/static/app.js")

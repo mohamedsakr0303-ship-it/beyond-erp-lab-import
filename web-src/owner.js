@@ -323,7 +323,7 @@ const dockPref = () => { const d = LS("berp.console.dock", {}) || {};
   return { style: DOCKS().some(x => x[0] === d.style) ? d.style : "halo", where: d.where === "all" ? "all" : "phone",
     color: /^#[0-9a-f]{6}$/i.test(d.color || "") ? d.color : "" }; };
 // the bottom bar's highlight: the console's main colour, or one chosen for it
-const DOCK_COLORS = ["#6c5cff", "#3b82f6", "#14b8a6", "#22c55e", "#f59e0b", "#f43f5e", "#e879f9", "#e2e8f0"];
+const DOCK_COLORS = ["#6c5cff", "#3b82f6", "#14b8a6", "#22c55e", "#f59e0b", "#f43f5e", "#e879f9", "#0ea5e9"];
 function applyDock() {
   const d = dockPref(), h = document.documentElement;
   DOCKS().forEach(([k]) => h.classList.toggle("dock-" + k, k === d.style));
@@ -346,7 +346,8 @@ function dockSync() {
     const prev = bar.dataset.cur || "";
     bar.dataset.cur = cur;
     // the tab left behind sinks away where it was (glow capsule), while the new one rises in
-    if (prev) { bar.style.setProperty("--pi", prev); bar.classList.toggle("bb-leave", false); void bar.offsetWidth; bar.classList.toggle("bb-leave", true); }
+    if (prev) { bar.style.setProperty("--pi", prev); bar.classList.toggle("bb-leave", false); void bar.offsetWidth; bar.classList.toggle("bb-leave", true);
+      clearTimeout(bar._leaveT); bar._leaveT = setTimeout(() => bar.classList.toggle("bb-leave", false), 450); }
     if (on) { bar.classList.toggle("bb-rise", false); void bar.offsetWidth; bar.classList.toggle("bb-rise", true); }
   }
 }

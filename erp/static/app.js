@@ -429,8 +429,8 @@ function activeTheme() { return lookVal("theme") || null; }
 function applyTheme(th) {
   const de = document.documentElement, st = de.style;
   ["--sb-bg", "--sb-ink", "--nav-bg", "--nav-ink", "--top-bg", "--top-ink", "--menu-c", "--btn-bg", "--btn-ink", "--btn2-bg", "--btn2-ink", "--page-ink", "--card-bg", "--card-ink", "--bg", "--ink", "--muted", "--panel", "--sheet", "--input", "--line", "--chip", "--hover", "--surf-ink",
-    "--dock-hl", "--dock-bg", "--dock-ink", "--dock-muted"].forEach(v => st.removeProperty(v));
-  ["nav", "top", "menu", "btn", "btn2", "page", "card", "text", "surf", "tint"].forEach(k => { delete de.dataset[k]; });
+    "--dock-hl", "--dock-bg", "--dock-ink", "--dock-muted", "--dock-a"].forEach(v => st.removeProperty(v));
+  ["nav", "top", "menu", "btn", "btn2", "page", "card", "text", "surf", "tint", "dockbar"].forEach(k => { delete de.dataset[k]; });
   if (!th) return;
   // the ☀/☾ button flipped to the other mode than the theme was made for: its backgrounds step aside (or a dark
   // theme stays dark in "light"), its accents stay
@@ -439,8 +439,8 @@ function applyTheme(th) {
   if (hexOk(th.primary)) { st.setProperty("--brand", th.primary); st.setProperty("--accent", th.primary); }
   // the bottom bar: its highlight (the tab in use), and the bar's own colour with text that stays readable on it
   if (hexOk(th.dock)) st.setProperty("--dock-hl", th.dock);
-  if (hexOk(th.dockbar)) { const ink = inkOn(th.dockbar); st.setProperty("--dock-bg", th.dockbar); st.setProperty("--dock-ink", ink);
-    st.setProperty("--dock-muted", `color-mix(in srgb, ${ink} 62%, transparent)`); }
+  if (hexOk(th.dockbar)) { const ink = inkOn(th.dockbar); de.dataset.dockbar = "custom"; st.setProperty("--dock-bg", th.dockbar); st.setProperty("--dock-ink", ink);
+    st.setProperty("--dock-muted", `color-mix(in srgb, ${ink} 70%, transparent)`); st.setProperty("--dock-a", "90%"); }
   if (hexOk(th.sidebar)) { de.dataset.sidebar = "custom"; st.setProperty("--sb-bg", th.sidebar); st.setProperty("--sb-ink", inkOn(th.sidebar)); }
   if (hexOk(th.nav)) { de.dataset.nav = "custom"; st.setProperty("--nav-bg", th.nav); st.setProperty("--nav-ink", inkOn(th.nav)); }
   if (hexOk(th.header)) { de.dataset.top = "custom"; st.setProperty("--top-bg", th.header); st.setProperty("--top-ink", inkOn(th.header)); }
@@ -1395,7 +1395,8 @@ function dockSync() {
     const prev = bar.dataset.cur || "";
     bar.dataset.cur = cur;
     // the tab left behind sinks away where it was (glow capsule), while the new one rises in
-    if (prev) { bar.style.setProperty("--pi", prev); bar.classList.toggle("bb-leave", false); void bar.offsetWidth; bar.classList.toggle("bb-leave", true); }
+    if (prev) { bar.style.setProperty("--pi", prev); bar.classList.toggle("bb-leave", false); void bar.offsetWidth; bar.classList.toggle("bb-leave", true);
+      clearTimeout(bar._leaveT); bar._leaveT = setTimeout(() => bar.classList.toggle("bb-leave", false), 450); }
     if (on) { bar.classList.toggle("bb-rise", false); void bar.offsetWidth; bar.classList.toggle("bb-rise", true); }
   }
 }

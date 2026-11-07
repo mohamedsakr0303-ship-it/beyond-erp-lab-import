@@ -274,7 +274,7 @@ html:not(.dock-classic) .bb-bg{display:block}
 html:not(.dock-classic) .bb-ind{display:block;position:absolute;top:0;bottom:0;left:6px;width:calc((100% - 12px) / var(--n,5));z-index:1;pointer-events:none;
   transform:translateX(calc(var(--bi,0) * 100%));transition:opacity .2s}
 .bottombar.bb-rise .bb-ind i,.bottombar.bb-rise .bb-ind::before,.bottombar.bb-rise .bb-ind::after{animation:bbRise .36s var(--ease) both}
-[dir=rtl] html:not(.dock-classic) .bb-ind,html[dir=rtl]:not(.dock-classic) .bb-ind{left:auto;right:6px;transform:translateX(calc(var(--bi,0) * -100%))}
+html[dir=rtl]:not(.dock-classic) .bb-ind{left:auto;right:6px;transform:translateX(calc(var(--bi,0) * -100%))}
 .bottombar.bb-none .bb-ind{opacity:0}
 html:not(.dock-classic) .bottombar>a,html:not(.dock-classic) .bottombar>button,html:not(.dock-classic) .bb-new{position:relative;z-index:2}
 /* the New button sits in line with the others (the classic bar keeps its raised square) */
@@ -309,7 +309,7 @@ html.dock-halo:not(.dock-classic) .bottombar>.on{color:color-mix(in srgb,var(--g
 /* the tab left behind: a copy of the capsule over it, sinking away */
 html.dock-halo .bb-ghost{display:block;position:absolute;top:0;bottom:0;left:6px;width:calc((100% - 12px) / 5);z-index:1;pointer-events:none;
   transform:translateX(calc(var(--pi,0) * 100%));opacity:0}
-html[dir=rtl].dock-halo .bb-ghost,[dir=rtl] html.dock-halo .bb-ghost{left:auto;right:6px;transform:translateX(calc(var(--pi,0) * -100%))}
+html[dir=rtl].dock-halo .bb-ghost{left:auto;right:6px;transform:translateX(calc(var(--pi,0) * -100%))}
 html.dock-halo .bottombar.bb-leave .bb-ghost{opacity:1}
 html.dock-halo .bottombar.bb-leave .bb-ghost i{animation:bbOut .34s ease-in both}
 /* a touch: light from under the finger, inside the button, then the icon dips and springs back */
