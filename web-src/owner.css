@@ -282,18 +282,42 @@ html:not(.dock-classic) .bottombar :focus-visible{outline:2px solid var(--glow);
 html:not(.dock-classic):not(.dock-liquid) .bottombar>a,html:not(.dock-classic):not(.dock-liquid) .bottombar>button,html:not(.dock-classic):not(.dock-liquid) .bb-new>.btn{color:var(--dock-muted,var(--muted))}
 html:not(.dock-classic):not(.dock-liquid) .bottombar>.on,html:not(.dock-classic):not(.dock-liquid) .bb-new.on>.btn{color:var(--dock-ink,var(--ink))}
 
-/* glow capsule (the default): the tab in use sits in a softly lit capsule inside the bar, nothing reaches past its edge.
-   A new tab's capsule lights up and pops in; every button dips a little under the finger and springs back. */
-@keyframes bbPop{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.06);opacity:1}100%{transform:none;opacity:1}}
-@keyframes bbLit{0%{filter:brightness(1.55) saturate(1.2)}100%{filter:none}}
-@keyframes bbIcon{0%{transform:none}38%{transform:scale(1.2) translateY(-1px)}100%{transform:none}}
-.dock-halo .bb-ind i{position:absolute;left:8%;right:8%;top:7px;bottom:7px;border-radius:18px;
-  background:radial-gradient(120% 150% at 50% 0%,color-mix(in srgb,var(--glow) 36%,transparent),color-mix(in srgb,var(--glow) 13%,transparent) 72%);
-  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--glow) 42%,transparent),inset 0 1px 0 color-mix(in srgb,#fff 28%,transparent),
-    0 3px 10px -6px color-mix(in srgb,var(--glow) 70%,transparent)}
-.dock-halo .bottombar.bb-rise .bb-ind i{animation:bbPop .44s var(--ease) both,bbLit .8s ease-out both}
-.dock-halo .bottombar.bb-rise>.on svg.i,.dock-halo .bottombar.bb-rise .bb-new.on>.btn svg.i{animation:bbIcon .44s var(--ease)}
+/* glow capsule (the default): the tab in use sits in a lit glass capsule inside the bar, nothing reaches past its edge.
+   A new tab's capsule rises in with a small overshoot, a sheen passes over it once and its foot lights up; the tab left
+   behind sinks away where it is (nothing slides sideways); a touch sends a soft burst of light from under the finger. */
+@keyframes bbIn{0%{opacity:0;transform:translateY(7px) scale(.72)}55%{opacity:1;transform:translateY(-1px) scale(1.05)}100%{opacity:1;transform:none}}
+@keyframes bbOut{0%{opacity:1;transform:none}100%{opacity:0;transform:translateY(4px) scale(.8)}}
+@keyframes bbSheen{0%{opacity:0;transform:translateX(-140%) skewX(-20deg)}30%{opacity:1}100%{opacity:0;transform:translateX(260%) skewX(-20deg)}}
+@keyframes bbFoot{0%{opacity:0;transform:scaleX(.2)}60%{opacity:1;transform:scaleX(1.15)}100%{opacity:.9;transform:none}}
+@keyframes bbIcon{0%{transform:none}40%{transform:translateY(-3px) scale(1.18)}72%{transform:translateY(0) scale(.96)}100%{transform:none}}
+@keyframes bbTap{0%{opacity:0;transform:scale(.4)}25%{opacity:1}100%{opacity:0;transform:scale(1.25)}}
+.bb-ghost{display:none}
+.dock-halo .bb-ind i,.dock-halo .bb-ghost i{position:absolute;left:8%;right:8%;top:7px;bottom:7px;border-radius:18px;overflow:hidden;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--glow) 32%,transparent),color-mix(in srgb,var(--glow) 11%,transparent) 78%);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--glow) 42%,transparent),inset 0 1px 0 color-mix(in srgb,#fff 34%,transparent),
+    inset 0 -14px 18px -14px color-mix(in srgb,var(--glow) 85%,transparent),0 4px 12px -8px color-mix(in srgb,var(--glow) 75%,transparent)}
+.dock-halo .bb-ind i::before{content:"";position:absolute;left:32%;right:32%;bottom:4px;height:2px;border-radius:2px;background:var(--glow);
+  box-shadow:0 0 6px var(--glow),0 0 14px color-mix(in srgb,var(--glow) 60%,transparent);opacity:.9}
+.dock-halo .bb-ind i::after{content:"";position:absolute;top:-10%;bottom:-10%;left:0;width:42%;opacity:0;
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,#fff 32%,transparent),transparent)}
+.dock-halo .bottombar.bb-rise .bb-ind i{animation:bbIn .5s var(--ease) both}
+.dock-halo .bottombar.bb-rise .bb-ind i::before{animation:bbFoot .6s .1s var(--ease) both}
+.dock-halo .bottombar.bb-rise .bb-ind i::after{animation:bbSheen .95s .14s ease-out both}
+.dock-halo .bottombar.bb-rise>.on svg.i,.dock-halo .bottombar.bb-rise .bb-new.on>.btn svg.i{animation:bbIcon .52s var(--ease)}
+.dock-halo .bottombar>.on svg.i,.dock-halo .bb-new.on>.btn svg.i{filter:drop-shadow(0 2px 6px color-mix(in srgb,var(--glow) 55%,transparent))}
 html.dock-halo:not(.dock-classic) .bottombar>.on{color:color-mix(in srgb,var(--glow) 45%,var(--dock-ink,var(--ink)))}
+/* the tab left behind: a copy of the capsule over it, sinking away */
+html.dock-halo .bb-ghost{display:block;position:absolute;top:0;bottom:0;left:6px;width:calc((100% - 12px) / 5);z-index:1;pointer-events:none;
+  transform:translateX(calc(var(--pi,0) * 100%));opacity:0}
+html[dir=rtl].dock-halo .bb-ghost,[dir=rtl] html.dock-halo .bb-ghost{left:auto;right:6px;transform:translateX(calc(var(--pi,0) * -100%))}
+html.dock-halo .bottombar.bb-leave .bb-ghost{opacity:1}
+html.dock-halo .bottombar.bb-leave .bb-ghost i{animation:bbOut .34s ease-in both}
+/* a touch: light from under the finger, inside the button, then the icon dips and springs back */
+html:not(.dock-classic) .bb-new>.btn{position:relative}
+html:not(.dock-classic) .bottombar>a::after,html:not(.dock-classic) .bottombar>button::after,html:not(.dock-classic) .bb-new>.btn::after{
+  content:"";position:absolute;inset:3px;border-radius:15px;pointer-events:none;opacity:0;z-index:-1;
+  background:radial-gradient(circle 46px at var(--tx,50%) var(--ty,50%),color-mix(in srgb,var(--glow) 42%,transparent),transparent 70%)}
+html:not(.dock-classic) .bottombar .bb-tap::after{animation:bbTap .55s ease-out}
 html:not(.dock-classic) .bottombar>a:active svg.i,html:not(.dock-classic) .bottombar>button:active svg.i,
 html:not(.dock-classic) .bb-new>.btn:active svg.i{transform:scale(.84);transition-duration:.1s}
 .dock-halo .bottombar>a:active svg.i,.dock-halo .bottombar>button:active svg.i,.dock-halo .bb-new>.btn:active svg.i{color:var(--glow)}
@@ -321,7 +345,7 @@ html:not(.dock-classic) .bb-new>.btn:active svg.i{transform:scale(.84);transitio
 .dock-liquid .bottombar:not(.bb-none) .bb-drop{top:-30px}
 .dock-liquid .bb-ind{display:none!important}
 
-@media (prefers-reduced-motion:reduce){.dock-halo .bottombar svg.i,.bb-ind,.bb-ind i,.bb-ind::before,.bb-ind::after,.bb-drop,.bottombar svg.i,.dock-bubble .bb-bg{transition:none!important;animation:none!important}}
+@media (prefers-reduced-motion:reduce){html.dock-halo .bb-ghost{display:none!important}.bb-ghost i,.dock-halo .bb-ind i::before,.dock-halo .bb-ind i::after,.bottombar .bb-tap::after,.dock-halo .bottombar svg.i,.bb-ind,.bb-ind i,.bb-ind::before,.bb-ind::after,.bb-drop,.bottombar svg.i,.dock-bubble .bb-bg{transition:none!important;animation:none!important}}
 html:not(.dock-classic) .bottombar>a svg.i,html:not(.dock-classic) .bottombar>button svg.i{width:22px;height:22px;transition:transform .36s var(--ease),color .25s}
 html:not(.dock-classic) .bottombar>.on{color:var(--ink)}
 html:not(.dock-classic) .bottombar>.on svg.i{color:var(--glow)}

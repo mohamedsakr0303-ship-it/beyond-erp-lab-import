@@ -302,7 +302,7 @@ const DOCK_IC = { overview: DI('<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6
   queue: DI('<path d="M4 4h16v12H8l-4 4z"/><path d="M8 9h8M8 12h5"/>'), support: DI('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>'),
   customers: DI('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>'),
   alerts: DI('<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>'), menu: DI('<path d="M4 6h16M4 12h16M4 18h16"/>') };
-const DOCK_LAYERS = `<span class="bb-bg" aria-hidden="true"><b class="bb-drop"></b></span><span class="bb-ind" aria-hidden="true"><i></i></span>
+const DOCK_LAYERS = `<span class="bb-bg" aria-hidden="true"><b class="bb-drop"></b></span><span class="bb-ghost" aria-hidden="true"><i></i></span><span class="bb-ind" aria-hidden="true"><i></i></span>
   <svg class="bb-defs" width="0" height="0" aria-hidden="true" focusable="false"><filter id="bbgoo"><feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/>
   <feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -8" result="g"/><feComposite in="SourceGraphic" in2="g" operator="atop"/></filter></svg>`;
 const dockItems = () => {
@@ -343,7 +343,10 @@ function dockSync() {
   // a new tab: the marker is already there (placed while hidden) and rises into view once; the same tab again does nothing
   const cur = on ? String(on.dataset.bi) : "";
   if (cur !== (bar.dataset.cur || "")) {
+    const prev = bar.dataset.cur || "";
     bar.dataset.cur = cur;
+    // the tab left behind sinks away where it was (glow capsule), while the new one rises in
+    if (prev) { bar.style.setProperty("--pi", prev); bar.classList.toggle("bb-leave", false); void bar.offsetWidth; bar.classList.toggle("bb-leave", true); }
     if (on) { bar.classList.toggle("bb-rise", false); void bar.offsetWidth; bar.classList.toggle("bb-rise", true); }
   }
 }
@@ -356,7 +359,18 @@ const dockSelect = () => { const d = dockPref();
       <label class="dock-sw pick ${d.color && !DOCK_COLORS.includes(d.color.toLowerCase()) ? "on" : ""}" title="${esc(L("Any colour", "أي لون"))}"><input type="color" data-change="dockcolpick" value="${esc(d.color || "#6c5cff")}"></label></div></div></div>`; };
 document.addEventListener("click", () => { setTimeout(dockSync, 30); setTimeout(dockSync, 320); }, true);
 addEventListener("hashchange", () => setTimeout(dockSync, 40));
+addEventListener("keydown", e => { if (e.key === "Escape") setTimeout(dockSync, 40); });
 addEventListener("resize", () => dockSync());
+
+// a touch on the bottom bar: a burst of light from the point touched, inside that button
+document.addEventListener("pointerdown", e => {
+  const b = e.target && e.target.closest && e.target.closest(".bottombar>a, .bottombar>button, .bottombar .bb-new>.btn");
+  if (!b) return;
+  const r = b.getBoundingClientRect();
+  b.style.setProperty("--tx", Math.round(e.clientX - r.left - 3) + "px"); b.style.setProperty("--ty", Math.round(e.clientY - r.top - 3) + "px");
+  b.classList.toggle("bb-tap", false); void b.offsetWidth; b.classList.toggle("bb-tap", true);
+  clearTimeout(b._tapT); b._tapT = setTimeout(() => b.classList.toggle("bb-tap", false), 600);
+}, { passive: true });
 const unreadCount = () => S.alerts.filter(a => !a.read).length;
 function drawBell() {
   const n = unreadCount(), c = $("#bellcnt"); if (c) c.innerHTML = n ? `<span class="cnt">${n > 99 ? "99+" : n}</span>` : "";

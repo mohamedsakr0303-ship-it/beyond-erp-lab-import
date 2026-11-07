@@ -704,7 +704,8 @@ new MutationObserver(ms => { for (const m of ms) { const el = m.target;
   if (el.classList && el.classList.contains("app") && !el.classList.contains("menu") && innerWidth <= 900) $$(".ucard.dd.open", el).forEach(d => d.classList.remove("open")); } })
   .observe(document.body, { attributes: true, attributeFilter: ["class"], subtree: true });
 const STAY_OPEN = new Set(["grp", "menu", "bellign", "bellignall"]);
-document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); const app = $(".app"); if (app) app.classList.remove("menu"); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); const app = $(".app"); if (app) app.classList.remove("menu");
+  $$(".dd.open").forEach(d => d.classList.remove("open")); } });   // and an open alerts / account menu
 window.addEventListener("hashchange", () => { S.navCount = (S.navCount || 0) + 1; S.navAnim = true; route(); });
 
 // ---------------------------------------------------------------- routing
@@ -1358,7 +1359,7 @@ function renderNav(active) {
 // The bottom bar's look (Profile, and My appearance): a glass bar whose marker shows the tab in use — a glow capsule
 // inside the bar (the default), a spotlight, a floating bubble or a liquid drop — or the classic bar. On phones, or on
 // computers too. Its colours come from the theme (Settings → Theme: bottom bar highlight and bottom bar).
-const DOCK_LAYERS = `<span class="bb-bg" aria-hidden="true"><b class="bb-drop"></b></span><span class="bb-ind" aria-hidden="true"><i></i></span>
+const DOCK_LAYERS = `<span class="bb-bg" aria-hidden="true"><b class="bb-drop"></b></span><span class="bb-ghost" aria-hidden="true"><i></i></span><span class="bb-ind" aria-hidden="true"><i></i></span>
   <svg class="bb-defs" width="0" height="0" aria-hidden="true" focusable="false"><filter id="bbgoo"><feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/>
   <feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -8" result="g"/><feComposite in="SourceGraphic" in2="g" operator="atop"/></filter></svg>`;
 const DOCKS = () => [["halo", L2("Glass: glow capsule", "زجاجي: كبسولة مضيئة")], ["spot", L2("Glass: spotlight", "زجاجي: ضوء مسلّط")],
@@ -1391,7 +1392,10 @@ function dockSync() {
   // a new tab: the marker is already there (placed while hidden) and rises into view once; the same tab again does nothing
   const cur = on ? String(i) : "";
   if (cur !== (bar.dataset.cur || "")) {
+    const prev = bar.dataset.cur || "";
     bar.dataset.cur = cur;
+    // the tab left behind sinks away where it was (glow capsule), while the new one rises in
+    if (prev) { bar.style.setProperty("--pi", prev); bar.classList.toggle("bb-leave", false); void bar.offsetWidth; bar.classList.toggle("bb-leave", true); }
     if (on) { bar.classList.toggle("bb-rise", false); void bar.offsetWidth; bar.classList.toggle("bb-rise", true); }
   }
 }
@@ -1399,6 +1403,16 @@ document.addEventListener("click", () => { setTimeout(dockSync, 30); setTimeout(
 addEventListener("hashchange", () => setTimeout(dockSync, 40));
 addEventListener("keydown", e => { if (e.key === "Escape") setTimeout(dockSync, 40); });
 addEventListener("resize", () => dockSync());
+
+// a touch on the bottom bar: a burst of light from the point touched, inside that button
+document.addEventListener("pointerdown", e => {
+  const b = e.target && e.target.closest && e.target.closest(".bottombar>a, .bottombar>button, .bottombar .bb-new>.btn");
+  if (!b) return;
+  const r = b.getBoundingClientRect();
+  b.style.setProperty("--tx", Math.round(e.clientX - r.left - 3) + "px"); b.style.setProperty("--ty", Math.round(e.clientY - r.top - 3) + "px");
+  b.classList.toggle("bb-tap", false); void b.offsetWidth; b.classList.toggle("bb-tap", true);
+  clearTimeout(b._tapT); b._tapT = setTimeout(() => b.classList.toggle("bb-tap", false), 600);
+}, { passive: true });
 
 // ------------------------------------------------------------- auth pages
 // ------------------------------------------------ shared workspace (Supabase) — same calls in both editions
