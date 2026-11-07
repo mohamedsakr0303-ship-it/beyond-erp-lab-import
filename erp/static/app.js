@@ -1344,7 +1344,7 @@ function renderNav(active) {
   dockSync();
   loadAlerts();
 }
-// The bottom bar's look (Profile, and My appearance): a glass bar whose marker glides to the tab in use — a glowing wave,
+// The bottom bar's look (Profile, and My appearance): a glass bar whose marker rises over the tab in use — a glowing wave,
 // a spotlight, a floating bubble or a liquid drop — or the classic bar. On phones, or on computers too.
 const DOCK_LAYERS = `<span class="bb-bg" aria-hidden="true"><b class="bb-drop"></b></span><span class="bb-ind" aria-hidden="true"><i></i></span>
   <svg class="bb-defs" width="0" height="0" aria-hidden="true" focusable="false"><filter id="bbgoo"><feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/>
@@ -1376,6 +1376,12 @@ function dockSync() {
   if (on) { const b = bar.getBoundingClientRect(), r = on.getBoundingClientRect();
     bar.style.setProperty("--bi", i); bar.style.setProperty("--bx", Math.round(r.left - b.left + r.width / 2) + "px"); }
   $$("[data-bi]", bar).forEach(el => el.classList.toggle("on", el === on));
+  // a new tab: the marker is already there (placed while hidden) and rises into view once; the same tab again does nothing
+  const cur = on ? String(i) : "";
+  if (cur !== (bar.dataset.cur || "")) {
+    bar.dataset.cur = cur;
+    if (on) { bar.classList.toggle("bb-rise", false); void bar.offsetWidth; bar.classList.toggle("bb-rise", true); }
+  }
 }
 document.addEventListener("click", () => { setTimeout(dockSync, 30); setTimeout(dockSync, 320); }, true);
 addEventListener("hashchange", () => setTimeout(dockSync, 40));

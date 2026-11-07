@@ -334,6 +334,12 @@ function dockSync() {
   if (on) { const b = bar.getBoundingClientRect(), r = on.getBoundingClientRect();
     bar.style.setProperty("--bi", on.dataset.bi); bar.style.setProperty("--bx", Math.round(r.left - b.left + r.width / 2) + "px"); }
   $$("[data-bi]", bar).forEach(el => el.classList.toggle("on", el === on));
+  // a new tab: the marker is already there (placed while hidden) and rises into view once; the same tab again does nothing
+  const cur = on ? String(on.dataset.bi) : "";
+  if (cur !== (bar.dataset.cur || "")) {
+    bar.dataset.cur = cur;
+    if (on) { bar.classList.toggle("bb-rise", false); void bar.offsetWidth; bar.classList.toggle("bb-rise", true); }
+  }
 }
 const dockSelect = () => { const d = dockPref();
   return `<div class="grid g2" style="gap:8px;margin-top:10px"><label class="f">${esc(L("Bottom bar", "الشريط السفلي"))}<select data-change="dockset" data-k="style">${DOCKS().map(([v, l]) => `<option value="${v}" ${d.style === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
