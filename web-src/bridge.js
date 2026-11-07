@@ -587,10 +587,12 @@ def cloud_new_books(name, email):
         async billingPublic() {
           try { return await req("POST", "/rest/v1/rpc/billing_public", {}); } catch (e) { return { enabled: false, missing: e.status === 404 }; }
         },
-        // the public pages' wording as the platform owner set it in the console (Website texts); none: the built-in one
-        async siteTexts() {
-          try { return await req("POST", "/rest/v1/rpc/site_texts", {}); } catch { return null; }
+        // what the public pages show from the owner console (Website): {texts, site}; none: the built-in page
+        async sitePublic() {
+          try { return await req("POST", "/rest/v1/rpc/site_public", {}); } catch { return null; }
         },
+        // a picture or clip the console uploaded (public bucket site-media)
+        mediaUrl: path => { const c = cfg(); return c && /^site\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(path || "") ? `${c.url}/storage/v1/object/public/site-media/${path}` : ""; },
         async billing() {
           try { return await rpc("billing_status", { p_company: co() }); }
           catch (e) { if (e.status === 404 || e.code === "PGRST202") return { enabled: false, status: "free", can_write: true }; throw e; }

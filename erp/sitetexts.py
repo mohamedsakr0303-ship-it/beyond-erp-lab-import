@@ -11,7 +11,9 @@ CALL = re.compile(r'\bSTh?\(\s*"([a-z0-9_]+(?:\.[a-z0-9_]+){1,3})"\s*,\s*("(?:[^
 KEY = re.compile(r'^[a-z0-9_]+(\.[a-z0-9_]+){1,3}$')     # what the database accepts (site_texts.key)
 # where each text appears, by the first part of its key
 PLACES = {"home": ("Home page", "الصفحة الرئيسية"), "auth": ("Sign-in screens", "شاشات تسجيل الدخول"),
-          "foot": ("Footer and links", "التذييل والروابط")}
+          "start": ("Getting started (choose or create a company)", "البدء (اختيار شركة أو إنشاؤها)"),
+          "downloads": ("Downloads page", "صفحة التنزيلات"), "public": ("Customers' public pages", "الصفحات العامة للعملاء"),
+          "foot": ("Footer", "التذييل")}
 
 
 def extract(js):
@@ -35,7 +37,10 @@ def stray_calls(js):
     return every - len(CALL.findall(js))
 
 
+SOURCES = ("erp/static/app.js", "web-src/p.html")    # the scripts whose ST calls are listed
+
+
 def catalogue(root=None):
     root = Path(root or Path(__file__).resolve().parents[1])
-    texts = extract((root / "erp" / "static" / "app.js").read_text(encoding="utf-8"))
+    texts = extract("\n".join((root / f).read_text(encoding="utf-8") for f in SOURCES if (root / f).exists()))
     return {"places": [{"key": k, "en": en, "ar": ar} for k, (en, ar) in PLACES.items()], "texts": texts}

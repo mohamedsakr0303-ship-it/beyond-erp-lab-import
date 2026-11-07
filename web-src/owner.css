@@ -324,3 +324,12 @@ html:not(.dock-classic) .bottombar>.on svg.i{color:var(--glow)}
 /* the lifted icon: white in the bubble, dark on the warm drop (beats the general "in use" colour) */
 html.dock-bubble .bottombar>.on svg.i,html.dock-bubble .bottombar .bb-new.on>.btn svg.i{color:#fff}
 html.dock-liquid .bottombar>.on svg.i,html.dock-liquid .bottombar .bb-new.on>.btn svg.i{color:#3b2a17}
+
+/* ---- Website: pictures and clips, the announcement preview */
+.site-thumb{display:grid;place-items:center;min-height:120px;max-height:240px;overflow:hidden;border:1px dashed var(--line);border-radius:12px;background:var(--bg)}
+.site-thumb img,.site-thumb video{display:block;max-width:100%;max-height:240px;object-fit:contain}
+.site-thumb.logo{min-height:90px;background:#0a0b2a}.site-thumb.logo img{max-height:70px}
+.site-prev{display:flex;gap:8px;align-items:center;justify-content:center;padding:9px 14px;border-radius:12px;margin-top:6px;font-size:.9em;
+  background:color-mix(in srgb,var(--accent) 14%,var(--panel));border:1px solid color-mix(in srgb,var(--accent) 40%,var(--line))}
+.site-prev.ok{background:color-mix(in srgb,#2fbf71 14%,var(--panel));border-color:color-mix(in srgb,#2fbf71 40%,var(--line))}
+.site-prev.warn{background:color-mix(in srgb,#e8a23a 16%,var(--panel));border-color:color-mix(in srgb,#e8a23a 45%,var(--line))}

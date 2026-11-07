@@ -117,6 +117,8 @@ tr.void td{opacity:.5;text-decoration:line-through}
 .btn.oauth{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;border-radius:999px;padding:11px 16px;margin:0 0 10px;
   border:1px solid var(--ink);background:var(--panel);font-weight:500;font-size:.95em;position:relative}
 .btn.oauth svg{position:absolute;inset-inline-start:18px}
+.btn.oauth:has(> svg){padding-inline:46px}      /* long labels (Arabic on a phone) wrap, clear of the icon */
+.btn.oauth>span{white-space:normal;text-align:center;min-width:0}
 .login .or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.8em;margin:6px 0 12px}
 .login .or::before,.login .or::after{content:"";flex:1;border-top:1px solid var(--line)}
 .bar{height:120px;display:flex;align-items:flex-end;gap:6px;padding-top:6px}
@@ -1115,7 +1117,7 @@ body:has(.drawer-bg) #bulkbar{display:none}   /* a form is open: its own buttons
   background:linear-gradient(180deg,#fff,#e2e0ff);box-shadow:0 0 0 1px rgba(255,255,255,.5),0 10px 36px rgba(108,92,255,.55);transition:transform .2s,box-shadow .2s}
 .lp-pill:hover{transform:translateY(-2px);box-shadow:0 0 0 1px #fff,0 14px 44px rgba(108,92,255,.8)}
 .lp-pill.sm{padding:9px 18px;font-size:.9em}
-.lp-hero>*:not(.lp-ring):not(.lp-scroll){position:relative;z-index:1}
+.lp-hero>*:not(.lp-ring):not(.lp-scroll):not(.lp-herobg){position:relative;z-index:1}
 .lp-hero{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:110px 16px 60px;position:relative}
 .lp-ring{position:absolute;left:50%;top:-40vmin;width:132vmin;height:132vmin;transform:translateX(-50%);border-radius:50%;pointer-events:none;
   box-shadow:0 0 0 2px rgba(214,210,255,.9),0 0 30px 6px rgba(108,92,255,.9),0 0 120px 30px rgba(47,60,255,.55),inset 0 0 90px 10px rgba(47,60,255,.45);
@@ -1238,7 +1240,7 @@ td .pick-w{min-width:180px}
 
 /* ===== welcome story: one stage pinned while the page scrolls; scenes cross-fade and move with the scroll =====
    --t: -1 coming in … 0 centre … 1 leaving; --a = |t|. Only opacity / transforms change, so it stays smooth. */
-.lp-story{position:relative;height:calc(6 * 115vh)}
+.lp-story{position:relative;height:calc(var(--n,6) * 115vh)}
 .lp-stage{position:sticky;top:0;height:100vh;height:100dvh;overflow:hidden}
 .lp-sc{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:88px 16px 40px;
   opacity:calc(1 - var(--a,1) * 1.7);visibility:hidden;pointer-events:none;will-change:opacity,transform}
@@ -1450,7 +1452,7 @@ html.wv-open,html.wv-open body{overflow:hidden}
   18%{opacity:1;transform:translateX(-50%) translateY(44vmin) scale(.36,.06)}
   100%{opacity:1;transform:translateX(-50%)}}
 /* a slightly shorter story */
-.lp-story{height:calc(6 * 100vh)}
+.lp-story{height:calc(var(--n,6) * 100vh)}
 /* where you are in the story; tap a dot to glide there */
 .lp-dots{position:fixed;z-index:6;inset-inline-end:18px;top:50%;translate:0 -50%;display:flex;flex-direction:column;gap:10px;opacity:0;transition:opacity .4s}
 .lp-past .lp-dots{opacity:1}
@@ -2192,3 +2194,30 @@ html.dock-liquid .bottombar .bb-new.on>.btn{color:#3b2a17!important}
 /* the lifted icon: white in the bubble, dark on the warm drop (beats the general "in use" colour) */
 html.dock-bubble .bottombar>.on svg.i,html.dock-bubble .bottombar .bb-new.on>.btn svg.i{color:#fff}
 html.dock-liquid .bottombar>.on svg.i,html.dock-liquid .bottombar .bb-new.on>.btn svg.i{color:#3b2a17}
+
+/* ---- the website as set in the owner console (Website): logo, announcement bar, backgrounds, showcase */
+.lp-logo{display:block;height:30px;width:auto;max-width:180px;object-fit:contain}
+.lp-foot .lp-logo{height:34px;margin:0 auto 10px}
+.site-ann{display:flex;align-items:center;gap:10px;justify-content:center;padding:9px 12px 9px 16px;border-radius:14px;font-size:.88rem;line-height:1.4;
+  background:color-mix(in srgb,var(--ac,#6c5cff) 18%,rgba(10,11,40,.82));border:1px solid color-mix(in srgb,var(--ac,#6c5cff) 45%,transparent);color:#eef0ff;
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.site-ann.ok{--ac:#2fbf71}.site-ann.warn{--ac:#e8a23a}
+.site-ann a{color:inherit;font-weight:600;text-decoration:underline;text-underline-offset:3px}
+.site-ann-x{flex:none;border:0;background:none;color:inherit;opacity:.7;font-size:1.2rem;line-height:1;cursor:pointer;padding:2px 6px}
+.site-ann-x:hover{opacity:1}
+.site-ann.at-home{position:fixed;z-index:4;top:76px;inset-inline:max(12px,calc(50% - 360px));box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.site-ann.at-signin{margin:-8px -8px 16px;text-align:start;justify-content:space-between}
+.site-ann.at-signin:not(.ok):not(.warn){background:color-mix(in srgb,var(--brand) 14%,var(--panel));border-color:color-mix(in srgb,var(--brand) 40%,var(--line));color:var(--ink)}
+.site-ann.at-signin.ok{background:color-mix(in srgb,#2fbf71 14%,var(--panel));color:var(--ink)}.site-ann.at-signin.warn{background:color-mix(in srgb,#e8a23a 16%,var(--panel));color:var(--ink)}
+.lp-hero{isolation:isolate}
+.lp-herobg{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
+.lp-herobg img,.lp-herobg video{width:100%;height:100%;object-fit:cover;opacity:.42}
+.lp-herobg::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 50% 40%,transparent 0,rgba(0,1,15,.55) 55%,var(--n0) 100%)}
+.lp-show{max-width:1080px;margin:40px auto 0;padding:60px 20px 20px;text-align:center}
+.lp-show h2{font-size:clamp(22px,3.6vw,38px);margin:0 0 10px;font-weight:600;letter-spacing:-.01em}
+.lp-show p{color:#b7bbe6;max-width:640px;margin:0 auto 22px}
+.lp-show-media img,.lp-show-media video{display:block;width:100%;max-height:72vh;object-fit:contain;border-radius:18px;border:1px solid rgba(140,140,255,.18);
+  background:#05061c;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+.auth-bg{position:fixed;inset:0;z-index:-1;background-size:cover;background-position:center;pointer-events:none}
+.auth-bg::after{content:"";position:absolute;inset:0;background:color-mix(in srgb,var(--bg) 62%,transparent)}
+@media (max-width:640px){.site-ann.at-home{top:68px;inset-inline:10px;font-size:.82rem}.lp-logo{height:24px}}

@@ -281,7 +281,6 @@ const IC = {
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
   db: '<ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/>',
   monitor: '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/>',
-  send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
   home: '<path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
   heart: '<path d="M12 20.5s-8-4.7-8-10.6A4.4 4.4 0 0 1 12 7a4.4 4.4 0 0 1 8 2.9c0 5.9-8 10.6-8 10.6z"/><path d="M8.5 12.5h2l1-2 1.5 4 1-2h1.5"/>',
   steth: '<path d="M6 3v6a4 4 0 0 0 8 0V3"/><path d="M10 13v2a5 5 0 0 0 10 0v-2"/><circle cx="20" cy="11" r="2"/>',
@@ -1197,7 +1196,7 @@ const appIconSrc = k => k === "custom" && S.boot.app_icon ? `data:${S.boot.app_i
 const GEN_NAME = () => L2("Company name", "اسم الشركة"), GEN_TAG = () => L2("Tagline", "الشعار النصي");
 // The app's name (Settings → Appearance); BeyondERP unless the company gave it another
 // BeyondERP's slogan under the name on the sign-in screens (not when the platform owner renamed the app)
-const slogan = () => appName() === "BeyondERP" ? `<p class="slogan">${esc(L2("Run the business, not the paperwork.", "أدِر أعمالك، لا أوراقها."))}</p>` : "";
+const slogan = () => appName() === "BeyondERP" ? `<p class="slogan">${esc(ST("auth.slogan", "Run the business, not the paperwork.", "أدِر أعمالك، لا أوراقها."))}</p>` : "";
 const appName = () => (platformOwner() && (((S.boot && S.boot.settings.appearance) || {}).app_name || "").trim()) || "BeyondERP";
 // The sidebar / sign-in logo: the company's own (document or uploaded), none, or the built-in BeyondERP mark
 const brandLogoSrc = () => { const ap = (S.boot && S.boot.settings.appearance) || {};
@@ -1455,7 +1454,7 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
   const prov = S.providers || (S.providers = await C.providers());
   if (!S.billingPublic && C.billingPublic) S.billingPublic = await C.billingPublic();
   const googleUrl = C.oauthUrl("google");
-  const remember = `<label class="f chk" style="justify-content:center;margin:6px 0"><input type="checkbox" id="remember" ${C.remembered() ? "checked" : ""}>${ar ? "البقاء متصلاً" : "Keep me signed in"}</label>`;
+  const remember = `<label class="f chk" style="justify-content:center;margin:6px 0"><input type="checkbox" id="remember" ${C.remembered() ? "checked" : ""}>${esc(ST("auth.keep", "Keep me signed in", "البقاء متصلاً"))}</label>`;
   const emailField = mode === "email"
     ? `<label class="f">${ar ? "البريد الإلكتروني أو اسم المستخدم" : "Email or username"}<input name="email" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required value="${esc(store.get("lastEmail", "") || C.email())}"></label>`
     : `<label class="f">${t("email")}<input name="email" type="email" autocomplete="username" required value="${esc(C.email() || (String(store.get("lastEmail", "")).includes("@") ? store.get("lastEmail", "") : ""))}"></label>`;
@@ -1465,26 +1464,27 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
   if (!S.siteTextsAt) loadSiteTexts().then(changed => { if (changed && $(".login.auth")) renderCloudAuth(msg, kind, mode); });
   let body;
   if (mode === "start") body = `
-    ${prov.google && googleUrl ? `<button class="btn oauth" type="button" data-a="cgoogle">${GOOGLE_G}<span>${ar ? "تسجيل الدخول بحساب Google" : "Sign in with Google"}</span></button>` : ""}
-    <button class="btn oauth" type="button" data-a="mode_email">${MAIL_ICON}<span>${ar ? "تسجيل الدخول بالبريد الإلكتروني أو اسم المستخدم" : "Sign in with email or username"}</span></button>
+    ${prov.google && googleUrl ? `<button class="btn oauth" type="button" data-a="cgoogle">${GOOGLE_G}<span>${esc(ST("auth.google", "Sign in with Google", "تسجيل الدخول بحساب Google"))}</span></button>` : ""}
+    <button class="btn oauth" type="button" data-a="mode_email">${MAIL_ICON}<span>${esc(ST("auth.email_option", "Sign in with email or username", "تسجيل الدخول بالبريد الإلكتروني أو اسم المستخدم"))}</span></button>
     ${remember}
-    <p class="center">${ar ? "ليس لديك حساب؟" : "No account?"} <a href="#" data-a="mode_signup">${ar ? "إنشاء حساب" : "Create one"}</a></p>
-    <p class="center">${ar ? "نسيت كلمة المرور أو تعذر تسجيل الدخول؟" : "Forgotten password or trouble signing in?"} <a href="#" data-a="mode_help">${ar ? "المساعدة" : "Get help"}</a></p>`;
+    <p class="center">${esc(ST("auth.no_account", "No account?", "ليس لديك حساب؟"))} <a href="#" data-a="mode_signup">${esc(ST("auth.create_one", "Create one", "إنشاء حساب"))}</a></p>
+    <p class="center">${esc(ST("auth.trouble", "Forgotten password or trouble signing in?", "نسيت كلمة المرور أو تعذر تسجيل الدخول؟"))} <a href="#" data-a="mode_help">${esc(ST("auth.get_help", "Get help", "المساعدة"))}</a></p>`;
   else if (mode === "email") body = `<form id="lf" class="grid">${emailField}${pwFields(false)}${remember}
       <button class="btn pri" type="submit">${t("sign_in")}</button></form>
-    <p class="center">${ar ? "ليس لديك حساب؟" : "No account?"} <a href="#" data-a="mode_signup">${ar ? "إنشاء حساب" : "Create one"}</a> · <a href="#" data-a="mode_help">${ar ? "نسيت كلمة المرور؟" : "Forgot password?"}</a></p>`;
+    <p class="center">${esc(ST("auth.no_account", "No account?", "ليس لديك حساب؟"))} <a href="#" data-a="mode_signup">${esc(ST("auth.create_one", "Create one", "إنشاء حساب"))}</a> · <a href="#" data-a="mode_help">${esc(ST("auth.forgot", "Forgot password?", "نسيت كلمة المرور؟"))}</a></p>`;
   else if (mode === "signup") body = `
-    ${prov.google && googleUrl ? `<button class="btn oauth" type="button" data-a="cgoogle">${GOOGLE_G}<span>${ar ? "المتابعة بحساب Google" : "Continue with Google"}</span></button>
+    ${prov.google && googleUrl ? `<button class="btn oauth" type="button" data-a="cgoogle">${GOOGLE_G}<span>${esc(ST("auth.google_continue", "Continue with Google", "المتابعة بحساب Google"))}</span></button>
       <div class="or"><span>${ar ? "أو" : "or"}</span></div>` : ""}
     <form id="lf" class="grid">${emailField}${pwFields(true)}
-      <button class="btn pri" type="submit">${ar ? "إنشاء الحساب" : "Create account"}</button></form>
-    <p class="center">${ar ? "لديك حساب؟" : "Already have an account?"} <a href="#" data-a="mode_start">${t("sign_in")}</a></p>`;
-  else body = `<form id="lf" class="grid"><p class="muted" style="margin:0">${ar ? "أدخل بريدك الإلكتروني واختر أحد الخيارات:" : "Enter your email and choose an option:"}</p>${emailField}
+      <button class="btn pri" type="submit">${esc(ST("auth.create_btn", "Create account", "إنشاء الحساب"))}</button></form>
+    <p class="center">${esc(ST("auth.have_account", "Already have an account?", "لديك حساب؟"))} <a href="#" data-a="mode_start">${t("sign_in")}</a></p>`;
+  else body = `<form id="lf" class="grid"><p class="muted" style="margin:0">${esc(ST("auth.help_intro", "Enter your email and choose an option:", "أدخل بريدك الإلكتروني واختر أحد الخيارات:"))}</p>${emailField}
       <button class="btn" type="button" data-a="cforgot">${ar ? "إرسال رابط إعادة تعيين كلمة المرور" : "Send a password reset link"}</button>
       <button class="btn" type="button" data-a="cresend">${ar ? "إعادة إرسال رسالة تأكيد الحساب" : "Resend account confirmation email"}</button></form>
-    <p class="muted" style="font-size:.85em">${ar ? "الحسابات المنشأة عبر Google ليس لها كلمة مرور هنا؛ استخدم تسجيل الدخول بحساب Google." : "Accounts created with Google have no password here; use Sign in with Google."}</p>
+    <p class="muted" style="font-size:.85em">${esc(ST("auth.help_google", "Accounts created with Google have no password here; use Sign in with Google.", "الحسابات المنشأة عبر Google ليس لها كلمة مرور هنا؛ استخدم تسجيل الدخول بحساب Google."))}</p>
     <p class="muted" style="font-size:.85em">${ar ? "حسابات اسم المستخدم دون بريد إلكتروني: يمكن للمسؤول الأعلى تعيين كلمة مرور جديدة من المستخدمين. تتيح إضافة بريد إلكتروني لحسابك إعادة التعيين بنفسك. إن فقدت الهاتف المستخدم في التحقق بخطوتين، اطلب من المسؤول الأعلى تعطيله." : "Username accounts without an email: a super administrator can set a new password in Users. Adding an email to your account enables self-service reset. If you lost the phone used for two-step sign-in, ask a super administrator to disable it."}</p>`;
-  $("#root").innerHTML = `<div class="login auth">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}
+  const plogo = siteMediaUrl((S.site.media || {}).logo), logo = plogo || brandLogoSrc();
+  $("#root").innerHTML = siteBg() + `<div class="login auth">${siteAnnounce("signin")}${logo ? `<img class="login-logo" src="${esc(logo)}" alt="">` : ""}
     <div class="muted center" style="font-weight:600;letter-spacing:.4px">${esc(appName())}</div>${slogan()}
     <h1 class="center">${esc(title)}</h1><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>${body}
     ${mode !== "start" ? `<p class="center">${back}</p>` : ""}
@@ -1581,13 +1581,13 @@ function renderCompanyGate(info, msg, kind = "err") {
   const pending = (info.companies || []).filter(c => c.pending);
   if (!msg && info.pending && info.company_name) { msg = (ar ? "طلب انضمامك إلى" : "Your request to join ") + info.company_name + (ar ? " بانتظار موافقة المسؤول." : " is awaiting administrator approval."); kind = "info"; }
   applyLook();
-  $("#root").innerHTML = `<div class="login auth co-gate"><h1 class="center">${live.length ? (ar ? "اختر الشركة" : "Choose a company") : (ar ? "البدء" : "Get started")}</h1>
+  $("#root").innerHTML = siteBg() + `<div class="login auth co-gate"><h1 class="center">${live.length ? esc(ST("start.choose", "Choose a company", "اختر الشركة")) : esc(ST("start.title", "Get started", "البدء"))}</h1>
     <p class="muted center">${esc(info.email || C.email())}</p><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>
     ${live.length ? `<div class="co-list">${live.map(c => `<button class="btn oauth" type="button" data-a="copick" data-id="${esc(c.id)}"><span class="co-ic">${esc((c.name || "?").trim().charAt(0).toUpperCase())}</span><span>${esc(c.name)}${live.some(o => o !== c && (o.name || "").trim().toLowerCase() === (c.name || "").trim().toLowerCase()) && c.created_at ? `<br><small class="muted">${ar ? "أُنشئت" : "Created "}${esc(String(c.created_at).slice(0, 10))}${c.changes != null ? ` · ${c.changes ? c.changes + (ar ? " تعديل" : " changes") : (ar ? "فارغة" : "Empty")}` : ""}</small>` : ""}</span>${c.is_admin ? `<span class="chip">${t("admin")}</span>` : ""}</button>`).join("")}</div>` : ""}
     ${pending.length ? `<div class="banner info">${ar ? "بانتظار الموافقة:" : "Awaiting approval: "}${pending.map(c => esc(c.name)).join(", ")}</div>` : ""}
-    <label class="f co-what">${ar ? "اختر أحد الخيارات" : "Choose an option"}<select id="cowhat">
-      <option value="create" ${live.length || pending.length ? "" : "selected"}>${ar ? "إنشاء شركة جديدة" : "Create a new company"}</option>
-      <option value="join" ${live.length || pending.length ? "selected" : ""}>${ar ? "الانضمام برمز دعوة" : "Join with an invite code"}</option></select></label>
+    <label class="f co-what">${esc(ST("start.option", "Choose an option", "اختر أحد الخيارات"))}<select id="cowhat">
+      <option value="create" ${live.length || pending.length ? "" : "selected"}>${esc(ST("start.create", "Create a new company", "إنشاء شركة جديدة"))}</option>
+      <option value="join" ${live.length || pending.length ? "selected" : ""}>${esc(ST("start.join", "Join with an invite code", "الانضمام برمز دعوة"))}</option></select></label>
     <form id="conew" class="co-pane row" data-pane="create"><input name="name" required maxlength="120" placeholder="${ar ? "اسم الشركة" : "Company name"}" style="flex:1">
       <button class="btn pri" type="submit">${ar ? "إنشاء" : "Create"}</button></form>
     <form id="cojoin" class="co-pane row" data-pane="join"><input name="code" required autocapitalize="characters" autocomplete="off" placeholder="${ar ? "رمز الدعوة (8 أحرف)" : "Invite code (8 letters)"}" style="flex:1;text-transform:uppercase">
@@ -1596,8 +1596,8 @@ function renderCompanyGate(info, msg, kind = "err") {
     <p class="center" style="margin-top:14px;font-size:.85em"><a href="#" data-a="coout">${t("logout")}</a></p></div>`;
   const show = (m, k = "err") => { $("#lerr").innerHTML = `<div class="banner ${k}">${esc(m)}</div>`; };
   const pane = () => { const w = $("#cowhat").value; $$(".co-pane").forEach(f => { f.hidden = f.dataset.pane !== w; });
-    $("#cohint").textContent = w === "join" ? (ar ? "احصل على الرمز من مسؤول الشركة (الإعدادات ← مساحة العمل)." : "Obtain the code from the company administrator (Settings → Workspace).")
-      : (ar ? "تصبح مسؤولها وتختار: دفاتر فارغة، أو الشركة التجريبية، أو بياناتك." : "You become its administrator and choose: empty books, the demo company or your own data."); };
+    $("#cohint").textContent = w === "join" ? ST("start.join_help", "Obtain the code from the company administrator (Settings → Workspace).", "احصل على الرمز من مسؤول الشركة (الإعدادات ← مساحة العمل).")
+      : ST("start.create_help", "You become its administrator and choose: empty books, the demo company or your own data.", "تصبح مسؤولها وتختار: دفاتر فارغة، أو الشركة التجريبية، أو بياناتك."); };
   $("#cowhat").addEventListener("change", pane); pane();
   const open = id => { if (C.chooseCompany(id)) location.reload(); else cloudEnter({ ...info, needs_company: false, is_member: true }).catch(e => show(plainNetErr(e))); };
   S.H = { copick: el => { show(ar ? "جارٍ فتح الشركة…" : "Opening the company…", "info"); open(el.dataset.id); },
@@ -6797,15 +6797,45 @@ async function boot() {
 // texts): ST(key, English, Arabic) shows the owner's wording for the reader's language, else the built-in one. The
 // console lists every ST call of this file (build_web.py writes them to site-texts.json), so keys and wording are literal.
 S.siteTexts = store.get("siteTexts", {}) || {};
+// The website's layout, links, pictures and clips (owner console → Website): an announcement bar, the home page's
+// parts that are left out, a showcase block, the platform's logo and backgrounds, the footer's links
+S.site = store.get("siteConfig", {}) || {};
+const SITE_URL = /^https:\/\/[^\s"'<>]+$/;
+const siteHide = () => (Array.isArray(S.site.hide) ? S.site.hide : []);
+const siteMediaUrl = p => { const C = window.BeyondCloud;
+  return typeof p === "string" && /^site\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(p) && C && C.mediaUrl ? C.mediaUrl(p) : ""; };
+// the footer's links: the console's list, else the built-in ones
+const SITE_LINKS = [["LinkedIn", "https://www.linkedin.com/company/mybeyonderp"], ["Facebook", "https://www.facebook.com/people/Beyond-ERP/61595801625159/"],
+  ["Instagram", "https://www.instagram.com/mybeyonderp/"]];
+const siteLinks = () => { const l = (Array.isArray(S.site.links) ? S.site.links : []).filter(x => x && x.en && SITE_URL.test(x.url || ""));
+  return l.length ? l.map(x => ({ name: (S.lang === "ar" && x.ar) || x.en, url: x.url })) : SITE_LINKS.map(([name, url]) => ({ name, url })); };
+const siteHash = v => { let h = 0; for (const c of String(v)) h = (h * 31 + c.codePointAt(0)) | 0; return (h >>> 0).toString(36); };
+// the announcement bar (home page, sign-in screens or both); closing it hides that announcement on this device
+const siteAnnounce = where => { const a = S.site.announcement || {}, txt = String((S.lang === "ar" && a.ar) || a.en || "").trim();
+  if (!a.on || !txt || !((a.where || "home") === where || a.where === "both")) return "";
+  const key = siteHash(txt + "|" + (a.link || ""));
+  if (store.get("annClosed", "") === key) return "";
+  const label = S.lang === "ar" ? a.link_ar || "اعرف المزيد" : a.link_en || "Learn more";
+  const link = SITE_URL.test(a.link || "") ? ` <a href="${esc(a.link)}" target="_blank" rel="noopener">${esc(label)}</a>` : "";
+  return `<div class="site-ann ${["info", "ok", "warn"].includes(a.tone) ? a.tone : "info"} at-${where}" role="status"><span>${esc(txt)}${link}</span><button type="button" class="site-ann-x" data-annx="${key}" aria-label="${esc(L2("Close", "إغلاق"))}">×</button></div>`; };
+document.addEventListener("click", e => { const x = e.target.closest && e.target.closest("[data-annx]"); if (!x) return;
+  store.set("annClosed", x.dataset.annx); const bar = x.closest(".site-ann"); if (bar) bar.remove(); });
+// the home page's background (a picture or a muted clip) and the sign-in screens' picture
+const heroBg = () => { const md = S.site.media || {}, url = siteMediaUrl(md.hero);
+  if (!url) return "";
+  return `<div class="lp-herobg" aria-hidden="true">${md.hero_kind === "video" ? `<video src="${esc(url)}" ${store.get("lpMotion", "on") === "off" ? "" : "autoplay loop"} muted playsinline preload="metadata"></video>` : `<img src="${esc(url)}" alt="">`}</div>`; };
+const siteBg = () => { const url = siteMediaUrl((S.site.media || {}).signin); return url ? `<div class="auth-bg" aria-hidden="true" style="background-image:url('${esc(url)}')"></div>` : ""; };
 const ST = (k, en, ar) => { const o = S.siteTexts[k], v = o && (S.lang === "ar" ? o.ar : o.en); return v && String(v).trim() ? String(v) : L2(en, ar); };
 const STh = (k, en, ar) => esc(ST(k, en, ar)).replace(/\n/g, "<br>");      // a text whose line breaks are kept
 async function loadSiteTexts() {
   const C = window.BeyondCloud;
-  if (!C || !C.configured || !C.configured() || !C.siteTexts) return false;
-  const got = await C.siteTexts().catch(() => null);
+  if (!C || !C.configured || !C.configured() || !C.sitePublic) return false;
+  const got = await C.sitePublic().catch(() => null);
   S.siteTextsAt = Date.now();
-  if (!got || typeof got !== "object" || JSON.stringify(got) === JSON.stringify(S.siteTexts)) return false;
-  S.siteTexts = got; store.set("siteTexts", got);
+  if (!got || typeof got !== "object") return false;
+  const texts = got.texts && typeof got.texts === "object" ? got.texts : {}, site = got.site && typeof got.site === "object" ? got.site : {};
+  if (JSON.stringify(texts) === JSON.stringify(S.siteTexts) && JSON.stringify(site) === JSON.stringify(S.site)) return false;
+  S.siteTexts = texts; S.site = site; store.set("siteTexts", texts); store.set("siteConfig", site);
   return true;
 }
 const L2 = (en, ar) => (S.lang === "ar" ? ar : en);
@@ -9972,15 +10002,15 @@ PAGES.download = async view => {
   S.H.copycfg = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(L2("Copied.", "تم النسخ.")); } catch { await uiPrompt("", el.dataset.v); } };
   const installed = inAppWindow();
   view.innerHTML =
-    card(L2("Phone or tablet (Android / iOS)", "الهاتف أو الجهاز اللوحي (Android / iOS)"), installed ? `<div class="banner ok">${L2("You are using the installed app.", "أنت تستخدم التطبيق المثبت.")}</div>` :
+    card(esc(ST("downloads.phone.title", "Phone or tablet (Android / iOS)", "الهاتف أو الجهاز اللوحي (Android / iOS)")), installed ? `<div class="banner ok">${L2("You are using the installed app.", "أنت تستخدم التطبيق المثبت.")}</div>` :
       `${installPrompt ? `<p><button class="btn pri" data-a="pwainstall">${L2("Install BeyondERP", "تثبيت BeyondERP")}</button></p>` : ""}
       <p><b>Android (Chrome):</b> ${L2("Open this site → menu ⋮ → Install app (or Add to Home screen).", "افتح الموقع ← القائمة ⋮ ← تثبيت التطبيق (أو الإضافة إلى الشاشة الرئيسية).")}</p>
       <p><b>iPhone / iPad (Safari):</b> ${L2("Open this site → Share □↑ → Add to Home Screen.", "افتح الموقع ← مشاركة □↑ ← الإضافة إلى الشاشة الرئيسية.")}</p>
-      <p class="muted">${L2("Opens full screen, uses the same workspace and remains viewable offline; saving requires a connection.", "يُفتح بملء الشاشة ويستخدم مساحة العمل نفسها، ويمكن العرض دون اتصال؛ ويتطلب الحفظ اتصالاً.")}</p>`) +
-    card(L2("Desktop application, online (recommended)", "تطبيق سطح المكتب، متصل (مستحسن)"), `<p>${L2("Opens this site in a dedicated window. Same sign-in and books; changes appear immediately on all devices. Requires an internet connection.", "يفتح هذا الموقع في نافذة مستقلة، بنفس تسجيل الدخول والدفاتر، وتظهر التغييرات فوراً على جميع الأجهزة. يتطلب اتصالاً بالإنترنت.")}</p>
+      <p class="muted">${esc(ST("downloads.phone.text", "Opens full screen, uses the same workspace and remains viewable offline; saving requires a connection.", "يُفتح بملء الشاشة ويستخدم مساحة العمل نفسها، ويمكن العرض دون اتصال؛ ويتطلب الحفظ اتصالاً."))}</p>`) +
+    card(esc(ST("downloads.desktop.title", "Desktop application, online (recommended)", "تطبيق سطح المكتب، متصل (مستحسن)")), `<p>${esc(ST("downloads.desktop.text", "Opens this site in a dedicated window. Same sign-in and books; changes appear immediately on all devices. Requires an internet connection.", "يفتح هذا الموقع في نافذة مستقلة، بنفس تسجيل الدخول والدفاتر، وتظهر التغييرات فوراً على جميع الأجهزة. يتطلب اتصالاً بالإنترنت."))}</p>
       <p><b>Windows</b> — ${dl(f("windows"), L2("Download installer (.exe)", "تنزيل برنامج التثبيت (.exe)"))}</p>
       <p><b>Mac</b> — ${dl(f("mac"), L2("Download for Mac (.zip)", "تنزيل لنظام Mac (.zip)"))}</p>`) +
-    card(L2("BeyondERP Signer (e-invoices)", "برنامج التوقيع BeyondERP Signer (الفواتير الإلكترونية)"), `<p>${L2("For the computer the e-invoicing USB token is plugged into: signs invoices with the token and sends them to the tax authority, from the invoice itself. Installs like any program and runs in the background, with its icon by the clock; paste its pairing key in E-invoicing → Settings.", "للجهاز المتصل به توكن الفاتورة الإلكترونية: يوقّع الفواتير بالتوكن ويرسلها إلى مصلحة الضرائب من داخل الفاتورة نفسها. يُثبَّت مثل أي برنامج ويعمل في الخلفية وتظهر أيقونته بجوار الساعة؛ الصق مفتاح الربط في الفاتورة الإلكترونية ← الإعدادات.")}</p>
+    card(esc(ST("downloads.signer.title", "BeyondERP Signer (e-invoices)", "برنامج التوقيع BeyondERP Signer (الفواتير الإلكترونية)")), `<p>${esc(ST("downloads.signer.text", "For the computer the e-invoicing USB token is plugged into: signs invoices with the token and sends them to the tax authority, from the invoice itself. Installs like any program and runs in the background, with its icon by the clock; paste its pairing key in E-invoicing → Settings.", "للجهاز المتصل به توكن الفاتورة الإلكترونية: يوقّع الفواتير بالتوكن ويرسلها إلى مصلحة الضرائب من داخل الفاتورة نفسها. يُثبَّت مثل أي برنامج ويعمل في الخلفية وتظهر أيقونته بجوار الساعة؛ الصق مفتاح الربط في الفاتورة الإلكترونية ← الإعدادات."))}</p>
       <p><b>Windows</b> — ${dl(f("signer-windows"), L2("Download the Signer installer (.exe)", "تنزيل برنامج تثبيت التوقيع (.exe)"))}</p>`) +
     // the offline editions carry the whole app, so they are not public: the platform owner gets them from the private
     // GitHub release that every deploy refreshes (only people with access to the private repository can open it)
@@ -9989,7 +10019,7 @@ PAGES.download = async view => {
     (cfg.url ? card(L2("Connect the desktop application to this workspace", "ربط تطبيق سطح المكتب بمساحة العمل"), `<p>${L2("In the desktop application, open Settings → Workspace, paste these two values and sign in with your usual credentials.", "في تطبيق سطح المكتب، افتح الإعدادات ← مساحة العمل، والصق القيمتين، وسجّل الدخول ببياناتك المعتادة.")}</p>
       <div class="grid g2"><label class="f">${L2("Workspace URL", "رابط مساحة العمل")}<input value="${esc(cfg.url)}" readonly></label><div class="row" style="align-items:end"><button class="btn" data-a="copycfg" data-v="${esc(cfg.url)}">${L2("Copy", "نسخ")}</button></div>
       <label class="f">${L2("Public key", "المفتاح العام")}<input value="${esc(cfg.key)}" readonly></label><div class="row" style="align-items:end"><button class="btn" data-a="copycfg" data-v="${esc(cfg.key)}">${L2("Copy", "نسخ")}</button></div></div>`) : "");
-  $("#ttl").textContent = L2("Download the app", "تنزيل التطبيق");
+  $("#ttl").textContent = (ST("downloads.page_title", "Download the app", "تنزيل التطبيق"));
 };
 
 // ================================================================ payroll: employees, monthly runs, payslips, settings
@@ -12872,14 +12902,13 @@ PAGES.support = async (view, parts, q) => {
 };
 
 // ================================================== welcome screen (signed-out visitors)
-const LP_LINK = () => `<p class="center lp-link"><a href="#" data-lp="1">✦ ${esc(L2("Discover BeyondERP", "تعرّف على BeyondERP"))}</a></p>`;
+const LP_LINK = () => `<p class="center lp-link"><a href="#" data-lp="1">✦ ${esc(ST("auth.discover", "Discover BeyondERP", "تعرّف على BeyondERP"))}</a></p>`;
 document.addEventListener("click", e => { const a = e.target.closest("[data-lp]"); if (!a) return; e.preventDefault(); S.landingOk = false; renderLanding(); });
 // The first thing a new visitor sees: the night sky, the wordmark rising out of a glowing eclipse, and what BeyondERP
 // does, section by section as they scroll. Pure CSS animation (transform / opacity only) so it stays smooth on phones and
 // light on slow connections; respects "reduce motion". Shown on a first visit and again after signing out.
 // signing out shows the welcome screen first; its Sign in button leads on to the sign-in page
 function afterSignOut() { S.landingOk = false; scrollTo(0, 0); renderLanding(); }
-const LP_SOCIAL = ["https://www.linkedin.com/company/mybeyonderp", "https://www.facebook.com/people/Beyond-ERP/61595801625159/", "https://www.instagram.com/mybeyonderp/"];
 function renderLanding(opt = {}) {
   const ar = S.lang === "ar", setup = S.boot && S.boot.needs_setup, inApp = !!opt.inApp;
   const me = inApp && S.boot.user;
@@ -12890,11 +12919,9 @@ function renderLanding(opt = {}) {
   const word = LETTERS.map((c, i) => { const off = i - mid, dist = Math.abs(off), dir = Math.sign(off);
     const x = dist >= mid ? dir * 46 : dir * (dist * 9 + 5), dl = 1.15 + [0, .2, .38, .54, .68][Math.round(dist)];
     return `<span style="--x:${x}vw;--y:${dist ? -1.5 : 0}vh;--s:${dist ? 1.9 : 2.6};--dl:${dl.toFixed(2)}s" class="${i >= 6 ? "erp" : ""}" data-c="${c}"><b>${c}</b></span>`; }).join("");
-  const chips = [ST("home.chip.accounting", "General Accounting", "المحاسبة العامة"), ST("home.chip.receivable", "Accounts Receivable", "الذمم المدينة"), ST("home.chip.payable", "Accounts Payable", "الذمم الدائنة"),
-    ST("home.chip.inventory", "Inventory Management", "إدارة المخزون"), ST("home.chip.procurement", "Procurement", "المشتريات"), ST("home.chip.costing", "Project Costing", "تكاليف المشروعات"), ST("home.chip.contracts", "Contracts & Progress Billing", "العقود والمستخلصات"),
-    ST("home.chip.payroll", "Payroll and HR", "الرواتب والموارد البشرية"), ST("home.chip.assets", "Fixed Assets", "الأصول الثابتة"), ST("home.chip.treasury", "Treasury and Banking", "الخزينة والبنوك"), ST("home.chip.budgets", "Budgeting", "الموازنات"),
-    ST("home.chip.tax", "Tax and E-Invoicing", "الضرائب والفاتورة الإلكترونية"), ST("home.chip.sales", "Sales and Instalments", "المبيعات والتقسيط"), ST("home.chip.rental", "Equipment Rental", "تأجير المعدات"),
-    ST("home.chip.partners", "Partners and Equity", "الشركاء وحقوق الملكية"), ST("home.chip.reports", "Financial Reports", "التقارير المالية"), ST("home.chip.crm", "Customers and Deals", "العملاء والصفقات"), ST("home.chip.chat", "Team Chat", "محادثات الفريق"), ST("home.chip.ai", "AI Assistant", "المساعد الذكي")];
+  const chips = ST("home.chips", "General Accounting\nAccounts Receivable\nAccounts Payable\nInventory Management\nProcurement\nProject Costing\nContracts & Progress Billing\nPayroll and HR\nFixed Assets\nTreasury and Banking\nBudgeting\nTax and E-Invoicing\nSales and Instalments\nEquipment Rental\nPartners and Equity\nFinancial Reports\nCustomers and Deals\nTeam Chat\nAI Assistant",
+    "المحاسبة العامة\nالذمم المدينة\nالذمم الدائنة\nإدارة المخزون\nالمشتريات\nتكاليف المشروعات\nالعقود والمستخلصات\nالرواتب والموارد البشرية\nالأصول الثابتة\nالخزينة والبنوك\nالموازنات\nالضرائب والفاتورة الإلكترونية\nالمبيعات والتقسيط\nتأجير المعدات\nالشركاء وحقوق الملكية\nالتقارير المالية\nالعملاء والصفقات\nمحادثات الفريق\nالمساعد الذكي").split("\n").map(x => x.trim()).filter(Boolean);
+  const hide = siteHide(), shown = k => !hide.includes(k), logo = siteMediaUrl((S.site.media || {}).logo);
   const tiles = [["scale", ST("home.tile.ledger", "General ledger", "الأستاذ العام")], ["box", ST("home.tile.inventory", "Inventory", "المخزون")], ["users", ST("home.tile.payroll", "Payroll", "الرواتب")],
     ["receipt", ST("home.tile.tax", "Tax and e-invoicing", "الضرائب والفاتورة الإلكترونية")], ["file", ST("home.tile.boq", "Quotations and BOQs", "العروض والمقايسات")], ["brief", ST("home.tile.projects", "Projects", "المشروعات")]];
   const go = inApp ? L2("Back to BeyondERP", "العودة إلى BeyondERP") : setup ? ST("home.btn.start", "Get started", "ابدأ الآن") : ST("home.btn.signin", "Sign in", "تسجيل الدخول");
@@ -12905,45 +12932,50 @@ function renderLanding(opt = {}) {
       <div class="lp-app-row"><span>${esc(ST("home.mock.tb", "Trial balance", "ميزان المراجعة"))}</span><span class="lp-ok">✓ ${esc(ST("home.mock.balanced", "Balanced", "متوازن"))}</span></div>
       <div class="lp-app-row"><span>${esc(ST("home.mock.budget", "Projects within budget", "مشروعات ضمن الموازنة"))}</span><span>7 / 8</span></div>
       <small class="lp-demo">${esc(ST("home.mock.demo", "Demo company", "شركة تجريبية"))}</small></div>`;
-  $("#root").innerHTML = `<div class="lp" dir="${ar ? "rtl" : "ltr"}">
-    <header class="lp-nav"><a class="wordmark lp-mini lp-home" href="#/discover" title="${esc(L2("Welcome screen", "شاشة الترحيب"))}">BEYOND<i>ERP</i></a><span class="spacer"></span>
-      <button type="button" class="lp-motion" data-motion="1" title="${esc(L2("Turn welcome screen animation on or off", "تشغيل حركة شاشة الترحيب أو إيقافها"))}">${store.get("lpMotion", "on") === "off" ? L2("✦ Animation: off", "✦ الحركة: متوقفة") : L2("✦ Animation: on", "✦ الحركة: تعمل")}</button><button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button>${me ? `<span class="lp-me" title="${esc(L2("Signed in", "تم تسجيل الدخول"))}"><b>${esc(((me.full_name || me.username || "?").trim()[0] || "?").toUpperCase())}</b>${esc(me.full_name || me.username)}</span>` : ""}<button type="button" class="lp-pill sm" data-go="1">${esc(inApp ? L2("Return to the application", "العودة إلى التطبيق") : go)}</button></header>
-    <div class="lp-story"><nav class="lp-dots" aria-label="${esc(L2("Sections", "الأقسام"))}">${[0, 1, 2, 3, 4, 5].map(i => `<button type="button" data-sc="${i}" aria-label="${i + 1}"></button>`).join("")}</nav><div class="lp-stage">
-      <section class="lp-sc lp-s0 lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
+  const showcase = () => { const sc = S.site.showcase || {}, url = sc.on ? siteMediaUrl(sc.media) : "";
+    if (!url) return "";
+    const media = sc.kind === "video" ? `<video src="${esc(url)}" ${store.get("lpMotion", "on") === "off" ? "controls" : "autoplay loop"} muted playsinline preload="metadata"></video>` : `<img src="${esc(url)}" alt="" loading="lazy">`;
+    return `<section class="lp-show"><h2>${esc(ST("home.showcase.title", "See it at work", "شاهده أثناء العمل"))}</h2>
+      <p>${esc(ST("home.showcase.text", "A short look at the books, projects and reports in BeyondERP.", "نظرة سريعة على الدفاتر والمشروعات والتقارير في BeyondERP."))}</p><div class="lp-show-media">${media}</div></section>`; };
+  const scenes = [
+    ["hero", `<section class="lp-sc lp-s0 lp-hero">${heroBg()}<div class="lp-ring" aria-hidden="true"><i></i></div>
         <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
         <p class="lp-tag">${esc(ST("home.hero.tag", "RUN THE BUSINESS, NOT THE PAPERWORK", "أدِر أعمالك، لا أوراقها"))}</p>
         <p class="lp-sub">${esc(ST("home.hero.sub", "Accounts, projects, partners and payroll in one place.", "الحسابات والمشروعات والشركاء والرواتب في مكان واحد."))}</p>
         <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
         <small class="lp-note">${esc(ST("home.hero.note", "General ledger · Inventory · Projects · Payroll · Tax", "الأستاذ العام · المخزون · المشروعات · الرواتب · الضرائب"))}</small>
-        <div class="lp-scroll" aria-hidden="true"></div></section>
-      <section class="lp-sc lp-s1"><div class="lp-panel"><div class="lp-panel-txt">
+        <div class="lp-scroll" aria-hidden="true"></div></section>`],
+    ["books", `<section class="lp-sc lp-s1"><div class="lp-panel"><div class="lp-panel-txt">
           <h2>${STh("home.books.title", "Books that\nbalance\nthemselves.", "دفاتر\nمتوازنة\nدائماً.")}</h2>
           <p>${esc(ST("home.books.text", "Every voucher posts a double entry, so the trial balance, income statement and balance sheet are always current.", "يُرحَّل كل سند بقيد مزدوج، فيبقى ميزان المراجعة وقائمة الدخل والميزانية محدثة دائماً."))}</p>
-          <button type="button" class="lp-pill sm" data-go="1">${esc(go)}</button></div>${appMock("lp-app-wide")}<div class="lp-floor" aria-hidden="true"></div></div></section>
-      <section class="lp-sc lp-s2"><div class="lp-orb2" aria-hidden="true"><i class="lp-comet"></i></div>
+          <button type="button" class="lp-pill sm" data-go="1">${esc(go)}</button></div>${appMock("lp-app-wide")}<div class="lp-floor" aria-hidden="true"></div></div></section>`],
+    ["projects", `<section class="lp-sc lp-s2"><div class="lp-orb2" aria-hidden="true"><i class="lp-comet"></i></div>
         <h2>${esc(ST("home.projects.title", "Profit by project", "الربح لكل مشروع"))}</h2>
         <p>${esc(ST("home.projects.text", "Costs, progress billing, retentions and subcontractor certificates, with current work in progress for every project.", "التكاليف والمستخلصات والمحتجزات ومستخلصات مقاولي الباطن، مع الأعمال تحت التنفيذ محدثة لكل مشروع."))}</p>
         <div class="lp-minis"><div class="lp-mini2"><b>${esc(ST("home.partners.title", "Partners and funding", "الشركاء والتمويل"))}</b><span>${esc(ST("home.partners.text", "Shares, capital and profit appropriation, calculated automatically.", "الحصص ورأس المال وتوزيع الأرباح، تُحتسب تلقائياً."))}</span></div>
-          <div class="lp-mini2"><b>${esc(ST("home.materials.title", "Materials consumed", "المواد المستخدمة"))}</b><span>${esc(ST("home.materials.text", "Every material charged to a project, searchable.", "كل مادة محمّلة على مشروع، قابلة للبحث."))}</span></div></div></section>
-      <section class="lp-sc lp-s3"><div class="lp-ecl" aria-hidden="true"><i class="lp-ecl-light"></i><i class="lp-ecl-disc"></i></div>
+          <div class="lp-mini2"><b>${esc(ST("home.materials.title", "Materials consumed", "المواد المستخدمة"))}</b><span>${esc(ST("home.materials.text", "Every material charged to a project, searchable.", "كل مادة محمّلة على مشروع، قابلة للبحث."))}</span></div></div></section>`],
+    ["systems", `<section class="lp-sc lp-s3"><div class="lp-ecl" aria-hidden="true"><i class="lp-ecl-light"></i><i class="lp-ecl-disc"></i></div>
         <h2>${esc(ST("home.systems.title", "All your systems in one place", "جميع أنظمتك في مكان واحد"))}</h2>
         <p>${esc(ST("home.systems.text", "Accounting, stock, payroll, tax and projects share one set of books, with nothing to reconcile between them.", "تعمل المحاسبة والمخزون والرواتب والضرائب والمشروعات على دفاتر واحدة، دون حاجة إلى مطابقة بينها."))}</p>
-        <div class="lp-tiles">${tiles.map(([ic, l], i) => `<div class="lp-tile" style="--i:${i}">${svg(ic)}<span>${esc(l)}</span></div>`).join("")}</div></section>
-      <section class="lp-sc lp-s4"><div class="lp-globe-wrap" aria-hidden="true"><div class="lp-globe"></div>
+        <div class="lp-tiles">${tiles.map(([ic, l], i) => `<div class="lp-tile" style="--i:${i}">${svg(ic)}<span>${esc(l)}</span></div>`).join("")}</div></section>`],
+    ["forecast", `<section class="lp-sc lp-s4"><div class="lp-globe-wrap" aria-hidden="true"><div class="lp-globe"></div>
           <div class="lp-stat l"><b>${chips.length}</b><span>${esc(ST("home.stats.systems", "Systems", "نظاماً"))}</span><i></i></div>
           <div class="lp-stat r"><b>4</b><span>${esc(ST("home.stats.quarters", "Quarters ahead", "ربعاً قادماً"))}</span><i></i></div></div>
         <h2>${esc(ST("home.forecast.title", "Price and cost forecasting", "توقع الأسعار والتكاليف"))}</h2>
-        <p>${esc(ST("home.forecast.text", "Quarterly forecasts of costs and prices based on inflation, exchange rates and your own history.", "توقعات ربع سنوية للتكاليف والأسعار مبنية على التضخم وأسعار الصرف وبيانات شركتك."))}</p></section>
-      <section class="lp-sc lp-s5"><h2>${esc(ST("home.end.title", "Run the business, not the paperwork.", "أدِر أعمالك، لا أوراقها."))}</h2>
+        <p>${esc(ST("home.forecast.text", "Quarterly forecasts of costs and prices based on inflation, exchange rates and your own history.", "توقعات ربع سنوية للتكاليف والأسعار مبنية على التضخم وأسعار الصرف وبيانات شركتك."))}</p></section>`],
+    ["end", `<section class="lp-sc lp-s5"><h2>${esc(ST("home.end.title", "Run the business, not the paperwork.", "أدِر أعمالك، لا أوراقها."))}</h2>
         <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
-        <div class="lp-rise">${appMock("lp-app-phone")}</div><div class="lp-grid" aria-hidden="true"></div></section>
+        <div class="lp-rise">${appMock("lp-app-phone")}</div><div class="lp-grid" aria-hidden="true"></div></section>`]].filter(([k]) => k === "hero" || shown(k)).map(x => x[1]);
+  $("#root").innerHTML = `<div class="lp${logo ? " has-logo" : ""}" dir="${ar ? "rtl" : "ltr"}">
+    <header class="lp-nav"><a class="wordmark lp-mini lp-home" href="#/discover" title="${esc(L2("Welcome screen", "شاشة الترحيب"))}">${logo ? `<img class="lp-logo" src="${esc(logo)}" alt="${esc(appName())}">` : "BEYOND<i>ERP</i>"}</a><span class="spacer"></span>
+      <button type="button" class="lp-motion" data-motion="1" title="${esc(L2("Turn welcome screen animation on or off", "تشغيل حركة شاشة الترحيب أو إيقافها"))}">${store.get("lpMotion", "on") === "off" ? L2("✦ Animation: off", "✦ الحركة: متوقفة") : L2("✦ Animation: on", "✦ الحركة: تعمل")}</button><button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button>${me ? `<span class="lp-me" title="${esc(L2("Signed in", "تم تسجيل الدخول"))}"><b>${esc(((me.full_name || me.username || "?").trim()[0] || "?").toUpperCase())}</b>${esc(me.full_name || me.username)}</span>` : ""}<button type="button" class="lp-pill sm" data-go="1">${esc(inApp ? L2("Return to the application", "العودة إلى التطبيق") : go)}</button></header>
+    ${siteAnnounce("home")}
+    <div class="lp-story" style="--n:${scenes.length}"><nav class="lp-dots" aria-label="${esc(L2("Sections", "الأقسام"))}"${scenes.length < 2 ? " hidden" : ""}>${scenes.map((_, i) => `<button type="button" data-sc="${i}" aria-label="${i + 1}"></button>`).join("")}</nav><div class="lp-stage">${scenes.join("")}
     </div></div>
-    <section class="lp-band"><h2>${esc(ST("home.band.title", "The systems a growing company runs on", "الأنظمة التي تحتاجها الشركة في نموها"))}</h2>
-      <div class="lp-chips">${chips.map(c => `<span>${esc(c)}</span>`).join("")}</div></section>
-    <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span>${(m => m ? `<a class="lp-mail" href="mailto:${esc(m)}" dir="ltr">${esc(m)}</a>` : "")(ST("foot.email", "info@mybeyonderp.com", "info@mybeyonderp.com"))}<span class="lp-social">${[["LinkedIn", ST("foot.linkedin", "https://www.linkedin.com/company/mybeyonderp", "https://www.linkedin.com/company/mybeyonderp")],
-        ["Facebook", ST("foot.facebook", "https://www.facebook.com/people/Beyond-ERP/61595801625159/", "https://www.facebook.com/people/Beyond-ERP/61595801625159/")],
-        ["Instagram", ST("foot.instagram", "https://www.instagram.com/mybeyonderp/", "https://www.instagram.com/mybeyonderp/")]]
-        .map(([n, u], i) => `<a href="${esc(/^https:\/\/[^\s"'<>]+$/.test(u) ? u : LP_SOCIAL[i])}" target="_blank" rel="noopener me">${n}</a>`).join(" · ")}</span><small class="lp-copy">© ${new Date().getFullYear()} BEYONDERP. ${esc(ST("foot.rights", "All rights reserved.", "جميع الحقوق محفوظة."))}</small></footer></div>`;
+    ${showcase()}
+    ${shown("band") ? `<section class="lp-band"><h2>${esc(ST("home.band.title", "The systems a growing company runs on", "الأنظمة التي تحتاجها الشركة في نموها"))}</h2>
+      <div class="lp-chips">${chips.map(c => `<span>${esc(c)}</span>`).join("")}</div></section>` : ""}
+    <footer class="lp-foot">${logo ? `<img class="lp-logo" src="${esc(logo)}" alt="${esc(appName())}">` : `<span class="wordmark">BEYOND<i>ERP</i></span>`}${shown("email") ? (m => m ? `<a class="lp-mail" href="mailto:${esc(m)}" dir="ltr">${esc(m)}</a>` : "")(ST("foot.email", "info@mybeyonderp.com", "info@mybeyonderp.com")) : ""}${shown("links") ? `<span class="lp-social">${siteLinks().map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener me">${esc(l.name)}</a>`).join(" · ")}</span>` : ""}<small class="lp-copy">© ${new Date().getFullYear()} BEYONDERP. ${esc(ST("foot.rights", "All rights reserved.", "جميع الحقوق محفوظة."))}</small></footer></div>`;
   const root = $(".lp");
   root.addEventListener("click", e => {
     const home = e.target.closest(".lp-home");

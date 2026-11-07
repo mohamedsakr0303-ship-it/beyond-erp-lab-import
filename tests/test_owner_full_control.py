@@ -184,6 +184,70 @@ class OwnerFullControl(unittest.TestCase):
         self.assertIn("site.texts", self.ws.sql("select action from public.platform_log where action = 'site.texts' limit 1;"))
 
 
+@unittest.skipUnless(pgtest.available(), "PostgreSQL is not installed")
+class WebsiteSettings(unittest.TestCase):
+    """The website's layout, links, pictures and clips: public to read, set only by the owner or a team member allowed."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ws = pgtest.Workspace().__enter__()
+        cls.ws.sql(f"insert into public.platform_admins(email, name) values ('{OWNER}', 'Owner');")
+        cls.owner = cls.ws.as_user(OWNER)
+        cls.anon = cls.ws.as_user("", role="anon")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.ws.__exit__(None, None, None)
+
+    GOOD = {"announcement": {"on": True, "en": "New: e-invoicing", "ar": "جديد: الفاتورة الإلكترونية", "link": "https://example.com/news",
+                             "link_en": "Read more", "link_ar": "المزيد", "tone": "ok", "where": "both"},
+            "hide": ["forecast", "band"], "showcase": {"on": True, "media": "site/abc-demo.mp4", "kind": "video"},
+            "media": {"logo": "site/logo.png", "hero": "site/hero.webp", "hero_kind": "image", "signin": ""},
+            "links": [{"en": "LinkedIn", "ar": "لينكدإن", "url": "https://www.linkedin.com/company/x"}, {"en": "Terms", "url": "https://example.com/terms"}]}
+
+    def test_the_public_pages_read_texts_and_settings_in_one_call(self):
+        self.assertEqual(self.anon.rpc("site_public"), {"texts": {}, "site": {}})
+        self.owner.rpc("site_config_save", p=self.GOOD)
+        self.owner.rpc("site_texts_save", p={"home.showcase.title": {"en": "See it work", "ar": ""}})
+        pub = self.anon.rpc("site_public")
+        self.assertEqual(pub["site"], self.GOOD)
+        self.assertEqual(pub["texts"]["home.showcase.title"]["en"], "See it work")
+        self.assertIn("site.config", self.ws.sql("select action from public.platform_log where action = 'site.config' limit 1;"))
+
+    def test_bad_settings_are_refused(self):
+        bad = [{"colour": "red"}, {"announcement": {"en": "x" * 301}}, {"announcement": {"link": "javascript:alert(1)"}},
+               {"announcement": {"tone": "loud"}}, {"announcement": {"where": "everywhere"}}, {"hide": ["hero"]}, {"hide": "band"},
+               {"showcase": {"media": "../etc/passwd"}}, {"showcase": {"media": "https://elsewhere.example/x.png"}}, {"showcase": {"kind": "audio"}},
+               {"media": {"logo": "site/<script>.png"}}, {"media": {"favicon": "site/x.png"}}, {"links": [{"en": "X", "url": "http://plain.example"}]},
+               {"links": [{"en": "", "url": "https://example.com"}]}, {"links": [{"en": "L", "url": "https://e.com"}] * 13}]
+        for p in bad:
+            with self.assertRaises(pgtest.SQLError, msg=p):
+                self.owner.rpc("site_config_save", p=p)
+        with self.assertRaises(pgtest.SQLError):
+            self.anon.rpc("site_config_save", p={})
+        with self.assertRaises(pgtest.SQLError):
+            self.ws.as_user("customer@x.test").rpc("site_config_save", p={})
+
+    def test_pictures_and_clips_go_in_a_public_bucket_only_the_site_editors_fill(self):
+        row = self.ws.sql("select public::text || ' ' || file_size_limit::text || ' ' || array_to_string(allowed_mime_types, ',') from storage.buckets where id = 'site-media';")
+        self.assertIn("true 31457280", row)
+        self.assertNotIn("svg", row)                                                  # no pictures that can carry scripts
+        put = "insert into storage.objects(bucket_id, name) values ('site-media', '{}');"
+        with self.assertRaises(pgtest.SQLError):
+            self.ws.as_user("customer@x.test").execute(put.format("site/a.png"))
+        self.owner.rpc("console_staff_save", p={"email": "sup@platform.test", "name": "Sup", "full": False, "perms": {"support": True}, "active": True})
+        with self.assertRaises(pgtest.SQLError):
+            self.ws.as_user("sup@platform.test").execute(put.format("site/b.png"))
+        self.owner.execute(put.format("site/c.png"))
+        with self.assertRaises(pgtest.SQLError):
+            self.owner.execute(put.format("elsewhere/d.png"))                          # only under site/
+        self.owner.rpc("console_staff_save", p={"email": "sup@platform.test", "name": "Sup", "full": False, "perms": {"support": True, "site": True}, "active": True})
+        sup = self.ws.as_user("sup@platform.test")
+        sup.execute(put.format("site/e.png"))
+        sup.execute("delete from storage.objects where bucket_id = 'site-media' and name = 'site/c.png';")
+        self.assertEqual(self.ws.sql("select string_agg(name, ',' order by name) from storage.objects where bucket_id = 'site-media';").strip(), "site/e.png")
+
+
 class WebsiteTextsCatalogue(unittest.TestCase):
     """The texts the console lists come straight from the ERP's script, so every one it shows really appears."""
 
@@ -204,9 +268,12 @@ class WebsiteTextsCatalogue(unittest.TestCase):
             self.assertRegex(t["key"], r"^[a-z0-9_]+(\.[a-z0-9_]+){1,3}$")    # what the database accepts
             self.assertIn(t["place"], places, t["key"])
             self.assertTrue(t["en"].strip() and t["ar"].strip(), t["key"])
-        for k in ("home.hero.tag", "home.hero.sub", "home.books.title", "home.band.title", "home.chip.accounting", "home.btn.start",
-                  "auth.welcome", "auth.signup", "auth.trial", "foot.email", "foot.linkedin", "foot.rights"):
+        for k in ("home.hero.tag", "home.hero.sub", "home.books.title", "home.band.title", "home.chips", "home.btn.start", "home.showcase.title",
+                  "auth.welcome", "auth.signup", "auth.trial", "auth.google", "auth.slogan", "start.create", "start.join_help",
+                  "downloads.desktop.title", "public.powered", "foot.email", "foot.rights"):
             self.assertIn(k, keys)
+        chips = next(t for t in self.cat["texts"] if t["key"] == "home.chips")
+        self.assertEqual(len(chips["en"].split("\n")), len(chips["ar"].split("\n")))        # the list of systems, line for line
         self.assertTrue(next(t for t in self.cat["texts"] if t["key"] == "home.books.title")["multiline"])
         self.assertIn("{days}", next(t for t in self.cat["texts"] if t["key"] == "auth.trial")["en"])
 
@@ -219,6 +286,21 @@ class WebsiteTextsCatalogue(unittest.TestCase):
         self.assertTrue(set(fixed) <= {"Back to BeyondERP", "Welcome screen", "Turn welcome screen animation on or off", "✦ Animation: off",
                                        "✦ Animation: on", "Signed in", "Return to the application", "Sections"}, set(fixed))
 
+    def test_the_settings_the_console_writes_are_the_ones_the_pages_read(self):
+        import re
+        sql = (ROOT / "supabase" / "migrations" / "20261108000000_owner_full_control.sql").read_text(encoding="utf-8")
+        own = (ROOT / "web-src" / "owner.js").read_text(encoding="utf-8")
+        parts = re.search(r"where h not in \(([^)]*)\)", sql).group(1)
+        allowed = set(re.findall(r"'([a-z]+)'", parts))
+        block = own[own.index("const SITE_PARTS = "):own.index("];", own.index("const SITE_PARTS = "))]
+        offered = set(re.findall(r'\["([a-z]+)", L\(', block))
+        self.assertEqual(offered, allowed)                                                   # every part the console offers can be saved
+        for k in ('"books"', '"projects"', '"systems"', '"forecast"', '"end"'):
+            self.assertIn(f"[{k}, `", self.js)                                                # each scene the console can hide exists
+        for k in ("shown(\"band\")", "shown(\"email\")", "shown(\"links\")", "siteAnnounce(\"home\")", "siteAnnounce(\"signin\")", "heroBg()", "siteBg()", "showcase()"):
+            self.assertIn(k, self.js)
+        self.assertIn("rpc(\"site_public\"", (ROOT / "web-src" / "p.html").read_text(encoding="utf-8"))
+
     def test_two_wordings_for_one_key_are_refused(self):
         with self.assertRaises(ValueError):
             self.st.extract('ST("home.a", "One", "واحد") + ST("home.a", "Two", "اثنان")')
@@ -228,9 +310,13 @@ class WebsiteTextsCatalogue(unittest.TestCase):
         self.assertIn("site-texts.json", (ROOT / "build_web.py").read_text(encoding="utf-8"))
         own = (ROOT / "web-src" / "owner.js").read_text(encoding="utf-8")
         self.assertIn("PAGES.texts = ", own)
-        self.assertIn('["texts", "✎", L("Website texts", "نصوص الموقع"), "site"]', own)        # menu item, for the area "site"
-        self.assertIn('["site", L("Website texts', own)                                          # a team member can be given it
-        self.assertIn("async siteTexts()", (ROOT / "web-src" / "bridge.js").read_text(encoding="utf-8"))
+        self.assertIn('["texts", "✎", L("Website", "الموقع"), "site"]', own)                   # menu item, for the area "site"
+        self.assertIn('["site", L("Website: texts', own)                                         # a team member can be given it
+        for tab in ("websiteTexts", "websiteLayout", "websiteMedia", "websiteLinks"):
+            self.assertIn(f"async function {tab}(", own)
+        bridge = (ROOT / "web-src" / "bridge.js").read_text(encoding="utf-8")
+        self.assertIn("async sitePublic()", bridge)
+        self.assertIn("/storage/v1/object/public/site-media/", bridge)
 
     def test_the_plan_editor_and_company_page_carry_the_new_switches(self):
         own = (ROOT / "web-src" / "owner.js").read_text(encoding="utf-8")

@@ -122,9 +122,9 @@ const rpc = async (fn, p) => req("POST", "/rest/v1/rpc/" + fn, p || {}, await to
 const fnCall = async (name, body) => req("POST", "/functions/v1/" + name, body, await token());
 const push = (event, id, extra) => fnCall("push", { action: "platform", event, id, ...(extra || {}) }).catch(() => null);
 const myEmail = () => ((getSes() || {}).email || "").toLowerCase();
-async function upload(bucket, file) {
+async function upload(bucket, file, folder = "staff") {
   const safe = (String(file.name || "file").normalize("NFKD").replace(/[^\w.\-]+/g, "_").replace(/^_+/, "").slice(-80)) || "file";
-  const path = `staff/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${safe}`;
+  const path = `${folder}/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${safe}`;
   await req("POST", `/storage/v1/object/${bucket}/${path.split("/").map(encodeURIComponent).join("/")}`, undefined, await token(), file);
   return { path, name: String(file.name || safe).slice(0, 200), type: file.type || "", size: file.size || 0 };
 }
@@ -161,7 +161,7 @@ const NAV0 = () => [
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]]],
   [L("Product", "المنتج"), [["plans", "◎", L("Plans", "الباقات"), "settings"], ["addons", "＋", L("Modules, AI & support", "الأقسام والذكاء الاصطناعي والدعم"), "settings"],
     ["menus", "☰", L("Menus by industry", "القوائم حسب النشاط"), "settings"], ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"],
-    ["texts", "✎", L("Website texts", "نصوص الموقع"), "site"]]],
+    ["texts", "✎", L("Website", "الموقع"), "site"]]],
   [L("Console", "اللوحة"), [["team", "☷", L("Team", "الفريق"), "_full"], ["look", "🎨", L("Look of this console", "مظهر اللوحة"), "settings"],
     ["log", "⌚", L("Activity", "السجل"), "_full"], ["deleted", "⌫", L("Deleted companies", "الشركات المحذوفة"), "customers"]]]];
 // what this team member may do on the support desk (full access: everything; members added before: everything)
@@ -172,7 +172,7 @@ const DESK_NAV = () => [[L("Support", "الدعم"), [["queue", "☰", L("Queue"
     ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "desk:replies"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]], "support"],
   [L("Help center", "مركز المساعدة"), [["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"],
-    ["texts", "✎", L("Website texts", "نصوص الموقع"), "site"]], "product"],
+    ["texts", "✎", L("Website", "الموقع"), "site"]], "product"],
   [L("Customers", "العملاء"), [["customers", "▦", L("Customers", "العملاء"), "customers"], ["people", "☺", L("People", "الأشخاص"), "customers"]], "business"],
   [L("Me", "أنا"), [["alerts", "🔔", L("Notifications", "الإشعارات"), "*"]], "console"]];
 
@@ -1428,7 +1428,7 @@ PAGES.replies = async view => {
 // ================================================================== the website's texts: home page, sign-in screens, footer
 // Every text the public pages show from the ERP's own wording (site-texts.json, made by the build from the ERP's script)
 // can be rewritten here in English and Arabic; a blank language keeps the built-in wording. Saved for everyone at once.
-PAGES.texts = async (view, parts, q) => {
+async function websiteTexts(view, q) {
   const [cat, cur] = await Promise.all([fetch("site-texts.json", { cache: "no-store" }).then(r => (r.ok ? r.json() : null)).catch(() => null), rpc("site_texts_admin")]);
   if (!cat || !(cat.texts || []).length) {
     view.innerHTML = `<div class="card"><div class="empty">${esc(L("The list of texts comes with the website build (site-texts.json) and is not on this site yet. It appears after the next deploy.", "تأتي قائمة النصوص مع بناء الموقع (site-texts.json) وليست على هذا الموقع بعد. تظهر بعد النشر القادم."))}</div></div>`;
@@ -1459,8 +1459,7 @@ PAGES.texts = async (view, parts, q) => {
   });
   view.innerHTML = `<div class="card"><div class="row" style="gap:8px;flex-wrap:wrap">
       ${places.map(p => `<button class="btn sm ${p.key === place ? "pri" : ""}" data-a="txplace" data-k="${esc(p.key)}">${esc(pname(p))} <span class="small" style="opacity:.7">${cat.texts.filter(x => x.place === p.key).length}</span></button>`).join("")}
-      <span class="sp"></span><input type="search" placeholder="${esc(L("Search the texts", "ابحث في النصوص"))}" value="${esc(q.q || "")}" data-change="txfind" style="max-width:240px">
-      <a class="btn sm" href="./#/discover" target="_blank" rel="noopener">${esc(L("Open the home page", "فتح الصفحة الرئيسية"))} ↗</a></div>
+      <span class="sp"></span><input type="search" placeholder="${esc(L("Search the texts", "ابحث في النصوص"))}" value="${esc(q.q || "")}" data-change="txfind" style="max-width:240px"></div>
     <p class="muted small" style="margin:10px 0 0">${esc(L("Write the wording visitors should see; leave a language blank to keep the built-in wording shown faintly in the box. A line break in a heading starts a new line on the page. Links must start with https://.", "اكتب الصياغة التي يراها الزوار؛ اترك اللغة فارغة للإبقاء على الصياغة الأصلية الظاهرة باهتة في الخانة. سطر جديد في العنوان يبدأ سطراً جديداً في الصفحة. يجب أن تبدأ الروابط بـ https://."))}
       ${changed ? " " + chip(L(`${changed} changed`, `${changed} معدّل`), "warn") : ""}</p></div>
     <form id="txf" class="card" onsubmit="return false">${rows.length ? `<div class="tbl"><table><thead><tr><th style="width:22%">${esc(L("Text", "النص"))}</th><th>English</th><th>العربية</th><th></th></tr></thead><tbody>
@@ -1470,6 +1469,133 @@ PAGES.texts = async (view, parts, q) => {
         <td class="r">${c ? `<button type="button" class="btn sm" data-a="txreset" data-k="${esc(x.key)}" title="${esc(L("Back to the built-in wording", "العودة إلى الصياغة الأصلية"))}">↺</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>
       <div class="row" style="margin-top:12px"><button class="btn pri" data-a="txsave">${esc(L("Save", "حفظ"))}</button></div>`
       : `<div class="empty">${esc(L("No text matches.", "لا يوجد نص مطابق."))}</div>`}</form>`;
+}
+
+// ---- the other tabs: the layout and the announcement bar, pictures and clips, the footer's links (site_config)
+const WEB_TABS = () => [["texts", L("Texts", "النصوص")], ["layout", L("Layout & announcement", "التخطيط والإعلان")], ["media", L("Pictures & clips", "الصور والمقاطع")],
+  ["links", L("Footer links", "روابط التذييل")]];
+const SITE_URL = /^https:\/\/[^\s"'<>]+$/;
+const SITE_BUILTIN_LINKS = [{ en: "LinkedIn", ar: "", url: "https://www.linkedin.com/company/mybeyonderp" },
+  { en: "Facebook", ar: "", url: "https://www.facebook.com/people/Beyond-ERP/61595801625159/" }, { en: "Instagram", ar: "", url: "https://www.instagram.com/mybeyonderp/" }];
+const siteMediaUrl = p => { const c = cfg(); return c && p ? `${c.url}/storage/v1/object/public/site-media/${String(p).split("/").map(encodeURIComponent).join("/")}` : ""; };
+const siteMediaTag = (p, kind, extra = "") => !p ? "" : kind === "video"
+  ? `<video src="${esc(siteMediaUrl(p))}" muted loop autoplay playsinline preload="metadata" ${extra}></video>` : `<img src="${esc(siteMediaUrl(p))}" alt="" ${extra}>`;
+async function siteConfig() { return ((await rpc("site_public")) || {}).site || {}; }
+async function siteConfigSave(next, msg) {
+  await rpc("site_config_save", { p: next });
+  toast(msg || L("Saved. Visitors see it the next time a page opens.", "حُفظ. يراه الزوار عند فتح الصفحة التالية.")); route();
+}
+const SITE_PARTS = () => [["books", L("Scene 2 — Books that balance themselves", "المشهد 2 — دفاتر متوازنة دائماً")], ["projects", L("Scene 3 — Profit by project", "المشهد 3 — الربح لكل مشروع")],
+  ["systems", L("Scene 4 — All your systems in one place", "المشهد 4 — جميع أنظمتك في مكان واحد")], ["forecast", L("Scene 5 — Price and cost forecasting", "المشهد 5 — توقع الأسعار والتكاليف")],
+  ["end", L("Scene 6 — The closing scene", "المشهد 6 — المشهد الختامي")], ["band", L("The band with the list of systems", "شريط قائمة الأنظمة")],
+  ["email", L("The email address in the footer", "البريد الإلكتروني في التذييل")], ["links", L("The links in the footer", "الروابط في التذييل")]];
+
+async function websiteLayout(view) {
+  const site = await siteConfig(), a = site.announcement || {}, hide = site.hide || [], sc = site.showcase || {};
+  const bar = v => !v.a_en && !v.a_ar ? "" : `<div class="site-prev ${esc(v.a_tone || "info")}"><span>${esc(S.lang === "ar" && v.a_ar ? v.a_ar : v.a_en)}</span>${v.a_link ? ` <u>${esc((S.lang === "ar" && v.a_link_ar) || v.a_link_en || L("Learn more", "اعرف المزيد"))}</u>` : ""} <span class="muted">×</span></div>`;
+  S.H.wlsave = async () => { const v = readForm($("#wlf"));
+    const ann = { on: !!v.a_on, en: v.a_en.trim(), ar: v.a_ar.trim(), link: v.a_link.trim(), link_en: v.a_link_en.trim(), link_ar: v.a_link_ar.trim(), tone: v.a_tone, where: v.a_where };
+    if (ann.on && !ann.en) throw new Error(L("Write the announcement in English (Arabic is optional).", "اكتب الإعلان بالإنجليزية (العربية اختيارية)."));
+    if (ann.link && !SITE_URL.test(ann.link)) throw new Error(L("The announcement's link must start with https://", "يجب أن يبدأ رابط الإعلان بـ https://"));
+    if (v.sc_on && !sc.media) throw new Error(L("Add the showcase's picture or clip first (Pictures & clips).", "أضف صورة العرض أو مقطعه أولاً (الصور والمقاطع)."));
+    await siteConfigSave({ ...site, announcement: ann, hide: SITE_PARTS().map(p => p[0]).filter(k => !v["show_" + k]), showcase: { ...sc, on: !!v.sc_on } }); };
+  view.innerHTML = `<form id="wlf" onsubmit="return false"><div class="grid g2">
+    <div class="card"><h2>${esc(L("Announcement bar", "شريط الإعلان"))}</h2><p class="muted small">${esc(L("A short line at the top of the home page and/or the sign-in screens: an offer, news, a maintenance note. Visitors can close it; a new text shows again.", "سطر قصير أعلى الصفحة الرئيسية و/أو شاشات تسجيل الدخول: عرض أو خبر أو تنبيه صيانة. يمكن للزائر إغلاقه؛ ويظهر النص الجديد مرة أخرى."))}</p>
+      ${form([{ k: "a_on", l: L("Show the announcement", "إظهار الإعلان"), type: "check", v: !!a.on, span: 1 },
+        { k: "a_en", l: L("Text (English)", "النص (إنجليزي)"), v: a.en || "", span: 1 }, { k: "a_ar", l: L("Text (Arabic)", "النص (عربي)"), v: a.ar || "", span: 1, dir: "rtl" },
+        { k: "a_link", l: L("Link (optional, https://…)", "الرابط (اختياري، https://…)"), v: a.link || "", dir: "ltr", span: 1 },
+        { k: "a_link_en", l: L("Link text (English)", "نص الرابط (إنجليزي)"), v: a.link_en || "" }, { k: "a_link_ar", l: L("Link text (Arabic)", "نص الرابط (عربي)"), v: a.link_ar || "", dir: "rtl" },
+        { k: "a_tone", l: L("Style", "النمط"), type: "select", v: a.tone || "info", opts: [["info", L("Calm (brand colour)", "هادئ (لون العلامة)")], ["ok", L("Good news (green)", "خبر سار (أخضر)")], ["warn", L("Attention (amber)", "تنبيه (كهرماني)")]] },
+        { k: "a_where", l: L("Where", "أين"), type: "select", v: a.where || "home", opts: [["home", L("Home page", "الصفحة الرئيسية")], ["signin", L("Sign-in screens", "شاشات تسجيل الدخول")], ["both", L("Both", "كلاهما")]] }])}
+      <b class="small muted">${esc(L("Preview", "معاينة"))}</b><div id="annprev">${bar({ a_en: a.en, a_ar: a.ar, a_link: a.link, a_link_en: a.link_en, a_link_ar: a.link_ar, a_tone: a.tone })}</div></div>
+    <div><div class="card"><h2>${esc(L("Home page parts", "أجزاء الصفحة الرئيسية"))}</h2><p class="muted small">${esc(L("The first scene (the name, its line and the button) always shows. Untick a part to leave it out; the scrolling story adjusts to the scenes left.", "يظهر المشهد الأول (الاسم وسطره والزر) دائماً. ألغِ تحديد جزء لإخفائه؛ ويتكيف التمرير مع المشاهد المتبقية."))}</p>
+      <div class="grid g1" style="gap:6px">${SITE_PARTS().map(([k, l]) => `<label class="chk"><input type="checkbox" name="show_${k}" ${hide.includes(k) ? "" : "checked"}> ${esc(l)}</label>`).join("")}</div></div>
+    <div class="card"><h2>${esc(L("Showcase", "العرض"))}</h2><p class="muted small">${esc(L("A block after the story with a picture or a clip of your choice (a product tour, a customer, an event). Its heading and text are in Texts → Home page.", "قسم بعد القصة بصورة أو مقطع تختاره (جولة في المنتج، عميل، فعالية). عنوانه ونصه في النصوص ← الصفحة الرئيسية."))}</p>
+      ${sc.media ? `<div class="site-thumb">${siteMediaTag(sc.media, sc.kind)}</div>` : `<p class="muted small">${esc(L("No picture or clip yet:", "لا توجد صورة أو مقطع بعد:"))} <a href="#/texts?tab=media">${esc(L("Pictures & clips", "الصور والمقاطع"))}</a></p>`}
+      ${form([{ k: "sc_on", l: L("Show the showcase on the home page", "إظهار العرض في الصفحة الرئيسية"), type: "check", v: !!sc.on, span: 1 }])}</div></div></div>
+    <div class="row" style="margin-top:4px"><button class="btn pri" data-a="wlsave">${esc(L("Save", "حفظ"))}</button></div></form>`;
+  afterHooks.push(v => { const f = $("#wlf", v); if (f) f.addEventListener("input", () => { $("#annprev", v).innerHTML = bar(readForm(f)); }); });
+}
+
+// the pictures and clips: each slot shows what it has, takes a new file, or goes back to the built-in look
+const SITE_SLOTS = () => [
+  ["logo", L("Logo", "الشعار"), L("In the home page's top bar and footer, and on the sign-in screens, instead of the BEYONDERP wordmark. A wide PNG or WebP with a transparent background works best.", "في الشريط العلوي للصفحة الرئيسية وتذييلها وفي شاشات تسجيل الدخول بدلاً من كلمة BEYONDERP. الأفضل PNG أو WebP عريض بخلفية شفافة."), false],
+  ["hero", L("Home page background", "خلفية الصفحة الرئيسية"), L("Behind the first scene: a picture, or a short silent clip that loops (MP4 or WebM, a few seconds).", "خلف المشهد الأول: صورة، أو مقطع قصير صامت يتكرر (MP4 أو WebM، بضع ثوانٍ)."), true],
+  ["signin", L("Sign-in background", "خلفية تسجيل الدخول"), L("Behind the sign-in and getting-started screens.", "خلف شاشات تسجيل الدخول والبدء."), false],
+  ["showcase", L("Showcase", "العرض"), L("The showcase block's picture or clip (switch it on in Layout & announcement).", "صورة قسم العرض أو مقطعه (شغّله من التخطيط والإعلان)."), true]];
+const slotGet = (site, k) => k === "showcase" ? [(site.showcase || {}).media, (site.showcase || {}).kind] : [(site.media || {})[k], k === "hero" ? (site.media || {}).hero_kind : "image"];
+function slotSet(site, k, path, kind) {
+  const next = JSON.parse(JSON.stringify(site || {}));
+  if (k === "showcase") { next.showcase = { ...(next.showcase || {}), media: path, kind: kind || "image" }; if (!path) next.showcase.on = false; }
+  else { next.media = { ...(next.media || {}), [k]: path }; if (k === "hero") next.media.hero_kind = kind || "image"; }
+  return next;
+}
+const SITE_IMAGES = ["image/png", "image/jpeg", "image/webp", "image/gif"], SITE_CLIPS = ["video/mp4", "video/webm"];
+async function websiteMedia(view) {
+  const site = await siteConfig();
+  const used = (st, p) => SITE_SLOTS().some(([k]) => slotGet(st, k)[0] === p);
+  const drop = async p => req("DELETE", `/storage/v1/object/site-media/${String(p).split("/").map(encodeURIComponent).join("/")}`, undefined, await token()).catch(() => null);
+  Object.assign(S.H, {
+    wmup: async el => {
+      const f = el.files && el.files[0], k = el.dataset.slot, slot = SITE_SLOTS().find(x => x[0] === k); if (!f || !slot) return;
+      const clip = SITE_CLIPS.includes(f.type);
+      if (!SITE_IMAGES.includes(f.type) && !clip) throw new Error(L("Use a PNG, JPEG, WebP or GIF picture, or an MP4 or WebM clip.", "استخدم صورة PNG أو JPEG أو WebP أو GIF، أو مقطع MP4 أو WebM."));
+      if (clip && !slot[3]) throw new Error(L("This place takes a picture, not a clip.", "هذا المكان يأخذ صورة وليس مقطعاً."));
+      if (f.size > (clip ? 30 : 8) * 1048576) throw new Error(clip ? L("Clips up to 30 MB — a few seconds is enough for a background.", "المقاطع حتى 30 ميجابايت — تكفي بضع ثوانٍ للخلفية.") : L("Pictures up to 8 MB.", "الصور حتى 8 ميجابايت."));
+      toast(L("Uploading…", "جارٍ الرفع…"));
+      const old = slotGet(site, k)[0], up = await upload("site-media", f, "site"), next = slotSet(site, k, up.path, clip ? "video" : "image");
+      await rpc("site_config_save", { p: next });
+      if (old && !used(next, old)) await drop(old);
+      toast(L("Saved. Visitors see it the next time a page opens.", "حُفظ. يراه الزوار عند فتح الصفحة التالية.")); route(); },
+    wmdel: async el => { const k = el.dataset.slot, old = slotGet(site, k)[0];
+      if (!await confirmIt(L("Remove this and go back to the built-in look?", "إزالة هذا والعودة إلى الشكل الأصلي؟"))) return;
+      const next = slotSet(site, k, "", "image"); await rpc("site_config_save", { p: next });
+      if (old && !used(next, old)) await drop(old);
+      toast(L("Back to the built-in look.", "عاد إلى الشكل الأصلي.")); route(); } });
+  view.innerHTML = `<div class="grid g2">${SITE_SLOTS().map(([k, l, help, clips]) => { const [p, kind] = slotGet(site, k);
+    return `<div class="card"><h2>${esc(l)}</h2><p class="muted small">${esc(help)}</p>
+      <div class="site-thumb ${k === "logo" ? "logo" : ""}">${p ? siteMediaTag(p, kind) : `<span class="muted small">${esc(L("Built-in look", "الشكل الأصلي"))}</span>`}</div>
+      <div class="row" style="margin-top:10px"><label class="btn sm pri">${esc(p ? L("Replace", "استبدال") : L("Upload", "رفع"))}<input type="file" hidden data-change="wmup" data-slot="${k}" accept="${[...SITE_IMAGES, ...(clips ? SITE_CLIPS : [])].join(",")}"></label>
+        ${p ? `<button type="button" class="btn sm" data-a="wmdel" data-slot="${k}">${esc(L("Remove", "إزالة"))}</button>` : ""}
+        <span class="muted small">${esc(clips ? L("Picture up to 8 MB, or clip up to 30 MB", "صورة حتى 8 ميجابايت أو مقطع حتى 30 ميجابايت") : L("Picture up to 8 MB", "صورة حتى 8 ميجابايت"))}</span></div></div>`; }).join("")}</div>`;
+}
+
+// the footer's links (and the email shown there)
+async function websiteLinks(view) {
+  const [site, cur] = await Promise.all([siteConfig(), rpc("site_texts_admin")]);
+  let rows = (Array.isArray(site.links) && site.links.length ? site.links : SITE_BUILTIN_LINKS).map(x => ({ en: x.en || "", ar: x.ar || "", url: x.url || "" }));
+  const email = (cur["foot.email"] || {}).en || "";
+  const read = () => $$("#wkf tr[data-i]").map(tr => ({ en: $("[name=en]", tr).value.trim(), ar: $("[name=ar]", tr).value.trim(), url: $("[name=url]", tr).value.trim() }));
+  const draw = () => { $("#wkrows").innerHTML = rows.map((r, i) => `<tr data-i="${i}"><td><input name="en" value="${esc(r.en)}" maxlength="40" placeholder="LinkedIn"></td>
+      <td><input name="ar" value="${esc(r.ar)}" maxlength="40" dir="rtl" placeholder="${esc(L("optional", "اختياري"))}"></td><td><input name="url" value="${esc(r.url)}" dir="ltr" placeholder="https://"></td>
+      <td class="r nowrap"><button type="button" class="btn sm" data-a="wkup" data-i="${i}" title="${esc(L("Move earlier", "تقديم"))}">↑</button><button type="button" class="btn sm" data-a="wkdown" data-i="${i}" title="${esc(L("Move later", "تأخير"))}">↓</button><button type="button" class="btn sm" data-a="wkdel" data-i="${i}" title="${esc(L("Remove", "إزالة"))}">✕</button></td></tr>`).join("")
+      || `<tr><td colspan="4" class="muted">${esc(L("No links: the built-in ones (LinkedIn, Facebook, Instagram) show.", "لا روابط: تظهر الروابط الأصلية (LinkedIn وFacebook وInstagram)."))}</td></tr>`; };
+  Object.assign(S.H, {
+    wkadd: () => { rows = read(); if (rows.length >= 12) return toast(L("Up to 12 links.", "حتى 12 رابطاً."), true); rows.push({ en: "", ar: "", url: "" }); draw(); },
+    wkdel: el => { rows = read(); rows.splice(+el.dataset.i, 1); draw(); },
+    wkup: el => { rows = read(); const i = +el.dataset.i; if (i > 0) [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; draw(); },
+    wkdown: el => { rows = read(); const i = +el.dataset.i; if (i < rows.length - 1) [rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; draw(); },
+    wksave: async () => { const list = read().filter(r => r.en || r.url);
+      for (const r of list) { if (!r.en) throw new Error(L("Give every link a name.", "أعطِ كل رابط اسماً.")); if (!SITE_URL.test(r.url)) throw new Error(L(`The address of ${r.en} must start with https://`, `يجب أن يبدأ عنوان ${r.en} بـ https://`)); }
+      const mail = $("#wkf [name=email]").value.trim();
+      if (mail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) throw new Error(L("Check the email address.", "تحقق من البريد الإلكتروني."));
+      if (mail !== email) await rpc("site_texts_save", { p: { "foot.email": { en: mail, ar: mail } } });
+      const same = JSON.stringify(list) === JSON.stringify(SITE_BUILTIN_LINKS.map(x => ({ en: x.en, ar: x.ar, url: x.url })));
+      await siteConfigSave({ ...site, links: same ? [] : list }); } });
+  view.innerHTML = `<form id="wkf" class="card" onsubmit="return false"><h2>${esc(L("Footer links", "روابط التذييل"))}</h2>
+    <p class="muted small">${esc(L("The links at the bottom of the home page: your social pages, terms, privacy, a contact page. Each needs a name and an https:// address; the Arabic name is optional. To hide them all, untick them in Layout & announcement.", "الروابط أسفل الصفحة الرئيسية: صفحاتك الاجتماعية والشروط والخصوصية وصفحة التواصل. يحتاج كل رابط اسماً وعنوان https://؛ والاسم العربي اختياري. لإخفائها كلها ألغِ تحديدها في التخطيط والإعلان."))}</p>
+    <div class="tbl"><table><thead><tr><th>${esc(L("Name", "الاسم"))}</th><th>${esc(L("Name (Arabic)", "الاسم (عربي)"))}</th><th>${esc(L("Address", "العنوان"))}</th><th></th></tr></thead><tbody id="wkrows"></tbody></table></div>
+    <div class="row" style="margin-top:8px"><button type="button" class="btn sm" data-a="wkadd">＋ ${esc(L("Link", "رابط"))}</button></div>
+    <label class="f" style="margin-top:14px;max-width:420px">${esc(L("Email shown in the footer (blank: the built-in one)", "البريد الظاهر في التذييل (فارغ: الأصلي)"))}<input name="email" dir="ltr" value="${esc(email)}" placeholder="info@mybeyonderp.com"></label>
+    <div class="row" style="margin-top:12px"><button class="btn pri" data-a="wksave">${esc(L("Save", "حفظ"))}</button></div></form>`;
+  afterHooks.push(() => draw());
+}
+
+PAGES.texts = async (view, parts, q) => {
+  const tab = ["layout", "media", "links"].includes(q.tab) ? q.tab : "texts";
+  await ({ texts: websiteTexts, layout: websiteLayout, media: websiteMedia, links: websiteLinks })[tab](view, q);
+  view.insertAdjacentHTML("afterbegin", `<div class="row" style="gap:6px;margin-bottom:12px;flex-wrap:wrap">${WEB_TABS().map(([k, l]) => `<a class="btn sm ${k === tab ? "pri" : ""}" href="#/texts?tab=${k}">${esc(l)}</a>`).join("")}
+    <span class="sp"></span><a class="btn sm" href="./#/discover" target="_blank" rel="noopener">${esc(L("Open the home page", "فتح الصفحة الرئيسية"))} ↗</a></div>`);
 };
 
 // ================================================================== support visits
@@ -1856,7 +1982,7 @@ PAGES.methods = async view => {
 const AREAS = () => [["overview", L("Overview", "نظرة عامة")], ["customers", L("Customers, people, cancellations", "العملاء والأشخاص والإلغاءات")], ["billing", L("See orders and payments", "عرض الطلبات والمدفوعات")],
   ["approve", L("Approve payments; trials, free use, suspend, archive, accounts", "اعتماد المدفوعات؛ التجارب والمجاني والإيقاف والأرشفة والحسابات")], ["support", L("Support tickets and visits", "بلاغات وزيارات الدعم")],
   ["notices", L("Announcements", "الإعلانات")], ["settings", L("Plans, prices, rules, payment methods, look", "الباقات والأسعار والقواعد وطرق الدفع والمظهر")],
-  ["site", L("Website texts (home page, sign-in, public pages)", "نصوص الموقع (الصفحة الرئيسية وتسجيل الدخول والصفحات العامة)")]];
+  ["site", L("Website: texts, pictures, clips, layout and links of the public pages", "الموقع: نصوص وصور ومقاطع وتخطيط وروابط الصفحات العامة")]];
 const DESK_L = () => ({ reply: L("Reply to customers and start live chats", "الرد على العملاء وبدء المحادثات"), notes: L("Write internal notes", "كتابة ملاحظات داخلية"),
   manage: L("Change status, priority and who it is assigned to; end live chats", "تغيير الحالة والأولوية والمسؤول؛ إنهاء المحادثات"), close: L("Close tickets and share solutions", "إغلاق البلاغات ونشر الحلول"),
   books: L("Enter customers' books when they allow it", "دخول دفاتر العملاء عند سماحهم"), contacts: L("See customers' emails and company details", "رؤية بريد العملاء وبيانات الشركة"),

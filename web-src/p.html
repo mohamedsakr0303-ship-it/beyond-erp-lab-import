@@ -82,6 +82,11 @@ async function rpc(name, body) {
       body: JSON.stringify({ action: "visitor", token: TOK }) }).catch(() => {});
   return j;
 }
+// the line under every public page, as the platform owner wrote it in the owner console (Website → Texts)
+let SITE = store.get("site") || {};
+const ST = (k, en, ar) => { const o = SITE[k], v = o && (L === "ar" ? o.ar : o.en); return v && String(v).trim() ? String(v) : T(en, ar); };
+if (cfgc.url && cfgc.key) rpc("site_public", {}).then(d => { const t = (d && d.texts) || {};
+  if (JSON.stringify(t) !== JSON.stringify(SITE)) { SITE = t; store.set("site", t); header(); } }).catch(() => {});
 let PG = null;
 const ttl = () => PG ? (L === "ar" && PG.config && PG.config.title_ar ? PG.config.title_ar : PG.title) : "";
 const main = () => $("#main");
@@ -97,7 +102,7 @@ function header() {
   document.title = (PG && (PG.title || PG.company)) || "BeyondERP";
   document.documentElement.lang = L; document.documentElement.dir = L === "ar" ? "rtl" : "ltr";
   $("#lang").textContent = L === "ar" ? "English" : "عربي";
-  $("#foot").innerHTML = `<a href="./" rel="noopener">${T("Powered by <b>BeyondERP</b> · Run your business on it too →", "بواسطة <b>BeyondERP</b> · أدِر أعمالك أنت أيضاً به ←")}</a>`;
+  $("#foot").innerHTML = `<a href="./" rel="noopener">${esc(ST("public.powered", "Powered by BeyondERP · Run your business on it too →", "بواسطة BeyondERP · أدِر أعمالك أنت أيضاً به ←")).replace("BeyondERP", "<b>BeyondERP</b>")}</a>`;
   if (PG && PG.config && /^#[0-9a-f]{6}$/i.test(PG.config.color || "")) document.documentElement.style.setProperty("--brand", PG.config.color);
 }
 $("#lang").onclick = () => { L = L === "ar" ? "en" : "ar"; store.set("lang", L); try { localStorage.setItem("berp.p.lang", L); } catch {} render(); };

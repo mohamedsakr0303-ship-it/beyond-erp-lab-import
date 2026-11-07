@@ -252,3 +252,106 @@ begin
 end $$;
 revoke execute on function public.site_texts_admin(), public.site_texts_save(jsonb) from public, anon;
 grant execute on function public.site_texts_admin(), public.site_texts_save(jsonb) to authenticated;
+
+-- ================================================================== the website's layout, links, pictures and clips
+-- One record the console edits (Website → Layout, Pictures & clips, Links), read by the public pages with the texts:
+--   announcement {on, en, ar, link, link_en, link_ar, tone: info|ok|warn, where: home|signin|both}
+--   hide         [books, projects, systems, forecast, end, band, email, links]   home page parts not shown
+--   showcase     {on, media, kind: image|video}       a block with a picture or a clip (its words are texts)
+--   media        {logo, hero, hero_kind, signin}      the platform's logo, the home page's background, the sign-in background
+--   links        [{en, ar, url}]                      the footer's links (none set: the built-in ones)
+-- Pictures and clips live in the public bucket site-media under site/…; only the owner and team members given
+-- "Website texts" may add or remove them.
+create table if not exists public.site_config (
+  id         int primary key default 1 check (id = 1),
+  value      jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now(),
+  updated_by text
+);
+insert into public.site_config(id) values (1) on conflict (id) do nothing;
+alter table public.site_config enable row level security;
+revoke all on public.site_config from anon, authenticated;
+
+create or replace function public.beyond_site_path(v jsonb) returns boolean
+language sql immutable as $$
+  select v is null or v = 'null'::jsonb or v = '""'::jsonb
+      or (jsonb_typeof(v) = 'string' and (v #>> '{}') ~ '^site/[A-Za-z0-9][A-Za-z0-9._-]{0,150}$')
+$$;
+
+create or replace function public.beyond_site_url(v jsonb) returns boolean
+language sql immutable as $$
+  select v is null or v = 'null'::jsonb or v = '""'::jsonb
+      or (jsonb_typeof(v) = 'string' and length(v #>> '{}') between 11 and 500 and (v #>> '{}') ~ '^https://[^\s"''<>]+$')
+$$;
+
+create or replace function public.site_config_save(p jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare a jsonb := p->'announcement'; m jsonb := p->'media'; sc jsonb := p->'showcase'; x jsonb;
+begin
+  perform public.beyond_require_staff('site');
+  if jsonb_typeof(p) <> 'object' then raise exception 'send the website settings as an object'; end if;
+  if exists (select 1 from jsonb_object_keys(p) k where k not in ('announcement', 'hide', 'showcase', 'media', 'links')) then
+    raise exception 'unknown website setting';
+  end if;
+  if a is not null and (jsonb_typeof(a) <> 'object'
+      or exists (select 1 from jsonb_object_keys(a) k where k not in ('on', 'en', 'ar', 'link', 'link_en', 'link_ar', 'tone', 'where'))
+      or (a ? 'on' and jsonb_typeof(a->'on') <> 'boolean')
+      or length(coalesce(a->>'en', '')) > 300 or length(coalesce(a->>'ar', '')) > 300
+      or length(coalesce(a->>'link_en', '')) > 40 or length(coalesce(a->>'link_ar', '')) > 40
+      or not public.beyond_site_url(a->'link')
+      or coalesce(a->>'tone', 'info') not in ('info', 'ok', 'warn') or coalesce(a->>'where', 'home') not in ('home', 'signin', 'both')) then
+    raise exception 'the announcement needs its text (300 characters at most), an https:// link or none, a style and where it shows';
+  end if;
+  if p ? 'hide' and (jsonb_typeof(p->'hide') <> 'array' or exists (select 1 from jsonb_array_elements_text(p->'hide') h
+      where h not in ('books', 'projects', 'systems', 'forecast', 'end', 'band', 'email', 'links'))) then
+    raise exception 'unknown part of the home page';
+  end if;
+  if sc is not null and (jsonb_typeof(sc) <> 'object'
+      or exists (select 1 from jsonb_object_keys(sc) k where k not in ('on', 'media', 'kind'))
+      or not public.beyond_site_path(sc->'media') or coalesce(sc->>'kind', 'image') not in ('image', 'video')) then
+    raise exception 'the showcase needs a picture or a clip from Pictures & clips';
+  end if;
+  if m is not null and (jsonb_typeof(m) <> 'object'
+      or exists (select 1 from jsonb_object_keys(m) k where k not in ('logo', 'hero', 'hero_kind', 'signin'))
+      or not public.beyond_site_path(m->'logo') or not public.beyond_site_path(m->'hero') or not public.beyond_site_path(m->'signin')
+      or coalesce(m->>'hero_kind', 'image') not in ('image', 'video')) then
+    raise exception 'pictures and clips must be ones uploaded in Pictures & clips';
+  end if;
+  if p ? 'links' then
+    if jsonb_typeof(p->'links') <> 'array' or jsonb_array_length(p->'links') > 12 then raise exception 'up to 12 links'; end if;
+    for x in select value from jsonb_array_elements(p->'links') loop
+      if jsonb_typeof(x) <> 'object' or coalesce(btrim(x->>'en'), '') = '' or length(x->>'en') > 40 or length(coalesce(x->>'ar', '')) > 40
+         or coalesce(x->>'url', '') = '' or not public.beyond_site_url(x->'url') then
+        raise exception 'each link needs a name (40 characters at most) and an https:// address';
+      end if;
+    end loop;
+  end if;
+  update site_config set value = p, updated_at = now(), updated_by = public.beyond_caller() where id = 1;
+  perform public.beyond_log('site.config', null, p);
+  return p;
+end $$;
+
+-- everything the public pages show from the console: {texts: {key: {en, ar}}, site: {…}}
+create or replace function public.site_public() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('texts', public.site_texts(), 'site', coalesce((select value from site_config where id = 1), '{}'::jsonb))
+$$;
+grant execute on function public.site_public() to anon, authenticated;
+revoke execute on function public.site_config_save(jsonb) from public, anon;
+grant execute on function public.site_config_save(jsonb) to authenticated;
+
+insert into storage.buckets(id, name, public, file_size_limit, allowed_mime_types)
+values ('site-media', 'site-media', true, 31457280, array['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'video/mp4', 'video/webm'])
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+drop policy if exists "beyond site media add" on storage.objects;
+create policy "beyond site media add" on storage.objects for insert to authenticated
+  with check (bucket_id = 'site-media' and (storage.foldername(name))[1] = 'site' and public.beyond_staff_can('site'));
+drop policy if exists "beyond site media change" on storage.objects;
+create policy "beyond site media change" on storage.objects for update to authenticated
+  using (bucket_id = 'site-media' and public.beyond_staff_can('site'));
+drop policy if exists "beyond site media remove" on storage.objects;
+create policy "beyond site media remove" on storage.objects for delete to authenticated
+  using (bucket_id = 'site-media' and public.beyond_staff_can('site'));
+drop policy if exists "beyond site media read" on storage.objects;
+create policy "beyond site media read" on storage.objects for select to authenticated
+  using (bucket_id = 'site-media' and public.beyond_staff_can('site'));
