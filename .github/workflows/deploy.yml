@@ -152,6 +152,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write   # publishes the installers on the "desktop-app" release
+    # BEYONDERP's code-signing certificate (packaging/sign.ps1): a .pfx file, or SSL.com eSigner in the cloud. With
+    # neither set, the Windows programs and installers are built unsigned, as before.
+    env:
+      SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
+      SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
+      ES_USERNAME: ${{ secrets.ES_USERNAME }}
+      ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+      ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+      ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -176,7 +185,15 @@ jobs:
           $v = (Select-String -Path erp/__init__.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          & $iscc "/DAppVersion=$v" /DOnline packaging\installer.iss
+          # signed when a certificate is set up: the program first, then the installer and its uninstaller (by Inno Setup)
+          $signer = "$pwd\packaging\sign.ps1"
+          $sign = @()
+          if ($env:SIGN_PFX_BASE64 -or $env:ES_USERNAME) {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $signer dist-online\BeyondERP.exe
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $sign = @("/DSign", ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File "' + $signer + '" $f'))
+          }
+          & $iscc "/DAppVersion=$v" /DOnline @sign packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
       # BeyondERP Signer: signs e-invoices with the company's USB token on the computer it is plugged into. A windowed
       # program (no console) with BEYONDERP's name, copyright and version in its properties, in a normal installer
@@ -193,7 +210,14 @@ jobs:
           $v = (Select-String -Path signer/beyond_signer.py -Pattern '^VERSION = "([^"]+)"').Matches[0].Groups[1].Value
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
-          & $iscc "/DAppVersion=$v" packaging\signer.iss
+          $signer = "$pwd\packaging\sign.ps1"
+          $sign = @()
+          if ($env:SIGN_PFX_BASE64 -or $env:ES_USERNAME) {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $signer "dist-signer\BeyondERP-Signer\BeyondERP-Signer.exe"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $sign = @("/DSign", ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File "' + $signer + '" $f'))
+          }
+          & $iscc "/DAppVersion=$v" @sign packaging\signer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Mac apps
         if: runner.os == 'macOS'

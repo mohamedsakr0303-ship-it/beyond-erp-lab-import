@@ -42,9 +42,9 @@ ETA PDF, cancel it. E-invoicing → Received fetches what suppliers issued to th
 Windows SmartScreen and browsers warn about any program that is not signed with a code-signing certificate, whatever
 its name or copyright says. The Signer carries BEYONDERP as its publisher, its copyright and version in its properties,
 and comes in a normal installer, but the warning only goes away once the installer and program are signed with a
-code-signing certificate issued to BEYONDERP, and that signature has built reputation with Microsoft. Once a certificate
-is set up, signing becomes one step in the desktop build (`.github/workflows/deploy.yml`, before the installer is
-published).
+code-signing certificate issued to BEYONDERP, and that signature has built reputation with Microsoft. The desktop build
+signs the program, the installer and the uninstaller as soon as a certificate is added to the repository's secrets: see
+[docs/CODE_SIGNING.md](../docs/CODE_SIGNING.md).
 
 ## Notes
 

@@ -317,14 +317,18 @@ function dockBar(badge) {
 }
 const DOCK_SHORT = () => ({ overview: L("Overview", "نظرة عامة"), payments: L("Payments", "المدفوعات"), queue: L("Queue", "الانتظار"),
   support: L("Tickets", "البلاغات"), customers: L("Customers", "العملاء"), alerts: L("Alerts", "الإشعارات") });
-const DOCKS = () => [["wave", L("Glass: glowing wave", "زجاجي: موجة مضيئة")], ["spot", L("Glass: spotlight", "زجاجي: ضوء مسلّط")],
+const DOCKS = () => [["halo", L("Glass: glow capsule", "زجاجي: كبسولة مضيئة")], ["spot", L("Glass: spotlight", "زجاجي: ضوء مسلّط")],
   ["bubble", L("Glass: floating bubble", "زجاجي: فقاعة عائمة")], ["liquid", L("Glass: liquid drop", "زجاجي: قطرة سائلة")], ["classic", L("Classic", "كلاسيكي")]];
 const dockPref = () => { const d = LS("berp.console.dock", {}) || {};
-  return { style: DOCKS().some(x => x[0] === d.style) ? d.style : "wave", where: d.where === "all" ? "all" : "phone" }; };
+  return { style: DOCKS().some(x => x[0] === d.style) ? d.style : "halo", where: d.where === "all" ? "all" : "phone",
+    color: /^#[0-9a-f]{6}$/i.test(d.color || "") ? d.color : "" }; };
+// the bottom bar's highlight: the console's main colour, or one chosen for it
+const DOCK_COLORS = ["#6c5cff", "#3b82f6", "#14b8a6", "#22c55e", "#f59e0b", "#f43f5e", "#e879f9", "#e2e8f0"];
 function applyDock() {
   const d = dockPref(), h = document.documentElement;
   DOCKS().forEach(([k]) => h.classList.toggle("dock-" + k, k === d.style));
   h.classList.toggle("dock-all", d.where === "all");
+  if (d.color) h.style.setProperty("--dock-hl", d.color); else h.style.removeProperty("--dock-hl");
   dockSync();
 }
 function dockSync() {
@@ -345,7 +349,11 @@ function dockSync() {
 }
 const dockSelect = () => { const d = dockPref();
   return `<div class="grid g2" style="gap:8px;margin-top:10px"><label class="f">${esc(L("Bottom bar", "الشريط السفلي"))}<select data-change="dockset" data-k="style">${DOCKS().map(([v, l]) => `<option value="${v}" ${d.style === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
-    <label class="f">${esc(L("Show the bottom bar", "إظهار الشريط السفلي"))}<select data-change="dockset" data-k="where">${[["phone", L("On phones", "على الهواتف")], ["all", L("On phones and computers", "على الهواتف والكمبيوتر")]].map(([v, l]) => `<option value="${v}" ${d.where === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>`; };
+    <label class="f">${esc(L("Show the bottom bar", "إظهار الشريط السفلي"))}<select data-change="dockset" data-k="where">${[["phone", L("On phones", "على الهواتف")], ["all", L("On phones and computers", "على الهواتف والكمبيوتر")]].map(([v, l]) => `<option value="${v}" ${d.where === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+    <div class="f dock-colors" style="grid-column:1/-1"><span>${esc(L("Bottom bar highlight", "تمييز الشريط السفلي"))}</span><div class="row" style="gap:6px;flex-wrap:wrap;margin-top:5px">
+      <button type="button" class="btn sm ${d.color ? "" : "pri"}" data-a="dockcol" data-v="">${esc(L("Main colour", "اللون الرئيسي"))}</button>
+      ${DOCK_COLORS.map(c => `<button type="button" class="dock-sw ${d.color.toLowerCase() === c ? "on" : ""}" style="--c:${c}" data-a="dockcol" data-v="${c}" title="${c}"></button>`).join("")}
+      <label class="dock-sw pick ${d.color && !DOCK_COLORS.includes(d.color.toLowerCase()) ? "on" : ""}" title="${esc(L("Any colour", "أي لون"))}"><input type="color" data-change="dockcolpick" value="${esc(d.color || "#6c5cff")}"></label></div></div></div>`; };
 document.addEventListener("click", () => { setTimeout(dockSync, 30); setTimeout(dockSync, 320); }, true);
 addEventListener("hashchange", () => setTimeout(dockSync, 40));
 addEventListener("resize", () => dockSync());
@@ -778,6 +786,8 @@ PAGES.alerts = async view => {
   S.H.perm = async () => { if (!("Notification" in window)) return toast(L("This browser cannot show notifications.", "هذا المتصفح لا يدعم الإشعارات."), true); await Notification.requestPermission(); route(); };
   soundHandlers();
   S.H.dockset = el => { LSset("berp.console.dock", { ...dockPref(), [el.dataset.k]: el.value }); applyDock(); };
+  S.H.dockcol = el => { LSset("berp.console.dock", { ...dockPref(), color: el.dataset.v }); applyDock(); route(); };
+  S.H.dockcolpick = el => { LSset("berp.console.dock", { ...dockPref(), color: el.value }); applyDock(); route(); };
   view.innerHTML = `<div class="split"><div class="card"><div id="altbl"></div></div>
     <div><div class="card"><h2>${esc(L("On this device", "على هذا الجهاز"))}</h2>
       <p class="muted small">${esc(L("While this console is open (even in another tab), new notifications pop up on the screen. Phone and computer notifications for tickets, payments and visits also arrive when it is closed, if notifications are on in the ERP (Profile → Notifications).", "طالما اللوحة مفتوحة (حتى في تبويب آخر) تظهر الإشعارات الجديدة على الشاشة. وتصل إشعارات البلاغات والمدفوعات والزيارات للهاتف والكمبيوتر حتى وهي مغلقة إذا فُعّلت الإشعارات في النظام (الملف الشخصي ← الإشعارات)."))}</p>

@@ -2103,7 +2103,7 @@ tr.stk-low td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 .sp-hist i.fc{background:color-mix(in srgb,var(--warn) 65%,transparent)}
 .sp-meth{font-size:.75em}
 
-/* ---- the bottom bar: glass, with a marker that rises over the tab in use (wave, spotlight, bubble, liquid) or classic.
+/* ---- the bottom bar: glass, with a marker over the tab in use (glow capsule, spotlight, bubble, liquid) or classic.
    The marker never slides sideways: it is placed on the new tab while hidden, then rises into view (bb-rise, set by
    dockSync only when the tab really changes). On phones; on computers too with "On phones and computers" (html.dock-all). */
 @property --bx{syntax:"<length>";inherits:true;initial-value:0px}
@@ -2112,7 +2112,7 @@ tr.stk-low td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 @keyframes bbDip{from{--br:0px}to{--br:33px}}
 @keyframes bbDrop{from{top:10px}to{top:-30px}}
 .bb-defs{position:absolute;width:0;height:0;overflow:hidden}
-.bottombar{--glow:color-mix(in srgb,var(--brand) 50%,#2dd4bf);--warm:color-mix(in srgb,#e7c290 82%,var(--brand));--ease:cubic-bezier(.22,1,.36,1)}
+.bottombar{--glow:var(--dock-hl,var(--brand));--warm:color-mix(in srgb,#e7c290 82%,var(--brand));--ease:cubic-bezier(.22,1,.36,1)}
 .bottombar a,.bottombar button{-webkit-tap-highlight-color:transparent}
 html:not(.dock-classic) .bottombar>a:active,html:not(.dock-classic) .bottombar>button:active{background:none}
 .bb-bg,.bb-ind{display:none}
@@ -2126,10 +2126,10 @@ html:not(.dock-classic) .bottombar>a:active,html:not(.dock-classic) .bottombar>b
 @media (max-width:900px){html:not(.dock-classic) .bottombar{display:grid}}
 html:not(.dock-classic) .bottombar,html.dock-all.dock-classic .bottombar{grid-template-columns:repeat(5,1fr);align-items:center;justify-items:center;justify-content:normal;
   padding:0 6px;border-radius:26px;background:transparent;border:0;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;isolation:isolate}
-html.dock-all.dock-classic .bottombar .bb-bg{display:block;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow-lg)}
+html.dock-all.dock-classic .bottombar .bb-bg{display:block;background:var(--dock-bg,var(--panel));border:1px solid var(--line);box-shadow:var(--shadow-lg)}
 html:not(.dock-classic) .bb-bg{display:block}
 .bb-bg{position:absolute;inset:0;border-radius:inherit;z-index:0;pointer-events:none;
-  background:color-mix(in srgb,var(--panel) 52%,transparent);backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
+  background:color-mix(in srgb,var(--dock-bg,var(--panel)) 58%,transparent);backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
   border:1px solid color-mix(in srgb,#fff 24%,transparent);
   box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 40%,transparent),inset 0 -1px 0 color-mix(in srgb,#000 14%,transparent),0 14px 36px rgba(0,0,0,.28)}
 .bb-drop{display:none}
@@ -2146,14 +2146,24 @@ html:not(.dock-classic) .bottombar>.on svg.i,html:not(.dock-classic) .bb-new.on>
 html:not(.dock-classic) .bb-new>.btn{all:unset;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.66em;font-weight:700;color:var(--muted);padding:6px 10px;border-radius:12px;cursor:pointer;box-shadow:none}
 html.dock-classic .bb-new>.btn span{display:none}
 html:not(.dock-classic) .bottombar :focus-visible{outline:2px solid var(--glow);outline-offset:2px}
+html:not(.dock-classic):not(.dock-liquid) .bottombar>a,html:not(.dock-classic):not(.dock-liquid) .bottombar>button,html:not(.dock-classic):not(.dock-liquid) .bb-new>.btn{color:var(--dock-muted,var(--muted))}
+html:not(.dock-classic):not(.dock-liquid) .bottombar>.on,html:not(.dock-classic):not(.dock-liquid) .bb-new.on>.btn{color:var(--dock-ink,var(--ink))}
 
-/* glowing wave: the rim rises in a glowing curve over the tab in use */
-.dock-wave .bb-ind i{position:absolute;left:6%;right:6%;top:-10px;height:30px;border:2px solid var(--glow);border-bottom:0;border-radius:26px 26px 0 0;
-  background:color-mix(in srgb,var(--panel) 52%,transparent);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
-  box-shadow:0 -4px 16px color-mix(in srgb,var(--glow) 55%,transparent)}
-.dock-wave .bb-ind::after{content:"";position:absolute;left:-40%;right:-40%;bottom:0;height:2px;border-radius:2px;
-  background:linear-gradient(90deg,transparent,var(--glow),transparent);box-shadow:0 0 12px var(--glow)}
-.dock-wave .bottombar>.on svg.i,.dock-wave .bb-new.on>.btn svg.i{transform:translateY(-6px)}
+/* glow capsule (the default): the tab in use sits in a softly lit capsule inside the bar, nothing reaches past its edge.
+   A new tab's capsule lights up and pops in; every button dips a little under the finger and springs back. */
+@keyframes bbPop{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.06);opacity:1}100%{transform:none;opacity:1}}
+@keyframes bbLit{0%{filter:brightness(1.55) saturate(1.2)}100%{filter:none}}
+@keyframes bbIcon{0%{transform:none}38%{transform:scale(1.2) translateY(-1px)}100%{transform:none}}
+.dock-halo .bb-ind i{position:absolute;left:8%;right:8%;top:7px;bottom:7px;border-radius:18px;
+  background:radial-gradient(120% 150% at 50% 0%,color-mix(in srgb,var(--glow) 36%,transparent),color-mix(in srgb,var(--glow) 13%,transparent) 72%);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--glow) 42%,transparent),inset 0 1px 0 color-mix(in srgb,#fff 28%,transparent),
+    0 3px 10px -6px color-mix(in srgb,var(--glow) 70%,transparent)}
+.dock-halo .bottombar.bb-rise .bb-ind i{animation:bbPop .44s var(--ease) both,bbLit .8s ease-out both}
+.dock-halo .bottombar.bb-rise>.on svg.i,.dock-halo .bottombar.bb-rise .bb-new.on>.btn svg.i{animation:bbIcon .44s var(--ease)}
+html.dock-halo:not(.dock-classic) .bottombar>.on{color:color-mix(in srgb,var(--glow) 45%,var(--dock-ink,var(--ink)))}
+html:not(.dock-classic) .bottombar>a:active svg.i,html:not(.dock-classic) .bottombar>button:active svg.i,
+html:not(.dock-classic) .bb-new>.btn:active svg.i{transform:scale(.84);transition-duration:.1s}
+.dock-halo .bottombar>a:active svg.i,.dock-halo .bottombar>button:active svg.i,.dock-halo .bb-new>.btn:active svg.i{color:var(--glow)}
 
 /* spotlight: a lamp at the top edge casts a cone of light on the icon */
 .dock-spot .bb-ind i{position:absolute;top:-1px;left:24%;right:24%;height:3px;border-radius:0 0 4px 4px;background:var(--glow);
@@ -2183,14 +2193,14 @@ html:not(.dock-classic) .bottombar :focus-visible{outline:2px solid var(--glow);
 .dock-liquid .bottombar>.on span,.dock-liquid .bb-new.on>.btn span{opacity:0}
 .dock-liquid .bb-ind{display:none!important}
 
-@media (prefers-reduced-motion:reduce){.bb-ind,.bb-ind i,.bb-ind::before,.bb-ind::after,.bb-drop,.bottombar svg.i,.dock-bubble .bb-bg{transition:none!important;animation:none!important}}
+@media (prefers-reduced-motion:reduce){.dock-halo .bottombar svg.i,.bb-ind,.bb-ind i,.bb-ind::before,.bb-ind::after,.bb-drop,.bottombar svg.i,.dock-bubble .bb-bg{transition:none!important;animation:none!important}}
 /* the theme's filled button style must not reach the bar's New tab */
 html:not(.dock-classic) .bottombar .bb-new>.btn,html:not(.dock-classic) .bottombar .bb-new>.btn:hover{background:none!important;border:0!important;box-shadow:none!important;
-  color:var(--muted)!important;width:auto;height:auto;margin:0;filter:none;transform:none}
-html:not(.dock-classic) .bottombar .bb-new.on>.btn{color:var(--ink)!important}
+  color:var(--dock-muted,var(--muted))!important;width:auto;height:auto;margin:0;filter:none;transform:none}
+html:not(.dock-classic) .bottombar .bb-new.on>.btn{color:var(--dock-ink,var(--ink))!important}
+html.dock-halo .bottombar .bb-new.on>.btn{color:color-mix(in srgb,var(--glow) 45%,var(--dock-ink,var(--ink)))!important}
 html.dock-liquid .bottombar .bb-new>.btn{color:color-mix(in srgb,#3b2a17 70%,var(--muted))!important}
 html.dock-liquid .bottombar .bb-new.on>.btn{color:#3b2a17!important}
-.dock-wave .bb-ind::after{left:-12%;right:-12%}
 /* the lifted icon: white in the bubble, dark on the warm drop (beats the general "in use" colour) */
 html.dock-bubble .bottombar>.on svg.i,html.dock-bubble .bottombar .bb-new.on>.btn svg.i{color:#fff}
 html.dock-liquid .bottombar>.on svg.i,html.dock-liquid .bottombar .bb-new.on>.btn svg.i{color:#3b2a17}

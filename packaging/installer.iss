@@ -33,6 +33,11 @@ UninstallDisplayIcon={app}\BeyondERP.exe
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+#ifdef Sign
+; signed with BEYONDERP's code-signing certificate (packaging/sign.ps1, given to ISCC as /Sbeyond=…): the uninstaller too
+SignTool=beyond
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

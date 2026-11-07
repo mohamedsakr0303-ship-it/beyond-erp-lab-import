@@ -439,6 +439,22 @@ class Packaging(unittest.TestCase):
         self.assertEqual(re.search(r'#define Exe "([^"]+)"', iss).group(1), 'BeyondERP-Signer.exe')
         self.assertIn('name="BeyondERP-Signer"', spec)
 
+    def test_programs_and_installers_are_signed_once_a_certificate_is_set_up(self):
+        wf, sign = self.read(".github/workflows/deploy.yml"), self.read("packaging/sign.ps1")
+        for k in ("SIGN_PFX_BASE64", "SIGN_PFX_PASSWORD", "ES_USERNAME", "ES_PASSWORD", "ES_CREDENTIAL_ID", "ES_TOTP_SECRET"):
+            self.assertIn(f"{k}: ${{{{ secrets.{k} }}}}", wf)                          # from the repository's secrets only
+            self.assertIn(k, sign)
+        self.assertEqual(wf.count('if ($env:SIGN_PFX_BASE64 -or $env:ES_USERNAME) {'), 2)  # the ERP app and the Signer
+        self.assertIn("dist-online\\BeyondERP.exe", wf)                                    # each program before its installer
+        self.assertIn("dist-signer\\BeyondERP-Signer\\BeyondERP-Signer.exe", wf)
+        for iss in ("packaging/installer.iss", "packaging/signer.iss"):
+            body = self.read(iss)
+            self.assertIn("#ifdef Sign\n", body)
+            self.assertIn("SignTool=beyond\nSignedUninstaller=yes\n#endif", body)        # the installer and its uninstaller
+        self.assertIn("exit 0", sign)                                                       # no certificate: left unsigned, no failure
+        self.assertIn("/tr $timestamp /td sha256", sign)                                    # timestamped
+        self.assertIn("verify /pa", sign)                                                   # checked with Windows' own rules
+
     def test_the_erp_links_to_the_published_signer_and_shows_no_address(self):
         js = self.read("erp/static/app.js")
         self.assertNotIn('href="downloads/BeyondERP-Signer.exe"', js)                 # taken from the downloads list instead

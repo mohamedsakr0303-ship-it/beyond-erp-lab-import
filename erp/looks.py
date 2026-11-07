@@ -6,7 +6,7 @@ import re
 
 from . import accounting as acc
 
-COLOUR_KEYS = ("primary", "nav", "header", "sidebar", "menu", "button", "button2", "page", "card", "text")
+COLOUR_KEYS = ("primary", "nav", "header", "sidebar", "menu", "button", "button2", "page", "card", "text", "dock", "dockbar")
 IMAGE_SLOTS = ("page", "header", "sidebar", "logo")
 FITS = ("cover", "contain", "tile")
 MAX_IMAGE = 900_000            # characters of a data: URL (the browser shrinks pictures before sending them)

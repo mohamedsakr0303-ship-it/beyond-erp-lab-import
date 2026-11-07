@@ -40,6 +40,11 @@ SolidCompression=yes
 WizardStyle=modern
 ; the running Signer is stopped by the code below, so Windows' "close the applications" page is not needed
 CloseApplications=no
+#ifdef Sign
+; signed with BEYONDERP's code-signing certificate (packaging/sign.ps1, given to ISCC as /Sbeyond=…): the uninstaller too
+SignTool=beyond
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

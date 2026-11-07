@@ -428,14 +428,19 @@ try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () =
 function activeTheme() { return lookVal("theme") || null; }
 function applyTheme(th) {
   const de = document.documentElement, st = de.style;
-  ["--sb-bg", "--sb-ink", "--nav-bg", "--nav-ink", "--top-bg", "--top-ink", "--menu-c", "--btn-bg", "--btn-ink", "--btn2-bg", "--btn2-ink", "--page-ink", "--card-bg", "--card-ink", "--bg", "--ink", "--muted", "--panel", "--sheet", "--input", "--line", "--chip", "--hover", "--surf-ink"].forEach(v => st.removeProperty(v));
+  ["--sb-bg", "--sb-ink", "--nav-bg", "--nav-ink", "--top-bg", "--top-ink", "--menu-c", "--btn-bg", "--btn-ink", "--btn2-bg", "--btn2-ink", "--page-ink", "--card-bg", "--card-ink", "--bg", "--ink", "--muted", "--panel", "--sheet", "--input", "--line", "--chip", "--hover", "--surf-ink",
+    "--dock-hl", "--dock-bg", "--dock-ink", "--dock-muted"].forEach(v => st.removeProperty(v));
   ["nav", "top", "menu", "btn", "btn2", "page", "card", "text", "surf", "tint"].forEach(k => { delete de.dataset[k]; });
   if (!th) return;
   // the ☀/☾ button flipped to the other mode than the theme was made for: its backgrounds step aside (or a dark
   // theme stays dark in "light"), its accents stay
   if ((th.mode === "light" || th.mode === "dark") && th.mode !== de.getAttribute("data-theme"))
-    th = Object.fromEntries(["primary", "button", "button2", "menu"].filter(k => th[k]).map(k => [k, th[k]]));
+    th = Object.fromEntries(["primary", "button", "button2", "menu", "dock"].filter(k => th[k]).map(k => [k, th[k]]));
   if (hexOk(th.primary)) { st.setProperty("--brand", th.primary); st.setProperty("--accent", th.primary); }
+  // the bottom bar: its highlight (the tab in use), and the bar's own colour with text that stays readable on it
+  if (hexOk(th.dock)) st.setProperty("--dock-hl", th.dock);
+  if (hexOk(th.dockbar)) { const ink = inkOn(th.dockbar); st.setProperty("--dock-bg", th.dockbar); st.setProperty("--dock-ink", ink);
+    st.setProperty("--dock-muted", `color-mix(in srgb, ${ink} 62%, transparent)`); }
   if (hexOk(th.sidebar)) { de.dataset.sidebar = "custom"; st.setProperty("--sb-bg", th.sidebar); st.setProperty("--sb-ink", inkOn(th.sidebar)); }
   if (hexOk(th.nav)) { de.dataset.nav = "custom"; st.setProperty("--nav-bg", th.nav); st.setProperty("--nav-ink", inkOn(th.nav)); }
   if (hexOk(th.header)) { de.dataset.top = "custom"; st.setProperty("--top-bg", th.header); st.setProperty("--top-ink", inkOn(th.header)); }
@@ -502,7 +507,7 @@ function themeCard(th, on, del) {
     <span class="thp" style="--p:${p};--nav:${nav};--sb:${sb};--hd:${hd};--bg:${bg};--card:${card}"><i class="n"></i><i class="h"></i><i class="s"></i><i class="b"><b></b><b></b><b></b><u></u></i></span>
     <span class="thn">${esc(S.lang === "ar" ? th.ar || th.en || th.name : th.en || th.name)}${on ? " ✓" : ""}${th.company ? ` <small class="muted">· ${esc(L2("company", "الشركة"))}</small>` : ""}</span>${del ? `<span class="thdel" data-a="thdel" data-id="${esc(th.id)}" title="${esc(t("delete"))}">✕</span>` : ""}</button>`;
 }
-const THEME_KEYS = ["mode", "primary", "nav", "header", "sidebar", "menu", "button", "button2", "page", "card", "text"];
+const THEME_KEYS = ["mode", "primary", "nav", "header", "sidebar", "menu", "button", "button2", "page", "card", "text", "dock", "dockbar"];
 async function themeTab(view, head) {
   const sup = !!S.boot.user.is_super;
   const cur = activeTheme() || THEME_PRESETS[0];
@@ -539,7 +544,8 @@ async function themeTab(view, head) {
           ${sw("button2", L2("Other buttons", "الأزرار الأخرى"))}${sw("menu", L2("Menu highlight", "تمييز القائمة"), L2("Current screen and hover", "الشاشة الحالية وعند المرور"))}
           ${sw("sidebar", L2("Side menu", "القائمة الجانبية"))}${sw("nav", L2("Logo area", "منطقة الشعار"))}
           ${sw("header", L2("Top bar", "الشريط العلوي"))}${sw("page", L2("Page background", "خلفية الصفحة"))}
-          ${sw("card", L2("Cards and panels", "البطاقات واللوحات"))}${sw("text", L2("Text", "النص"), L2("Blank: automatic", "فارغ: تلقائي"))}</div>
+          ${sw("card", L2("Cards and panels", "البطاقات واللوحات"))}${sw("text", L2("Text", "النص"), L2("Blank: automatic", "فارغ: تلقائي"))}
+          ${sw("dock", L2("Bottom bar highlight", "تمييز الشريط السفلي"), L2("The tab in use; blank: the primary colour", "التبويب الحالي؛ فارغ: اللون الأساسي"))}${sw("dockbar", L2("Bottom bar", "الشريط السفلي"), L2("Blank: glass in the theme's colours", "فارغ: زجاجي بألوان السمة"))}</div>
         <p class="muted">${esc(L2("Changes apply immediately. Text on coloured areas adjusts automatically.", "تُطبَّق التغييرات فوراً، ويتكيف النص فوق المساحات الملونة تلقائياً."))}</p>
         <div class="row" style="margin-top:8px"><input id="thname" class="in" style="max-width:240px" placeholder="${esc(L2("Theme name", "اسم السمة"))}">
           <button class="btn pri" data-a="thsave">${esc(L2("Save to my themes", "حفظ في سماتي"))}</button>
@@ -1349,15 +1355,16 @@ function renderNav(active) {
   dockSync();
   loadAlerts();
 }
-// The bottom bar's look (Profile, and My appearance): a glass bar whose marker rises over the tab in use — a glowing wave,
-// a spotlight, a floating bubble or a liquid drop — or the classic bar. On phones, or on computers too.
+// The bottom bar's look (Profile, and My appearance): a glass bar whose marker shows the tab in use — a glow capsule
+// inside the bar (the default), a spotlight, a floating bubble or a liquid drop — or the classic bar. On phones, or on
+// computers too. Its colours come from the theme (Settings → Theme: bottom bar highlight and bottom bar).
 const DOCK_LAYERS = `<span class="bb-bg" aria-hidden="true"><b class="bb-drop"></b></span><span class="bb-ind" aria-hidden="true"><i></i></span>
   <svg class="bb-defs" width="0" height="0" aria-hidden="true" focusable="false"><filter id="bbgoo"><feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/>
   <feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -8" result="g"/><feComposite in="SourceGraphic" in2="g" operator="atop"/></filter></svg>`;
-const DOCKS = () => [["wave", L2("Glass: glowing wave", "زجاجي: موجة مضيئة")], ["spot", L2("Glass: spotlight", "زجاجي: ضوء مسلّط")],
+const DOCKS = () => [["halo", L2("Glass: glow capsule", "زجاجي: كبسولة مضيئة")], ["spot", L2("Glass: spotlight", "زجاجي: ضوء مسلّط")],
   ["bubble", L2("Glass: floating bubble", "زجاجي: فقاعة عائمة")], ["liquid", L2("Glass: liquid drop", "زجاجي: قطرة سائلة")], ["classic", L2("Classic", "كلاسيكي")]];
 const dockPref = () => { const p = ((S.boot || {}).profile || {}).prefs || {};
-  return { style: DOCKS().some(d => d[0] === p.dock_style) ? p.dock_style : "wave", where: p.dock_where === "all" ? "all" : "phone" }; };
+  return { style: DOCKS().some(d => d[0] === p.dock_style) ? p.dock_style : "halo", where: p.dock_where === "all" ? "all" : "phone" }; };   // the old wave: the capsule
 function applyDock() {
   const d = dockPref(), h = document.documentElement;
   DOCKS().forEach(([k]) => h.classList.toggle("dock-" + k, k === d.style));
