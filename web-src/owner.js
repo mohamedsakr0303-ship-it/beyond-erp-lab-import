@@ -160,7 +160,8 @@ const NAV0 = () => [
     ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]]],
   [L("Product", "المنتج"), [["plans", "◎", L("Plans", "الباقات"), "settings"], ["addons", "＋", L("Modules, AI & support", "الأقسام والذكاء الاصطناعي والدعم"), "settings"],
-    ["menus", "☰", L("Menus by industry", "القوائم حسب النشاط"), "settings"], ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"]]],
+    ["menus", "☰", L("Menus by industry", "القوائم حسب النشاط"), "settings"], ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"],
+    ["texts", "✎", L("Website texts", "نصوص الموقع"), "site"]]],
   [L("Console", "اللوحة"), [["team", "☷", L("Team", "الفريق"), "_full"], ["look", "🎨", L("Look of this console", "مظهر اللوحة"), "settings"],
     ["log", "⌚", L("Activity", "السجل"), "_full"], ["deleted", "⌫", L("Deleted companies", "الشركات المحذوفة"), "customers"]]]];
 // what this team member may do on the support desk (full access: everything; members added before: everything)
@@ -170,7 +171,8 @@ const navOk = a => a === "*" || (a.startsWith("desk:") ? dcan(a.slice(5)) : can(
 const DESK_NAV = () => [[L("Support", "الدعم"), [["queue", "☰", L("Queue", "قائمة الانتظار"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"],
     ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "desk:replies"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]], "support"],
-  [L("Help center", "مركز المساعدة"), [["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"]], "product"],
+  [L("Help center", "مركز المساعدة"), [["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"],
+    ["texts", "✎", L("Website texts", "نصوص الموقع"), "site"]], "product"],
   [L("Customers", "العملاء"), [["customers", "▦", L("Customers", "العملاء"), "customers"], ["people", "☺", L("People", "الأشخاص"), "customers"]], "business"],
   [L("Me", "أنا"), [["alerts", "🔔", L("Notifications", "الإشعارات"), "*"]], "console"]];
 
@@ -980,9 +982,10 @@ function accessPanel(x, cfg, setCo) {
     ${form([{ k: "mods", l: L("Modules", "الأقسام"), type: "select", v: ov.modules === "all" ? "all" : list.length ? "list" : "", opts: [["", L("As its plan", "حسب الباقة")], ["all", L("Every module", "كل الأقسام")], ["list", L("The plan's, plus these:", "أقسام الباقة، بالإضافة إلى:")]] },
       { k: "users", l: L("Users allowed (blank: as its plan)", "المستخدمون المسموح بهم (فارغ: حسب الباقة)"), type: "number", v: ov.users ?? "", min: 1 },
       tri("ai", L("AI assistant", "المساعد الذكي")), tri("support", L("Online support", "الدعم الإلكتروني")),
+      tri("perms", L("User permissions (menus)", "صلاحيات المستخدمين (القوائم)")), tri("notify_perms", L("Notification permissions", "صلاحيات الإشعارات")),
       { type: "html", span: 1, html: `<div class="checks">${SECTIONS().map(([k, l]) => `<label class="chk"><input type="checkbox" name="s_${k}" ${list.includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div>` }])}`,
     v => { const o = {}; for (const k of ["deny", "allow"]) if (ov[k]) o[k] = ov[k]; if (v.mods === "all") o.modules = "all"; if (v.mods === "list") o.modules = SECTIONS().map(s => s[0]).filter(k => v["s_" + k]);
-      if (v.users !== "") o.users = +v.users; if (v.ai) o.ai = v.ai === "on"; if (v.support) o.support = v.support === "on"; return setCo({ overrides: o }); });
+      if (v.users !== "") o.users = +v.users; for (const k of ["ai", "support", "perms", "notify_perms"]) if (v[k]) o[k] = v[k] === "on"; return setCo({ overrides: o }); });
 }
 // what one company sees, down to each screen and tab: switched off for it, or given back when its plan switches it off
 function menusPanel(x, cfg, setCo) {
@@ -1422,6 +1425,53 @@ PAGES.replies = async view => {
       : `<div class="empty">${esc(L("No saved replies yet.", "لا ردود محفوظة بعد."))}</div>`}</div>`;
 };
 
+// ================================================================== the website's texts: home page, sign-in screens, footer
+// Every text the public pages show from the ERP's own wording (site-texts.json, made by the build from the ERP's script)
+// can be rewritten here in English and Arabic; a blank language keeps the built-in wording. Saved for everyone at once.
+PAGES.texts = async (view, parts, q) => {
+  const [cat, cur] = await Promise.all([fetch("site-texts.json", { cache: "no-store" }).then(r => (r.ok ? r.json() : null)).catch(() => null), rpc("site_texts_admin")]);
+  if (!cat || !(cat.texts || []).length) {
+    view.innerHTML = `<div class="card"><div class="empty">${esc(L("The list of texts comes with the website build (site-texts.json) and is not on this site yet. It appears after the next deploy.", "تأتي قائمة النصوص مع بناء الموقع (site-texts.json) وليست على هذا الموقع بعد. تظهر بعد النشر القادم."))}</div></div>`;
+    return;
+  }
+  const places = cat.places || [], place = places.some(p => p.key === q.place) ? q.place : (places[0] || {}).key, find = (q.q || "").trim().toLowerCase();
+  const rows = cat.texts.filter(x => x.place === place && (!find || [x.key, x.en, x.ar, (cur[x.key] || {}).en, (cur[x.key] || {}).ar].some(v => String(v || "").toLowerCase().includes(find))));
+  const changed = cat.texts.filter(x => cur[x.key]).length, pname = p => (S.lang === "ar" ? p.ar : p.en) || p.key;
+  const same = x => x.en === x.ar;              // an address or a link: one box, the same for both languages
+  const field = (x, lang) => { const v = (cur[x.key] || {})[lang] || "", ph = x[lang] || "", dir = lang === "ar" && !same(x) ? "rtl" : "ltr";
+    return x.multiline || ph.length > 70 ? `<textarea name="${esc(x.key)}|${lang}" rows="${Math.min(4, ph.split("\n").length + 1)}" dir="${dir}" placeholder="${esc(ph)}">${esc(v)}</textarea>`
+      : `<input name="${esc(x.key)}|${lang}" dir="${dir}" value="${esc(v)}" placeholder="${esc(ph)}">`; };
+  Object.assign(S.H, {
+    txplace: el => { location.hash = "#/texts?place=" + encodeURIComponent(el.dataset.k); },
+    txfind: el => { location.hash = "#/texts?place=" + encodeURIComponent(place) + (el.value.trim() ? "&q=" + encodeURIComponent(el.value.trim()) : ""); },
+    txsave: async () => {
+      const f = $("#txf"), out = {};
+      for (const x of rows) {
+        const en = (f.elements[x.key + "|en"] || {}).value || "", ar = same(x) ? en : (f.elements[x.key + "|ar"] || {}).value || "", was = cur[x.key] || {};
+        if (en.trim() !== (was.en || "") || ar.trim() !== (was.ar || "")) out[x.key] = { en, ar };
+      }
+      if (!Object.keys(out).length) return toast(L("Nothing changed.", "لم يتغير شيء."));
+      await rpc("site_texts_save", { p: out });
+      toast(L(`Saved ${Object.keys(out).length} text(s). Visitors see them the next time a page opens.`, `حُفظ ${Object.keys(out).length} نص. يراها الزوار عند فتح الصفحة التالية.`)); route(); },
+    txreset: async el => { const k = el.dataset.k;
+      if (!await confirmIt(L("Go back to the built-in wording for this text (both languages)?", "العودة إلى الصياغة الأصلية لهذا النص (باللغتين)؟"))) return;
+      await rpc("site_texts_save", { p: { [k]: { en: "", ar: "" } } }); toast(L("Back to the built-in wording.", "عاد إلى الصياغة الأصلية.")); route(); },
+  });
+  view.innerHTML = `<div class="card"><div class="row" style="gap:8px;flex-wrap:wrap">
+      ${places.map(p => `<button class="btn sm ${p.key === place ? "pri" : ""}" data-a="txplace" data-k="${esc(p.key)}">${esc(pname(p))} <span class="small" style="opacity:.7">${cat.texts.filter(x => x.place === p.key).length}</span></button>`).join("")}
+      <span class="sp"></span><input type="search" placeholder="${esc(L("Search the texts", "ابحث في النصوص"))}" value="${esc(q.q || "")}" data-change="txfind" style="max-width:240px">
+      <a class="btn sm" href="./#/discover" target="_blank" rel="noopener">${esc(L("Open the home page", "فتح الصفحة الرئيسية"))} ↗</a></div>
+    <p class="muted small" style="margin:10px 0 0">${esc(L("Write the wording visitors should see; leave a language blank to keep the built-in wording shown faintly in the box. A line break in a heading starts a new line on the page. Links must start with https://.", "اكتب الصياغة التي يراها الزوار؛ اترك اللغة فارغة للإبقاء على الصياغة الأصلية الظاهرة باهتة في الخانة. سطر جديد في العنوان يبدأ سطراً جديداً في الصفحة. يجب أن تبدأ الروابط بـ https://."))}
+      ${changed ? " " + chip(L(`${changed} changed`, `${changed} معدّل`), "warn") : ""}</p></div>
+    <form id="txf" class="card" onsubmit="return false">${rows.length ? `<div class="tbl"><table><thead><tr><th style="width:22%">${esc(L("Text", "النص"))}</th><th>English</th><th>العربية</th><th></th></tr></thead><tbody>
+      ${rows.map(x => { const c = cur[x.key]; return `<tr><td><b class="small" dir="auto">${esc(x.en.split("\n").join(" ").slice(0, 60))}</b><span class="sub" dir="ltr">${esc(x.key)}</span>
+          ${c ? `<span class="sub">${esc(L("Changed", "عُدّل"))} ${esc(day(c.updated_at))}${c.updated_by ? " · " + esc(c.updated_by) : ""}</span>` : ""}</td>
+        ${same(x) ? `<td colspan="2">${field(x, "en")}<span class="sub">${esc(L("The same in both languages", "واحد في اللغتين"))}</span></td>` : `<td>${field(x, "en")}</td><td>${field(x, "ar")}</td>`}
+        <td class="r">${c ? `<button type="button" class="btn sm" data-a="txreset" data-k="${esc(x.key)}" title="${esc(L("Back to the built-in wording", "العودة إلى الصياغة الأصلية"))}">↺</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>
+      <div class="row" style="margin-top:12px"><button class="btn pri" data-a="txsave">${esc(L("Save", "حفظ"))}</button></div>`
+      : `<div class="empty">${esc(L("No text matches.", "لا يوجد نص مطابق."))}</div>`}</form>`;
+};
+
 // ================================================================== support visits
 PAGES.visits = async view => {
   const rows = await rpc("console_visits", { p_status: "" });
@@ -1596,7 +1646,7 @@ const planCard = (p, cfg, tools = "") => {
     <h3 style="margin:0">${esc(ar && p.name_ar ? p.name_ar : p.name)} ${p.hidden ? chip(L("Hidden", "مخفية")) : ""}${p.code === cfg.trial_plan ? chip(L("Trial plan", "باقة التجربة"), "info") : ""}</h3>
     ${p.tagline || p.tagline_ar ? `<div class="muted small">${esc(ar && p.tagline_ar ? p.tagline_ar : p.tagline)}</div>` : ""}
     <div class="price">${p.contact ? esc(L("Contact us", "تواصل معنا")) : `${money(p.price)} <small>${esc(cfg.currency)} / ${esc(L("month · per company", "شهر · لكل شركة"))}</small>`}</div>
-    <div class="small">${esc(p.users ? L(`${p.users} users`, `${p.users} مستخدمين`) : L("users as agreed", "المستخدمون حسب الاتفاق"))}${(p.deny || []).length ? ` · ${esc(L(`${p.deny.length} screen(s) off`, `${p.deny.length} شاشة متوقفة`))}` : ""} · ${esc(p.modules && p.modules !== "all" ? L(`${p.modules.length} modules + core`, `${p.modules.length} أقسام + الأساسية`) : L("every module", "كل الأقسام"))}
+    <div class="small">${esc(p.users ? L(`${p.users} users`, `${p.users} مستخدمين`) : L("users as agreed", "المستخدمون حسب الاتفاق"))}${p.companies ? ` · ${esc(L(`up to ${p.companies} compan${p.companies === 1 ? "y" : "ies"}`, `حتى ${p.companies} شركة`))}` : ""}${p.perms === false ? ` · ${esc(L("no user permissions", "بدون صلاحيات مستخدمين"))}` : ""}${p.notify_perms === false ? ` · ${esc(L("no notification permissions", "بدون صلاحيات إشعارات"))}` : ""}${(p.deny || []).length ? ` · ${esc(L(`${p.deny.length} screen(s) off`, `${p.deny.length} شاشة متوقفة`))}` : ""} · ${esc(p.modules && p.modules !== "all" ? L(`${p.modules.length} modules + core`, `${p.modules.length} أقسام + الأساسية`) : L("every module", "كل الأقسام"))}
       · ${esc(cfg.ai_mode === "free" ? L("AI free for all", "الذكاء الاصطناعي مجاني للجميع") : cfg.ai_mode === "off" ? L("AI off", "الذكاء الاصطناعي متوقف") : p.ai ? L("AI included", "يشمل الذكاء الاصطناعي") : L("no AI", "بدون ذكاء اصطناعي"))}
       · ${esc(cfg.support_mode === "free" || p.support !== false ? L("online support", "دعم إلكتروني") : L("no online support", "بدون دعم إلكتروني"))}</div>
     <ul>${feats.map(f => `<li>${esc(f)}</li>`).join("")}</ul>${tools ? `<div class="tools">${tools}</div>` : ""}</div>`;
@@ -1618,7 +1668,13 @@ PAGES.plans = async view => {
       { k: "color", l: L("Colour", "اللون"), type: "color", v: p.color || "#4f46e5" }, { k: "users", l: L("Users per company (a hard limit; blank on a “contact us” plan: set per deal)", "المستخدمون لكل شركة (حد لا يُتجاوز؛ فارغ في باقة «تواصل معنا»: يُحدد لكل اتفاق)"), type: "number", v: p.users ?? "", min: 1 },
       { k: "contact", l: L("Price on request: customers contact you (Enterprise); it cannot be ordered in the app", "السعر عند الطلب: يتواصل العميل معك (المؤسسات)؛ لا يمكن طلبها من التطبيق"), type: "check", v: p.contact, span: 1 },
       { k: "highlight", l: L("Stand out (outlined)", "مميزة (بإطار)"), type: "check", v: p.highlight }, { k: "hidden", l: L("Hidden: not offered, you can still give it", "مخفية: لا تُعرض، ويمكنك منحها"), type: "check", v: p.hidden },
+      { k: "companies", l: L("Companies a customer may own on this plan (blank: the general rule in Rules & switches)", "الشركات التي يملكها العميل في هذه الباقة (فارغ: القاعدة العامة في القواعد والمفاتيح)"), type: "number", v: p.companies ?? "", min: 1,
+        help: L("A person's limit is the most generous plan among the companies they own; a number set for one person in People beats it.", "حد الشخص هو الأسخى بين باقات شركاته؛ والرقم المحدد لشخص في الأشخاص يتقدم عليه.") },
       { k: "ai", l: L("Includes the AI assistant", "تشمل المساعد الذكي"), type: "check", v: p.ai }, { k: "support", l: L("Includes online support", "تشمل الدعم الإلكتروني"), type: "check", v: p.support !== false },
+      { k: "perms", l: L("User permissions: the company chooses which menus, screens and tabs each user sees", "صلاحيات المستخدمين: تختار الشركة القوائم والشاشات والتبويبات لكل مستخدم"), type: "check", v: p.perms !== false, span: 1,
+        help: L("Off: every user has full use of what the plan includes; permissions set before stay as they were and cannot be changed.", "عند الإيقاف: لكل مستخدم كامل ما تشمله الباقة؛ وتبقى الصلاحيات السابقة كما هي ولا يمكن تغييرها.") },
+      { k: "notify_perms", l: L("Notification permissions: the company chooses who receives which notifications", "صلاحيات الإشعارات: تختار الشركة من يتلقى كل إشعار"), type: "check", v: p.notify_perms !== false, span: 1,
+        help: L("Off: everyone receives the standard notifications for their department.", "عند الإيقاف: يتلقى الجميع الإشعارات المعتادة لقسمهم.") },
       { k: "support_rank", l: L("Support priority (higher is answered first)", "أولوية الدعم (الأعلى يُرد عليه أولاً)"), type: "number", v: p.support_rank ?? 0, min: 0, max: 99,
         help: L("The support queue puts tickets of higher-priority plans first.", "تضع قائمة الدعم بلاغات الباقات الأعلى أولوية في المقدمة.") },
       { k: "reply_hours", l: L("First reply within (hours, optional)", "أول رد خلال (ساعات، اختياري)"), type: "number", v: p.reply_hours ?? "", min: 0,
@@ -1629,13 +1685,15 @@ PAGES.plans = async view => {
       { type: "html", span: 1, html: `<b class="small">${esc(L("Switch off screens or tabs on this plan (tick to switch off)", "إيقاف شاشات أو تبويبات في هذه الباقة (حدد للإيقاف)"))}</b>${treeHtml(Object.fromEntries((p.deny || []).map(k => [k, "off"])), "off")}` }])}</div>
       <div><b class="small muted">${esc(L("Preview", "معاينة"))}</b><div class="preview" id="pprev"></div></div></div>`,
       async v => { const np = { ...p, code: (i == null ? v.code : p.code).trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""), name: v.name.trim(), name_ar: v.name_ar.trim(), tagline: v.tagline.trim(), tagline_ar: v.tagline_ar.trim(),
-          price: +v.price, users: v.users === "" ? null : +v.users, contact: !!v.contact, deny: treeRead(v, true), features: v.features.split("\n").map(s => s.trim()).filter(Boolean), features_ar: v.features_ar.split("\n").map(s => s.trim()).filter(Boolean),
+          price: +v.price, users: v.users === "" ? null : +v.users, companies: v.companies === "" ? null : Math.round(+v.companies), perms: !!v.perms, notify_perms: !!v.notify_perms,
+          contact: !!v.contact, deny: treeRead(v, true), features: v.features.split("\n").map(s => s.trim()).filter(Boolean), features_ar: v.features_ar.split("\n").map(s => s.trim()).filter(Boolean),
           badge: v.badge.trim(), badge_ar: v.badge_ar.trim(), color: v.color, highlight: !!v.highlight, hidden: !!v.hidden, ai: !!v.ai, support: !!v.support,
           support_rank: Math.max(0, Math.min(99, Math.round(+v.support_rank || 0))), reply_hours: v.reply_hours === "" || !(+v.reply_hours > 0) ? null : +v.reply_hours,
           modules: v.mods === "all" ? "all" : SECTIONS().map(s => s[0]).filter(k => v["s_" + k]) };
         if (!np.code) throw new Error(L("Give the plan a code.", "أدخل كود الباقة."));
         if (!np.contact && !(np.users >= 1)) throw new Error(L("Set how many users the plan includes.", "حدد عدد المستخدمين في الباقة."));
-        if (np.users == null) delete np.users; if (!np.deny.length) delete np.deny; if (np.reply_hours == null) delete np.reply_hours;
+        if (np.companies != null && !(np.companies >= 1)) throw new Error(L("Companies: 1 or more, or leave it blank.", "الشركات: 1 أو أكثر، أو اتركه فارغاً."));
+        if (np.users == null) delete np.users; if (np.companies == null) delete np.companies; if (!np.deny.length) delete np.deny; if (np.reply_hours == null) delete np.reply_hours;
         const list = plans.slice(); if (i == null) list.push(np); else list[i] = np; await save(list); }, { wide: true,
         extra: i != null ? `<button type="button" class="btn" data-a="pdup">${esc(L("Duplicate", "نسخ"))}</button>${p.code !== cfg.trial_plan ? `<button type="button" class="btn danger" data-a="pdel">${esc(L("Delete", "حذف"))}</button>` : ""}` : "",
         onOpen: f => { treeWire(f); const draw = () => { const v = readForm(f); $("#pprev", f).innerHTML = planCard({ ...p, ...v, price: +v.price, users: +v.users, features: v.features.split("\n").filter(Boolean), features_ar: v.features_ar.split("\n").filter(Boolean),
@@ -1719,8 +1777,17 @@ PAGES.settings = async view => {
     if (!await confirmIt(on ? L(`Switch billing on? Every company that exists now gets a fresh ${c.trial_days}-day free trial from this moment; after that a person's first company has the trial and later ones need a subscription.`, `تفعيل الاشتراكات؟ تحصل كل شركة موجودة الآن على تجربة مجانية جديدة ${c.trial_days} يوماً من هذه اللحظة؛ بعد ذلك الشركة الأولى لكل شخص لها التجربة وما بعدها يحتاج اشتراكاً.`)
       : L("Switch billing off? The app becomes free for everyone (nothing is lost).", "إيقاف الاشتراكات؟ يصبح التطبيق مجانياً للجميع (لا يضيع شيء)."))) return;
     await rpc("billing_set_config", { p: { enabled: on } }); S.me.billing_enabled = on; toast(L("Saved.", "تم الحفظ.")); route(); };
+  // a hidden plan only for the trial, starting as a copy of the trial's current plan: edit it in Plans
+  S.H.trialplan = async () => {
+    const from = c.plans.find(p => p.code === c.trial_plan) || c.plans[0];
+    const tp = { ...from, code: "trial", name: "Trial", name_ar: "التجربة", price: 0, hidden: true, contact: false, highlight: false, badge: "", badge_ar: "",
+      users: from.users || 3, tagline: "", tagline_ar: "" };
+    await rpc("billing_set_config", { p: { plans: [...c.plans, tp], trial_plan: "trial" } });
+    toast(L("Made the Trial plan (hidden). Choose what it includes in Plans; set “During the trial” to “Only what the plan includes” for it to apply.",
+      "أُنشئت باقة التجربة (مخفية). اختر ما تشمله من الباقات؛ واضبط «أثناء التجربة» على «ما تشمله الباقة فقط» لتُطبق."));
+    location.hash = "#/plans"; };
   S.H.ssave = async () => { const v = readForm($("#sf2"));
-    const p = { trial_days: +v.trial_days, trial_plan: v.trial_plan, trial_full: !!v.trial_full, grace_days: +v.grace_days, yearly_months: +v.yearly_months, currency: v.currency.trim(),
+    const p = { trial_days: +v.trial_days, trial_plan: v.trial_plan, trial_full: v.trial_full === "all", grace_days: +v.grace_days, yearly_months: +v.yearly_months, currency: v.currency.trim(),
       max_companies: +v.max_companies || 0, notify: { trial_days: +v.n_trial || 3, renewal_days: +v.n_renew || 7 },
       support: { whatsapp: v.s_whatsapp.trim(), phone: v.s_phone.trim(), email: v.s_email.trim(), hours: v.s_hours.trim() },
       page: { title: v.pg_title, title_ar: v.pg_title_ar, intro: v.pg_intro, intro_ar: v.pg_intro_ar, footer: v.pg_footer, footer_ar: v.pg_footer_ar },
@@ -1737,8 +1804,11 @@ PAGES.settings = async view => {
       { k: "accept_new", l: L("Accept new customers (people without a company may create one)", "قبول عملاء جدد (يمكن لمن ليس لديه شركة إنشاء واحدة)"), type: "check", v: c.accept_new !== false, span: 1 }])}</div>` : ""}
     <div class="grid g2"><div class="card"><h2>${esc(L("Trial and periods", "التجربة والفترات"))}</h2>${form([
       { k: "trial_days", l: L("Free trial (days) — a person's first company", "التجربة المجانية (أيام) — الشركة الأولى لكل شخص"), type: "number", v: c.trial_days, min: 0, max: 365 },
-      { k: "trial_plan", l: L("Plan during the trial", "الباقة أثناء التجربة"), type: "select", v: c.trial_plan, opts: c.plans.map(p => [p.code, p.name]) },
-      { k: "trial_full", l: L("The trial shows every module and the assistant", "التجربة تعرض كل الأقسام والمساعد"), type: "check", v: c.trial_full !== false, span: 1 },
+      { k: "trial_full", l: L("During the trial", "أثناء التجربة"), type: "select", v: c.trial_full !== false ? "all" : "plan", span: 1,
+        opts: [["all", L("Everything: every module, screen, the assistant and permissions", "كل شيء: كل الأقسام والشاشات والمساعد والصلاحيات")], ["plan", L("Only what the plan below includes", "ما تشمله الباقة أدناه فقط")]] },
+      { k: "trial_plan", l: L("The trial's plan (its users and companies always apply)", "باقة التجربة (يُطبق عدد مستخدميها وشركاتها دائماً)"), type: "select", v: c.trial_plan, opts: c.plans.map(p => [p.code, p.name + (p.hidden ? " · " + L("hidden", "مخفية") : "")]) },
+      { type: "html", span: 1, html: `<p class="muted small" style="margin:0">${esc(L("To decide exactly what the trial includes (modules, screens and tabs, users, companies, assistant, permissions), make a hidden plan for it and choose it here.", "لتحديد ما تشمله التجربة بدقة (الأقسام والشاشات والتبويبات والمستخدمون والشركات والمساعد والصلاحيات)، أنشئ باقة مخفية لها واخترها هنا."))}
+        ${c.plans.some(p => p.code === "trial") ? "" : ` <button type="button" class="btn sm" data-a="trialplan">${esc(L("Make a plan for the trial", "إنشاء باقة للتجربة"))}</button>`}</p>` },
       { k: "grace_days", l: L("Grace days after a paid period", "أيام السماح بعد الفترة المدفوعة"), type: "number", v: c.grace_days, min: 0, max: 60 },
       { k: "yearly_months", l: L("A year costs (months)", "السنة تكلف (أشهر)"), type: "number", v: c.yearly_months, min: 1, max: 12 },
       { k: "currency", l: L("Currency", "العملة"), v: c.currency }, { k: "max_companies", l: L("Companies one person may own (0 = no limit)", "الشركات التي يملكها الشخص (0 = بلا حد)"), type: "number", v: c.max_companies || 0, min: 0 }])}</div>
@@ -1785,7 +1855,8 @@ PAGES.methods = async view => {
 // ================================================================== the team
 const AREAS = () => [["overview", L("Overview", "نظرة عامة")], ["customers", L("Customers, people, cancellations", "العملاء والأشخاص والإلغاءات")], ["billing", L("See orders and payments", "عرض الطلبات والمدفوعات")],
   ["approve", L("Approve payments; trials, free use, suspend, archive, accounts", "اعتماد المدفوعات؛ التجارب والمجاني والإيقاف والأرشفة والحسابات")], ["support", L("Support tickets and visits", "بلاغات وزيارات الدعم")],
-  ["notices", L("Announcements", "الإعلانات")], ["settings", L("Plans, prices, rules, payment methods, look", "الباقات والأسعار والقواعد وطرق الدفع والمظهر")]];
+  ["notices", L("Announcements", "الإعلانات")], ["settings", L("Plans, prices, rules, payment methods, look", "الباقات والأسعار والقواعد وطرق الدفع والمظهر")],
+  ["site", L("Website texts (home page, sign-in, public pages)", "نصوص الموقع (الصفحة الرئيسية وتسجيل الدخول والصفحات العامة)")]];
 const DESK_L = () => ({ reply: L("Reply to customers and start live chats", "الرد على العملاء وبدء المحادثات"), notes: L("Write internal notes", "كتابة ملاحظات داخلية"),
   manage: L("Change status, priority and who it is assigned to; end live chats", "تغيير الحالة والأولوية والمسؤول؛ إنهاء المحادثات"), close: L("Close tickets and share solutions", "إغلاق البلاغات ونشر الحلول"),
   books: L("Enter customers' books when they allow it", "دخول دفاتر العملاء عند سماحهم"), contacts: L("See customers' emails and company details", "رؤية بريد العملاء وبيانات الشركة"),

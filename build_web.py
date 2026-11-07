@@ -241,6 +241,10 @@ def build(make_zip=False):
     # p.html: the public pages (booking, forms, signing, guest chat); owner.*: the owner console, a page of its own (support.html: the same code as the support desk)
     for f in ("index.html", "bridge.js", "p.html", "owner.html", "support.html", "owner.js", "owner.css"):
         shutil.copy(ROOT / "web-src" / f, OUT / f)
+    # the public pages' texts the owner can rewrite (owner console → Website texts), with their built-in wording
+    sys.path.insert(0, str(ROOT))
+    from erp import sitetexts
+    (OUT / "site-texts.json").write_text(json.dumps(sitetexts.catalogue(ROOT), ensure_ascii=False), encoding="utf-8")
     search_files()
     # installable app (manifest, offline service worker, icons) — used by hosted builds, left out of the zip
     for f in PWA_FILES:

@@ -638,6 +638,12 @@ const licensed = k => { const b = S.billing; if (!b) return true;
   if (k === "chat.ai") return b.ai !== false;
   return !Array.isArray(b.modules) || b.modules.includes(k.split(".")[0]); };
 const shown = key => String(key).split("|").some(k => !hiddenMods().includes(k.split(".")[0]) && !hiddenMods().includes(k) && licensed(k));
+// the plan may leave out choosing what each user sees, or who receives which notifications (owner console → Plans):
+// then every user has full use of what the plan includes and the standard notifications; earlier choices stay as they were
+const planHasPerms = () => !(S.billing && S.billing.perms === false);
+const planHasNotifyPerms = () => !(S.billing && S.billing.notify_perms === false);
+const fullPerms = () => Object.fromEntries((S.boot.enums.modules || []).map(m => [m, "edit"]));
+const restrictedUser = u => !u.is_super && Object.entries(u.perms || {}).some(([k, v]) => (k[0] !== "_" && v !== "edit") || (k === "_bus" && (v || []).length));
 // a section the person may use but the plan does not include: say so, rather than hiding where they went
 const notInPlan = key => String(key).split("|").every(k => !licensed(k)) && String(key).split("|").some(k => !hiddenMods().includes(k.split(".")[0]));
 
@@ -1454,8 +1460,9 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
     ? `<label class="f">${ar ? "البريد الإلكتروني أو اسم المستخدم" : "Email or username"}<input name="email" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required value="${esc(store.get("lastEmail", "") || C.email())}"></label>`
     : `<label class="f">${t("email")}<input name="email" type="email" autocomplete="username" required value="${esc(C.email() || (String(store.get("lastEmail", "")).includes("@") ? store.get("lastEmail", "") : ""))}"></label>`;
   const back = `<a href="#" data-a="mode_start" class="muted" style="font-size:.85em">← ${ar ? "جميع طرق تسجيل الدخول" : "All sign-in options"}</a>`;
-  const title = { start: ar ? "مرحباً بعودتك." : "Welcome back.", email: ar ? "تسجيل الدخول" : "Sign in",
-    signup: ar ? "إنشاء حساب" : "Create your account", help: ar ? "تعذر تسجيل الدخول؟" : "Trouble signing in?" }[mode];
+  const title = { start: ST("auth.welcome", "Welcome back.", "مرحباً بعودتك."), email: ST("auth.signin", "Sign in", "تسجيل الدخول"),
+    signup: ST("auth.signup", "Create your account", "إنشاء حساب"), help: ST("auth.help", "Trouble signing in?", "تعذر تسجيل الدخول؟") }[mode];
+  if (!S.siteTextsAt) loadSiteTexts().then(changed => { if (changed && $(".login.auth")) renderCloudAuth(msg, kind, mode); });
   let body;
   if (mode === "start") body = `
     ${prov.google && googleUrl ? `<button class="btn oauth" type="button" data-a="cgoogle">${GOOGLE_G}<span>${ar ? "تسجيل الدخول بحساب Google" : "Sign in with Google"}</span></button>` : ""}
@@ -1483,7 +1490,7 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
     ${mode !== "start" ? `<p class="center">${back}</p>` : ""}
     <div class="row" style="justify-content:space-between;margin-top:14px;font-size:.8em"><a href="#" data-a="lang2">${ar ? "English" : "العربية"}</a>
       ${(S.billingPublic || {}).enabled ? "" : `<a href="#" data-a="clocal" class="muted">${ar ? "استخدام هذا الجهاز دون مساحة العمل" : "Use this device without the workspace"}</a>`}</div>${LP_LINK()}</div>
-    ${(S.billingPublic || {}).enabled && mode === "signup" ? `<p class="center muted" style="font-size:.85em">${ar ? `جرّب كل المزايا مجاناً لمدة ${S.billingPublic.trial_days} يوماً — بدون بطاقة.` : `Try everything free for ${S.billingPublic.trial_days} days — no card needed.`}</p>` : ""}`;
+    ${(S.billingPublic || {}).enabled && mode === "signup" ? `<p class="center muted" style="font-size:.85em">${esc(ST("auth.trial", "Try everything free for {days} days — no card needed.", "جرّب كل المزايا مجاناً لمدة {days} يوماً — بدون بطاقة.").replace(/\{days\}/g, S.billingPublic.trial_days))}</p>` : ""}`;
   const show = (m, k = "err") => { $("#lerr").innerHTML = `<div class="banner ${k}">${esc(m)}</div>`; };
   const needEmail = () => { const e = $("[name=email]"); if (!e || !e.value || !e.checkValidity()) { if (e) e.reportValidity(); return null; } store.set("lastEmail", e.value.trim()); return e.value.trim(); };
   const keepChoice = () => { const r = $("#remember"); C.setRemember(r ? r.checked : true); };
@@ -6481,8 +6488,9 @@ PAGES.users = async (view) => {
         cloudOn() ? (ar ? "تُستخدم فوراً دون رسالة تأكيد." : "Usable immediately; no confirmation email.") : ""), span: "spanall" },
     // one role: a super administrator can do everything an administrator can, and an administrator ignores the grid below
     ...(S.boot.user.is_super ? [{ k: "role", l: L2("Role", "الدور"), type: "select", span: "spanall", change: "urole", v: u.is_super ? "super" : u.is_admin ? "admin" : "user", opts: [
-      ["user", L2("User: limited to the permissions below", "مستخدم: وفق الصلاحيات أدناه فقط")],
-      ["admin", L2("Administrator: adds users and works within the permissions below (full access by default)", "مسؤول: يضيف المستخدمين ويعمل وفق الصلاحيات أدناه (صلاحيات كاملة افتراضياً)")],
+      ["user", planHasPerms() ? L2("User: limited to the permissions below", "مستخدم: وفق الصلاحيات أدناه فقط") : L2("User", "مستخدم")],
+      ["admin", planHasPerms() ? L2("Administrator: adds users and works within the permissions below (full access by default)", "مسؤول: يضيف المستخدمين ويعمل وفق الصلاحيات أدناه (صلاحيات كاملة افتراضياً)")
+        : L2("Administrator: adds users", "مسؤول: يضيف المستخدمين")],
       ["super", L2("Super administrator: full access, including managing administrators and erasing or restoring the books", "مسؤول أعلى: صلاحيات كاملة، بما فيها إدارة المسؤولين ومسح الدفاتر أو استعادتها")]] }] : []),
     ...(S.boot.user.is_super && !u.is_super ? [{ html: `<div class="f spanall" id="ugrants"><b>${esc(L2("Special rights (granted to super administrators by default)", "صلاحيات خاصة (ممنوحة للمسؤول الأعلى افتراضياً)"))}</b>
       <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:6px">${[["design_dashboards", L2("Design dashboards and groups", "تصميم لوحات التحكم والمجموعات")], ["required_fields", L2("Make fields required", "جعل الحقول إلزامية")],
@@ -6497,12 +6505,14 @@ PAGES.users = async (view) => {
       l: L2("Can post entries (if cleared, entries are saved as drafts for approval)", "يمكنه ترحيل القيود (بدون تحديد، تُحفظ قيوده مسودات للاعتماد)") },
     ...(u.id ? [{ k: "active", l: t("active") + (cloudOn() ? (ar ? " (ألغِ التحديد لمنع تسجيل الدخول)" : " (clear to block sign-in)") : ""), type: "checkbox", v: u.active !== false }] : []),
     { html: `<div id="permwrap"><h4 style="margin:8px 0 0">${t("perm_matrix")}</h4><div class="banner" id="permadm" ${u.is_super ? "" : "hidden"}>${esc(L2("Super administrators have full access; the permissions below do not apply.", "للمسؤول الأعلى صلاحيات كاملة، ولا تنطبق عليه الصلاحيات أدناه."))}</div><div id="permgrid" ${u.is_super ? 'class="dim"' : ""}>${permMatrix(u.perms || {})}</div></div>`, span: "spanall" }]),
-  async (v, f) => { const perms = readPerms(f);
+  async (v, f) => { const perms = readPerms(f), noPerms = !planHasPerms();
     if (v.role) { v.is_admin = v.role !== "user"; v.is_super = v.role === "super"; }
     const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin || v.is_super, active: v.active, perms, _no_password: !v.password,
       ...(v.can_post === undefined || (u.id && u.id === S.boot.user.id && !S.boot.user.is_super) ? {} : { needs_approval: !v.can_post }) };
     if (S.boot.user.is_super && $("[data-grant]", f)) body.grants = $$("[data-grant]", f).filter(x => x.checked).map(x => x.dataset.grant);
-    if ($("#ubus", f)) body.projects = $("#ubusall", f).checked ? [] : $$("[data-bu]", f).filter(x => x.checked).map(x => x.dataset.bu);
+    if ($("#ubus", f) && !noPerms) body.projects = $("#ubusall", f).checked ? [] : $$("[data-bu]", f).filter(x => x.checked).map(x => x.dataset.bu);
+    // no user permissions in the plan: a new user gets full use; an existing one keeps theirs unless given full use
+    if (noPerms) { if (!u.id || ($("#ufull", f) || {}).checked) body.perms = fullPerms(); else Reflect.deleteProperty(body, "perms"); }
     if (body.projects && !$("#ubusall", f).checked && !body.projects.length) throw new Error(L2("Choose at least one project or select All projects.", "اختر مشروعاً واحداً على الأقل أو حدد «جميع المشروعات»."));
     if (v.group_key !== undefined) body.group_key = v.group_key === "general" ? "" : v.group_key;
     if (S.boot.user.is_super) body.is_super = !!v.is_super; else { body.is_admin = !!u.is_admin; }
@@ -6524,6 +6534,12 @@ PAGES.users = async (view) => {
       } else toast((ar ? "تم حفظ المستخدم، لكن لم يُنشأ حساب الدخول:" : "User saved, but the sign-in account was not created: ") + e.message, true);
     } },
   { onOpen: f => { wirePerms(f); pwWire(f);
+    if (!planHasPerms()) {           // the plan does not include user permissions: the grid and project access are not offered
+      ["#permwrap", "#ubus"].forEach(sel => { const x = $(sel, f); if (x) x.hidden = true; });
+      const pw = $("#permwrap", f);
+      if (pw) pw.insertAdjacentHTML("afterend", `<div class="banner info spanall">${esc(L2("Your plan does not include user permissions: every user can use everything the plan includes.", "باقتك لا تشمل صلاحيات المستخدمين: يمكن لكل مستخدم استخدام كل ما تشمله الباقة."))}
+        ${u.id && restrictedUser(u) ? `<label class="f chk" style="margin-top:6px"><input type="checkbox" id="ufull" data-skip="1">${esc(L2("Give this user full use (the permissions set for them before are lifted)", "منح هذا المستخدم الاستخدام الكامل (تُلغى الصلاحيات المحددة له سابقاً)"))}</label>` : ""}</div>`);
+    }
     S.H.ubusall = el => { $("#ubuslist", f).hidden = el.checked; };
     S.H.urole = el => { const top = el.value === "super", cp = $("[name=can_post]", f);
       // a new administrator starts with full access in the grid (narrow it as needed)
@@ -6541,7 +6557,7 @@ PAGES.users = async (view) => {
     extraButtons: (u.id && (u.two_step || (STATIC && cloudOn())) && S.boot.user.is_super && u.id !== S.boot.user.id ? `<button type="button" class="btn" data-a="utsoff">${esc(L2("Disable two-step sign-in", "تعطيل التحقق بخطوتين"))}</button>` : "") +
       (u.id && ed && u.id !== S.boot.user.id && S.boot.user.is_super ? `<button type="button" class="btn danger" data-a="udel">${t("delete")}</button>` : "") });
   S.H.udel = () => {};
-  S.H.unew = () => cloudOn() && seatsTaken() ? seatFull() : edit({ perms: { dashboard: "view" } });
+  S.H.unew = () => cloudOn() && seatsTaken() ? seatFull() : edit({ perms: planHasPerms() ? { dashboard: "view" } : fullPerms() });
   S.H.uedit = el => { const u = rows.find(x => String(x.id) === el.dataset.id);
     edit(u);
     S.H.utsoff = async () => { if (!await uiConfirm(L2(`Disable two-step sign-in for ${u.username}? The user signs in with a password and can set it up again.`, `هل تريد تعطيل التحقق بخطوتين لـ ${u.username}؟ يسجّل المستخدم الدخول بكلمة المرور ويمكنه تفعيله مجدداً.`))) return;
@@ -6566,7 +6582,10 @@ PAGES.users = async (view) => {
       return `<span class="chip warn">${esc(t("mod_" + m))}: ${ss.map((s, i) => vals[i] === "none" ? "" : `${esc(t(window.SUBPERM[`${m}.${s}`] || s))} ${esc({ view: "👁", add: "+", edit: "✎" }[vals[i]])}`).filter(Boolean).join(", ")}</span>`; }).join(" ");
   };
   S.H.ualerts = () => alertAccessForm();
-  view.innerHTML = `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}${S.boot.user.is_super ? `<button class="btn" data-a="ualerts">🔔 ${L2("Notifications by department", "الإشعارات حسب القسم")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("email")}</th><th>${L2("Group", "المجموعة")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
+  const planNote = [planHasPerms() ? "" : L2("Your plan does not include user permissions: every user can use everything the plan includes.", "باقتك لا تشمل صلاحيات المستخدمين: يمكن لكل مستخدم استخدام كل ما تشمله الباقة."),
+    planHasNotifyPerms() ? "" : L2("Your plan does not include notification permissions: everyone receives the standard notifications of their department.", "باقتك لا تشمل صلاحيات الإشعارات: يتلقى الجميع الإشعارات المعتادة لقسمهم.")].filter(Boolean);
+  view.innerHTML = (planNote.length ? `<div class="banner info">${planNote.map(esc).join("<br>")} <a href="#/subscription">${esc(L2("Plans", "الباقات"))}</a></div>` : "") +
+    `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}${S.boot.user.is_super && planHasNotifyPerms() ? `<button class="btn" data-a="ualerts">🔔 ${L2("Notifications by department", "الإشعارات حسب القسم")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("email")}</th><th>${L2("Group", "المجموعة")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
     ${rows.map(u => `<tr class="click ${u.active ? "" : "void"}" data-a="${ed ? "uedit" : ""}" data-id="${u.id}"><td><b>${esc(u.username)}</b></td><td>${esc(u.full_name)}</td><td>${esc(u.email || "")}</td><td>${esc(groupName(u.group_key))}</td><td>${u.needs_approval ? `<span class="chip warn">${esc(L2("Requires approval", "يتطلب الاعتماد"))}</span> ` : ""}${summary(u)}</td><td>${u.active ? "" : `<span class="chip bad">${t("no")}</span>`}</td></tr>`).join("")}</tbody></table></div>
     <p class="muted" style="font-size:.82em">👁 ${t("perm_view")} · + ${t("perm_add")} · ✎ ${t("perm_full")}</p></div>`;
 };
@@ -6596,6 +6615,7 @@ if (STATIC) window.addEventListener("beyond-remote-change", () => {
 
 // who receives which notifications: per department (user group), and per person when needed (super administrators)
 async function alertAccessForm() {
+  if (!planHasNotifyPerms()) return toast(L2("Your plan does not include notification permissions.", "باقتك لا تشمل صلاحيات الإشعارات."), true);
   const d = await api("GET", "/api/alert-access").catch(fail); if (!d) return;
   const ar = S.lang === "ar", rules = { groups: { ...d.rules.groups }, users: { ...d.rules.users } };
   const gname = g => (ar && g.name_ar) || g.name, tl2 = x => ar ? x.ar : x.en;
@@ -6773,6 +6793,21 @@ async function boot() {
 }
 // ================================================== partners' equity, fixed assets, entry types
 
+// Texts of the public pages (home page, sign-in) that the platform owner can rewrite in the owner console (Website
+// texts): ST(key, English, Arabic) shows the owner's wording for the reader's language, else the built-in one. The
+// console lists every ST call of this file (build_web.py writes them to site-texts.json), so keys and wording are literal.
+S.siteTexts = store.get("siteTexts", {}) || {};
+const ST = (k, en, ar) => { const o = S.siteTexts[k], v = o && (S.lang === "ar" ? o.ar : o.en); return v && String(v).trim() ? String(v) : L2(en, ar); };
+const STh = (k, en, ar) => esc(ST(k, en, ar)).replace(/\n/g, "<br>");      // a text whose line breaks are kept
+async function loadSiteTexts() {
+  const C = window.BeyondCloud;
+  if (!C || !C.configured || !C.configured() || !C.siteTexts) return false;
+  const got = await C.siteTexts().catch(() => null);
+  S.siteTextsAt = Date.now();
+  if (!got || typeof got !== "object" || JSON.stringify(got) === JSON.stringify(S.siteTexts)) return false;
+  S.siteTexts = got; store.set("siteTexts", got);
+  return true;
+}
 const L2 = (en, ar) => (S.lang === "ar" ? ar : en);
 const activePartners = () => (S.boot.partners || []).filter(p => p.active !== 0);
 const pctIn = v => (v == null || v === "" ? "" : +(v * 100).toFixed(4));
@@ -12844,6 +12879,7 @@ document.addEventListener("click", e => { const a = e.target.closest("[data-lp]"
 // light on slow connections; respects "reduce motion". Shown on a first visit and again after signing out.
 // signing out shows the welcome screen first; its Sign in button leads on to the sign-in page
 function afterSignOut() { S.landingOk = false; scrollTo(0, 0); renderLanding(); }
+const LP_SOCIAL = ["https://www.linkedin.com/company/mybeyonderp", "https://www.facebook.com/people/Beyond-ERP/61595801625159/", "https://www.instagram.com/mybeyonderp/"];
 function renderLanding(opt = {}) {
   const ar = S.lang === "ar", setup = S.boot && S.boot.needs_setup, inApp = !!opt.inApp;
   const me = inApp && S.boot.user;
@@ -12854,57 +12890,60 @@ function renderLanding(opt = {}) {
   const word = LETTERS.map((c, i) => { const off = i - mid, dist = Math.abs(off), dir = Math.sign(off);
     const x = dist >= mid ? dir * 46 : dir * (dist * 9 + 5), dl = 1.15 + [0, .2, .38, .54, .68][Math.round(dist)];
     return `<span style="--x:${x}vw;--y:${dist ? -1.5 : 0}vh;--s:${dist ? 1.9 : 2.6};--dl:${dl.toFixed(2)}s" class="${i >= 6 ? "erp" : ""}" data-c="${c}"><b>${c}</b></span>`; }).join("");
-  const chips = [L2("General Accounting", "المحاسبة العامة"), L2("Accounts Receivable", "الذمم المدينة"), L2("Accounts Payable", "الذمم الدائنة"),
-    L2("Inventory Management", "إدارة المخزون"), L2("Procurement", "المشتريات"), L2("Project Costing", "تكاليف المشروعات"), L2("Contracts & Progress Billing", "العقود والمستخلصات"),
-    L2("Payroll and HR", "الرواتب والموارد البشرية"), L2("Fixed Assets", "الأصول الثابتة"), L2("Treasury and Banking", "الخزينة والبنوك"), L2("Budgeting", "الموازنات"),
-    L2("Tax and E-Invoicing", "الضرائب والفاتورة الإلكترونية"), L2("Sales and Instalments", "المبيعات والتقسيط"), L2("Equipment Rental", "تأجير المعدات"),
-    L2("Partners and Equity", "الشركاء وحقوق الملكية"), L2("Financial Reports", "التقارير المالية"), L2("Customers and Deals", "العملاء والصفقات"), L2("Team Chat", "محادثات الفريق"), L2("AI Assistant", "المساعد الذكي")];
-  const tiles = [["scale", L2("General ledger", "الأستاذ العام")], ["box", L2("Inventory", "المخزون")], ["users", L2("Payroll", "الرواتب")],
-    ["receipt", L2("Tax and e-invoicing", "الضرائب والفاتورة الإلكترونية")], ["file", L2("Quotations and BOQs", "العروض والمقايسات")], ["brief", L2("Projects", "المشروعات")]];
-  const go = inApp ? L2("Back to BeyondERP", "العودة إلى BeyondERP") : L2(setup ? "Get started" : "Sign in", setup ? "ابدأ الآن" : "تسجيل الدخول");
+  const chips = [ST("home.chip.accounting", "General Accounting", "المحاسبة العامة"), ST("home.chip.receivable", "Accounts Receivable", "الذمم المدينة"), ST("home.chip.payable", "Accounts Payable", "الذمم الدائنة"),
+    ST("home.chip.inventory", "Inventory Management", "إدارة المخزون"), ST("home.chip.procurement", "Procurement", "المشتريات"), ST("home.chip.costing", "Project Costing", "تكاليف المشروعات"), ST("home.chip.contracts", "Contracts & Progress Billing", "العقود والمستخلصات"),
+    ST("home.chip.payroll", "Payroll and HR", "الرواتب والموارد البشرية"), ST("home.chip.assets", "Fixed Assets", "الأصول الثابتة"), ST("home.chip.treasury", "Treasury and Banking", "الخزينة والبنوك"), ST("home.chip.budgets", "Budgeting", "الموازنات"),
+    ST("home.chip.tax", "Tax and E-Invoicing", "الضرائب والفاتورة الإلكترونية"), ST("home.chip.sales", "Sales and Instalments", "المبيعات والتقسيط"), ST("home.chip.rental", "Equipment Rental", "تأجير المعدات"),
+    ST("home.chip.partners", "Partners and Equity", "الشركاء وحقوق الملكية"), ST("home.chip.reports", "Financial Reports", "التقارير المالية"), ST("home.chip.crm", "Customers and Deals", "العملاء والصفقات"), ST("home.chip.chat", "Team Chat", "محادثات الفريق"), ST("home.chip.ai", "AI Assistant", "المساعد الذكي")];
+  const tiles = [["scale", ST("home.tile.ledger", "General ledger", "الأستاذ العام")], ["box", ST("home.tile.inventory", "Inventory", "المخزون")], ["users", ST("home.tile.payroll", "Payroll", "الرواتب")],
+    ["receipt", ST("home.tile.tax", "Tax and e-invoicing", "الضرائب والفاتورة الإلكترونية")], ["file", ST("home.tile.boq", "Quotations and BOQs", "العروض والمقايسات")], ["brief", ST("home.tile.projects", "Projects", "المشروعات")]];
+  const go = inApp ? L2("Back to BeyondERP", "العودة إلى BeyondERP") : setup ? ST("home.btn.start", "Get started", "ابدأ الآن") : ST("home.btn.signin", "Sign in", "تسجيل الدخول");
   const bars = [38, 52, 44, 63, 58, 72, 66, 84].map((h, i) => `<i style="--h:${h}%;--i:${i}"></i>`).join("");
   const appMock = cls => `<div class="lp-app ${cls}" aria-hidden="true"><div class="lp-app-top"><span class="wordmark">BEYOND<i>ERP</i></span><b class="lp-dot"></b></div>
-      <small>${esc(L2("Net profit this year", "صافي الربح هذا العام"))}</small><div class="lp-app-num" data-count="1284500">0</div>
+      <small>${esc(ST("home.mock.profit", "Net profit this year", "صافي الربح هذا العام"))}</small><div class="lp-app-num" data-count="1284500">0</div>
       <div class="lp-app-bars">${bars}</div>
-      <div class="lp-app-row"><span>${esc(L2("Trial balance", "ميزان المراجعة"))}</span><span class="lp-ok">✓ ${esc(L2("Balanced", "متوازن"))}</span></div>
-      <div class="lp-app-row"><span>${esc(L2("Projects within budget", "مشروعات ضمن الموازنة"))}</span><span>7 / 8</span></div>
-      <small class="lp-demo">${esc(L2("Demo company", "شركة تجريبية"))}</small></div>`;
+      <div class="lp-app-row"><span>${esc(ST("home.mock.tb", "Trial balance", "ميزان المراجعة"))}</span><span class="lp-ok">✓ ${esc(ST("home.mock.balanced", "Balanced", "متوازن"))}</span></div>
+      <div class="lp-app-row"><span>${esc(ST("home.mock.budget", "Projects within budget", "مشروعات ضمن الموازنة"))}</span><span>7 / 8</span></div>
+      <small class="lp-demo">${esc(ST("home.mock.demo", "Demo company", "شركة تجريبية"))}</small></div>`;
   $("#root").innerHTML = `<div class="lp" dir="${ar ? "rtl" : "ltr"}">
     <header class="lp-nav"><a class="wordmark lp-mini lp-home" href="#/discover" title="${esc(L2("Welcome screen", "شاشة الترحيب"))}">BEYOND<i>ERP</i></a><span class="spacer"></span>
       <button type="button" class="lp-motion" data-motion="1" title="${esc(L2("Turn welcome screen animation on or off", "تشغيل حركة شاشة الترحيب أو إيقافها"))}">${store.get("lpMotion", "on") === "off" ? L2("✦ Animation: off", "✦ الحركة: متوقفة") : L2("✦ Animation: on", "✦ الحركة: تعمل")}</button><button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button>${me ? `<span class="lp-me" title="${esc(L2("Signed in", "تم تسجيل الدخول"))}"><b>${esc(((me.full_name || me.username || "?").trim()[0] || "?").toUpperCase())}</b>${esc(me.full_name || me.username)}</span>` : ""}<button type="button" class="lp-pill sm" data-go="1">${esc(inApp ? L2("Return to the application", "العودة إلى التطبيق") : go)}</button></header>
     <div class="lp-story"><nav class="lp-dots" aria-label="${esc(L2("Sections", "الأقسام"))}">${[0, 1, 2, 3, 4, 5].map(i => `<button type="button" data-sc="${i}" aria-label="${i + 1}"></button>`).join("")}</nav><div class="lp-stage">
       <section class="lp-sc lp-s0 lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
         <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
-        <p class="lp-tag">${esc(L2("RUN THE BUSINESS, NOT THE PAPERWORK", "أدِر أعمالك، لا أوراقها"))}</p>
-        <p class="lp-sub">${esc(L2("Accounts, projects, partners and payroll in one place.", "الحسابات والمشروعات والشركاء والرواتب في مكان واحد."))}</p>
+        <p class="lp-tag">${esc(ST("home.hero.tag", "RUN THE BUSINESS, NOT THE PAPERWORK", "أدِر أعمالك، لا أوراقها"))}</p>
+        <p class="lp-sub">${esc(ST("home.hero.sub", "Accounts, projects, partners and payroll in one place.", "الحسابات والمشروعات والشركاء والرواتب في مكان واحد."))}</p>
         <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
-        <small class="lp-note">${esc(L2("General ledger · Inventory · Projects · Payroll · Tax", "الأستاذ العام · المخزون · المشروعات · الرواتب · الضرائب"))}</small>
+        <small class="lp-note">${esc(ST("home.hero.note", "General ledger · Inventory · Projects · Payroll · Tax", "الأستاذ العام · المخزون · المشروعات · الرواتب · الضرائب"))}</small>
         <div class="lp-scroll" aria-hidden="true"></div></section>
       <section class="lp-sc lp-s1"><div class="lp-panel"><div class="lp-panel-txt">
-          <h2>${ar ? "دفاتر<br>متوازنة<br>دائماً." : "Books that<br>balance<br>themselves."}</h2>
-          <p>${esc(L2("Every voucher posts a double entry, so the trial balance, income statement and balance sheet are always current.", "يُرحَّل كل سند بقيد مزدوج، فيبقى ميزان المراجعة وقائمة الدخل والميزانية محدثة دائماً."))}</p>
+          <h2>${STh("home.books.title", "Books that\nbalance\nthemselves.", "دفاتر\nمتوازنة\nدائماً.")}</h2>
+          <p>${esc(ST("home.books.text", "Every voucher posts a double entry, so the trial balance, income statement and balance sheet are always current.", "يُرحَّل كل سند بقيد مزدوج، فيبقى ميزان المراجعة وقائمة الدخل والميزانية محدثة دائماً."))}</p>
           <button type="button" class="lp-pill sm" data-go="1">${esc(go)}</button></div>${appMock("lp-app-wide")}<div class="lp-floor" aria-hidden="true"></div></div></section>
       <section class="lp-sc lp-s2"><div class="lp-orb2" aria-hidden="true"><i class="lp-comet"></i></div>
-        <h2>${esc(L2("Profit by project", "الربح لكل مشروع"))}</h2>
-        <p>${esc(L2("Costs, progress billing, retentions and subcontractor certificates, with current work in progress for every project.", "التكاليف والمستخلصات والمحتجزات ومستخلصات مقاولي الباطن، مع الأعمال تحت التنفيذ محدثة لكل مشروع."))}</p>
-        <div class="lp-minis"><div class="lp-mini2"><b>${esc(L2("Partners and funding", "الشركاء والتمويل"))}</b><span>${esc(L2("Shares, capital and profit appropriation, calculated automatically.", "الحصص ورأس المال وتوزيع الأرباح، تُحتسب تلقائياً."))}</span></div>
-          <div class="lp-mini2"><b>${esc(L2("Materials consumed", "المواد المستخدمة"))}</b><span>${esc(L2("Every material charged to a project, searchable.", "كل مادة محمّلة على مشروع، قابلة للبحث."))}</span></div></div></section>
+        <h2>${esc(ST("home.projects.title", "Profit by project", "الربح لكل مشروع"))}</h2>
+        <p>${esc(ST("home.projects.text", "Costs, progress billing, retentions and subcontractor certificates, with current work in progress for every project.", "التكاليف والمستخلصات والمحتجزات ومستخلصات مقاولي الباطن، مع الأعمال تحت التنفيذ محدثة لكل مشروع."))}</p>
+        <div class="lp-minis"><div class="lp-mini2"><b>${esc(ST("home.partners.title", "Partners and funding", "الشركاء والتمويل"))}</b><span>${esc(ST("home.partners.text", "Shares, capital and profit appropriation, calculated automatically.", "الحصص ورأس المال وتوزيع الأرباح، تُحتسب تلقائياً."))}</span></div>
+          <div class="lp-mini2"><b>${esc(ST("home.materials.title", "Materials consumed", "المواد المستخدمة"))}</b><span>${esc(ST("home.materials.text", "Every material charged to a project, searchable.", "كل مادة محمّلة على مشروع، قابلة للبحث."))}</span></div></div></section>
       <section class="lp-sc lp-s3"><div class="lp-ecl" aria-hidden="true"><i class="lp-ecl-light"></i><i class="lp-ecl-disc"></i></div>
-        <h2>${esc(L2("All your systems in one place", "جميع أنظمتك في مكان واحد"))}</h2>
-        <p>${esc(L2("Accounting, stock, payroll, tax and projects share one set of books, with nothing to reconcile between them.", "تعمل المحاسبة والمخزون والرواتب والضرائب والمشروعات على دفاتر واحدة، دون حاجة إلى مطابقة بينها."))}</p>
+        <h2>${esc(ST("home.systems.title", "All your systems in one place", "جميع أنظمتك في مكان واحد"))}</h2>
+        <p>${esc(ST("home.systems.text", "Accounting, stock, payroll, tax and projects share one set of books, with nothing to reconcile between them.", "تعمل المحاسبة والمخزون والرواتب والضرائب والمشروعات على دفاتر واحدة، دون حاجة إلى مطابقة بينها."))}</p>
         <div class="lp-tiles">${tiles.map(([ic, l], i) => `<div class="lp-tile" style="--i:${i}">${svg(ic)}<span>${esc(l)}</span></div>`).join("")}</div></section>
       <section class="lp-sc lp-s4"><div class="lp-globe-wrap" aria-hidden="true"><div class="lp-globe"></div>
-          <div class="lp-stat l"><b>${chips.length}</b><span>${esc(L2("Systems", "نظاماً"))}</span><i></i></div>
-          <div class="lp-stat r"><b>4</b><span>${esc(L2("Quarters ahead", "ربعاً قادماً"))}</span><i></i></div></div>
-        <h2>${esc(L2("Price and cost forecasting", "توقع الأسعار والتكاليف"))}</h2>
-        <p>${esc(L2("Quarterly forecasts of costs and prices based on inflation, exchange rates and your own history.", "توقعات ربع سنوية للتكاليف والأسعار مبنية على التضخم وأسعار الصرف وبيانات شركتك."))}</p></section>
-      <section class="lp-sc lp-s5"><h2>${esc(L2("Run the business, not the paperwork.", "أدِر أعمالك، لا أوراقها."))}</h2>
+          <div class="lp-stat l"><b>${chips.length}</b><span>${esc(ST("home.stats.systems", "Systems", "نظاماً"))}</span><i></i></div>
+          <div class="lp-stat r"><b>4</b><span>${esc(ST("home.stats.quarters", "Quarters ahead", "ربعاً قادماً"))}</span><i></i></div></div>
+        <h2>${esc(ST("home.forecast.title", "Price and cost forecasting", "توقع الأسعار والتكاليف"))}</h2>
+        <p>${esc(ST("home.forecast.text", "Quarterly forecasts of costs and prices based on inflation, exchange rates and your own history.", "توقعات ربع سنوية للتكاليف والأسعار مبنية على التضخم وأسعار الصرف وبيانات شركتك."))}</p></section>
+      <section class="lp-sc lp-s5"><h2>${esc(ST("home.end.title", "Run the business, not the paperwork.", "أدِر أعمالك، لا أوراقها."))}</h2>
         <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
         <div class="lp-rise">${appMock("lp-app-phone")}</div><div class="lp-grid" aria-hidden="true"></div></section>
     </div></div>
-    <section class="lp-band"><h2>${esc(L2("The systems a growing company runs on", "الأنظمة التي تحتاجها الشركة في نموها"))}</h2>
+    <section class="lp-band"><h2>${esc(ST("home.band.title", "The systems a growing company runs on", "الأنظمة التي تحتاجها الشركة في نموها"))}</h2>
       <div class="lp-chips">${chips.map(c => `<span>${esc(c)}</span>`).join("")}</div></section>
-    <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span><a class="lp-mail" href="mailto:info@mybeyonderp.com" dir="ltr">info@mybeyonderp.com</a><span class="lp-social">${[["LinkedIn", "https://www.linkedin.com/company/mybeyonderp"], ["Facebook", "https://www.facebook.com/people/Beyond-ERP/61595801625159/"], ["Instagram", "https://www.instagram.com/mybeyonderp/"]].map(([n, u]) => `<a href="${u}" target="_blank" rel="noopener me">${n}</a>`).join(" · ")}</span><small class="lp-copy">© ${new Date().getFullYear()} BEYONDERP. ${esc(L2("All rights reserved.", "جميع الحقوق محفوظة."))}</small></footer></div>`;
+    <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span>${(m => m ? `<a class="lp-mail" href="mailto:${esc(m)}" dir="ltr">${esc(m)}</a>` : "")(ST("foot.email", "info@mybeyonderp.com", "info@mybeyonderp.com"))}<span class="lp-social">${[["LinkedIn", ST("foot.linkedin", "https://www.linkedin.com/company/mybeyonderp", "https://www.linkedin.com/company/mybeyonderp")],
+        ["Facebook", ST("foot.facebook", "https://www.facebook.com/people/Beyond-ERP/61595801625159/", "https://www.facebook.com/people/Beyond-ERP/61595801625159/")],
+        ["Instagram", ST("foot.instagram", "https://www.instagram.com/mybeyonderp/", "https://www.instagram.com/mybeyonderp/")]]
+        .map(([n, u], i) => `<a href="${esc(/^https:\/\/[^\s"'<>]+$/.test(u) ? u : LP_SOCIAL[i])}" target="_blank" rel="noopener me">${n}</a>`).join(" · ")}</span><small class="lp-copy">© ${new Date().getFullYear()} BEYONDERP. ${esc(ST("foot.rights", "All rights reserved.", "جميع الحقوق محفوظة."))}</small></footer></div>`;
   const root = $(".lp");
   root.addEventListener("click", e => {
     const home = e.target.closest(".lp-home");
@@ -12917,6 +12956,8 @@ function renderLanding(opt = {}) {
     else if (e.target.closest("[data-motion]")) { store.set("lpMotion", store.get("lpMotion", "on") === "off" ? "on" : "off"); scrollTo(0, 0); renderLanding(opt); }
   });
   lpStory(root);
+  // the owner console's wording for these pages: shown at once from the last visit, then refreshed from the workspace
+  if (!opt.texts) loadSiteTexts().then(changed => { if (changed && $(".lp") === root) renderLanding({ ...opt, texts: true }); });
   // the title sequence waits until the page has settled (fonts in, first paint done): started during that work its
   // first frames stall, which is the jump at the very start of the halo
   const start = () => requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add("lp-go")));
@@ -14303,7 +14344,9 @@ PAGES.subscription = async (view, parts, q) => {
         ${p.badge || p.badge_ar ? `<span class="plan-badge">${esc(ar && p.badge_ar ? p.badge_ar : p.badge)}</span>` : ""}<h3>${esc(ar && p.name_ar ? p.name_ar : p.name)}</h3>
         ${p.tagline || p.tagline_ar ? `<div class="muted" style="font-size:.88em">${esc(ar && p.tagline_ar ? p.tagline_ar : p.tagline)}</div>` : ""}
         <div class="price">${p.contact ? L2("Contact us for pricing", "تواصل معنا لمعرفة السعر") : `${money((+p.price || 0) * (st.months === 12 ? (+pub.yearly_months || 10) : 1))} <small>${esc(cur)} / ${st.months === 12 ? L2("Year", "سنة") : L2("Month", "شهر")} · ${L2("per company", "لكل شركة")}</small>`}</div>
-        <div class="muted">${p.contact && !p.users ? L2("Users, companies and modules as agreed", "المستخدمون والشركات والأقسام حسب الاتفاق") : L2(`${p.users} users per company`, `${p.users} مستخدمين لكل شركة`)}</div><ul>${feats.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+        <div class="muted">${p.contact && !p.users ? L2("Users, companies and modules as agreed", "المستخدمون والشركات والأقسام حسب الاتفاق") : L2(`${p.users} users per company`, `${p.users} مستخدمين لكل شركة`)}${p.companies ? " · " + L2(`up to ${p.companies} compan${p.companies === 1 ? "y" : "ies"}`, `حتى ${p.companies} شركة`) : ""}</div>
+        ${p.perms === false || p.notify_perms === false ? `<div class="muted" style="font-size:.85em">${esc([p.perms === false ? L2("No user permissions (every user sees everything in the plan)", "بدون صلاحيات مستخدمين (يرى كل مستخدم كل ما في الباقة)") : "",
+          p.notify_perms === false ? L2("Standard notifications for everyone", "إشعارات موحدة للجميع") : ""].filter(Boolean).join(" · "))}</div>` : ""}<ul>${feats.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
         <div class="plan-inc">${inc ? `<span title="${esc(inc.map(secL).join(" · "))}">${esc(L2(`${inc.length} modules`, `${inc.length} قسماً`))}</span>` : `<span>${esc(L2("Every module", "كل الأقسام"))}</span>`}
           ${pub.ai_mode === "off" ? "" : `<span class="${pub.ai_mode === "free" || p.ai ? "" : "off"}">✦ ${esc(L2("AI assistant", "المساعد الذكي"))}</span>`}
           <span class="${pub.support_mode === "free" || p.support !== false ? "" : "off"}">? ${esc(L2("Online support", "الدعم الإلكتروني"))}</span></div></button>`; }).join("")}</div>

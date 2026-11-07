@@ -587,6 +587,10 @@ def cloud_new_books(name, email):
         async billingPublic() {
           try { return await req("POST", "/rest/v1/rpc/billing_public", {}); } catch (e) { return { enabled: false, missing: e.status === 404 }; }
         },
+        // the public pages' wording as the platform owner set it in the console (Website texts); none: the built-in one
+        async siteTexts() {
+          try { return await req("POST", "/rest/v1/rpc/site_texts", {}); } catch { return null; }
+        },
         async billing() {
           try { return await rpc("billing_status", { p_company: co() }); }
           catch (e) { if (e.status === 404 || e.code === "PGRST202") return { enabled: false, status: "free", can_write: true }; throw e; }
