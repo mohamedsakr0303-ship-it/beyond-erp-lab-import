@@ -193,8 +193,12 @@ jobs:
           $partial = $LASTEXITCODE
           $env:ES_USERNAME = ""
           if ($partial -eq 0) { Write-Host "::error::sign.ps1 did not stop on a half-set-up eSigner"; exit 1 }
-          & $iscc "/O$env:RUNNER_TEMP\signcheck" ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f') packaging\signcheck.iss
-          if ($LASTEXITCODE -ne 0) { Write-Host "::error::Inno Setup could not run the sign tool command"; exit 1 }
+          # with no certificate Inno Setup then stops on the unsigned file ("does not have a digital signature"): expected
+          # here; what counts is that it ran sign.ps1 on the quoted file and sign.ps1 answered
+          $log = & $iscc "/O$env:RUNNER_TEMP\signcheck" ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f') packaging\signcheck.iss 2>&1 | Out-String
+          Write-Host $log
+          if ($log -notmatch 'Running Sign Tool beyond: powershell .*-File "[^"]+\\sign\.ps1" "[^"]+"' -or $log -notmatch 'Not signed \(no code-signing certificate set up\)') {
+            Write-Host "::error::Inno Setup did not hand the file to sign.ps1"; exit 1 }
           Write-Host "Signing steps check passed"
       - name: Windows installers
         if: runner.os == 'Windows'

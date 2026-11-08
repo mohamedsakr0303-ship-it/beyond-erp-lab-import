@@ -492,6 +492,9 @@ class Packaging(unittest.TestCase):
         self.assertIn("continue-on-error: true", check)
         self.assertNotIn("secrets.", check)
         self.assertIn("packaging\\signcheck.iss", check)
+        # without a certificate ISCC refuses the unsigned result; the check looks for the hand-over itself in its log
+        self.assertIn("Running Sign Tool beyond: powershell", check)
+        self.assertIn("Not signed \\(no code-signing certificate set up\\)", check)
         self.assertIn("SignTool=beyond", self.read("packaging/signcheck.iss"))
         self.assertIn("Uninstallable=no", self.read("packaging/signcheck.iss"))
 
