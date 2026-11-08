@@ -115,6 +115,13 @@ class BarStyleSavedAndGhostPlaced(unittest.TestCase):
         chat.save_profile(db, uid, {"prefs": {"dock_style": "<b>"}})                   # anything else: kept as it was
         self.assertEqual(chat.profile(db, uid)["prefs"]["dock_style"], "halo")
 
+    def test_every_bar_tab_closes_the_dropdown_of_the_tab_before(self):
+        js = read("erp/static/app.js")
+        for name in ("bellopen", "palette", "menu"):                         # Alerts, Search, Menu (New is a dropdown itself)
+            body = re.search(r"\n  " + name + r": (.*?)\n  [a-z]+: ", js, re.S).group(1)
+            with self.subTest(tab=name):
+                self.assertIn('$$(".dd.open").forEach(d => d.classList.remove("open"))', body)
+
     def test_the_style_selects_work_on_every_screen(self):
         js = read("erp/static/app.js")
         self.assertIn("S.GLOBAL_H.dockset = el => saveDock(", js)       # S.H is rebuilt from GLOBAL_H on each route

@@ -1284,6 +1284,8 @@ S.GLOBAL_H = {
   clocktoggle: el => Clock.toggle(el),
   bellopen: () => { const b = $(".bell"); if (!b) return;          // the phone bar's Alerts: a second tap closes it
     if (b.classList.contains("open")) { b.classList.remove("open"); return; }
+    // switching from another tab: its dropdown (the New menu, the account menu) closes, as Search and Menu do
+    $$(".dd.open").forEach(d => d.classList.remove("open"));
     $(".app") && $(".app").classList.remove("menu"); b.classList.add("open"); loadAlerts(true).then(bellSeen); },
   grp: el => { const w = el.closest(".grp-wrap"), app = $(".app");
     if (innerWidth <= 900 && app.classList.contains("pm-rail") && !app.classList.contains("menu")) {   // the icon strip: open the menu at that section
