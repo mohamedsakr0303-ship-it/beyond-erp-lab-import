@@ -381,6 +381,10 @@ const THEME_PRESETS = [
 ];
 const hexOk = c => /^#[0-9a-fA-F]{6}$/.test(c || "");
 // text that stays readable on a colour: dark ink on light colours, white on dark ones
+// contrast ratio of two #rrggbb colours (WCAG)
+const lumOf = c => { const n = parseInt(c.slice(1), 16), L = x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
+  return 0.2126 * L(n >> 16) + 0.7152 * L((n >> 8) & 255) + 0.0722 * L(n & 255); };
+const contrast = (a, b) => { const x = lumOf(a), y = lumOf(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
 const inkOn = c => { const n = parseInt(c.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
   const L = x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
   return 0.2126 * L(r) + 0.7152 * L(g) + 0.0722 * L(b) > 0.42 ? "#1e2430" : "#ffffff"; };
@@ -439,8 +443,11 @@ function applyTheme(th) {
   if (hexOk(th.primary)) { st.setProperty("--brand", th.primary); st.setProperty("--accent", th.primary); }
   // the bottom bar: its highlight (the tab in use), and the bar's own colour with text that stays readable on it
   if (hexOk(th.dock)) st.setProperty("--dock-hl", th.dock);
-  if (hexOk(th.dockbar)) { const ink = inkOn(th.dockbar); de.dataset.dockbar = "custom"; st.setProperty("--dock-bg", th.dockbar); st.setProperty("--dock-ink", ink);
-    st.setProperty("--dock-muted", `color-mix(in srgb, ${ink} 70%, transparent)`); st.setProperty("--dock-a", "90%"); }
+  if (hexOk(th.dockbar)) { const ink = contrast(th.dockbar, "#ffffff") >= contrast(th.dockbar, "#1e2430") ? "#ffffff" : "#1e2430";
+    de.dataset.dockbar = "custom"; st.setProperty("--dock-bg", th.dockbar); st.setProperty("--dock-ink", ink);
+    st.setProperty("--dock-muted", `color-mix(in srgb, ${ink} 78%, transparent)`); st.setProperty("--dock-a", "90%");
+    const hl = hexOk(th.dock) ? th.dock : getComputedStyle(de).getPropertyValue("--brand").trim();
+    if (hexOk(hl) && contrast(hl, th.dockbar) < 3) st.setProperty("--dock-hl", ink); }
   if (hexOk(th.sidebar)) { de.dataset.sidebar = "custom"; st.setProperty("--sb-bg", th.sidebar); st.setProperty("--sb-ink", inkOn(th.sidebar)); }
   if (hexOk(th.nav)) { de.dataset.nav = "custom"; st.setProperty("--nav-bg", th.nav); st.setProperty("--nav-ink", inkOn(th.nav)); }
   if (hexOk(th.header)) { de.dataset.top = "custom"; st.setProperty("--top-bg", th.header); st.setProperty("--top-ink", inkOn(th.header)); }
@@ -704,8 +711,7 @@ new MutationObserver(ms => { for (const m of ms) { const el = m.target;
   if (el.classList && el.classList.contains("app") && !el.classList.contains("menu") && innerWidth <= 900) $$(".ucard.dd.open", el).forEach(d => d.classList.remove("open")); } })
   .observe(document.body, { attributes: true, attributeFilter: ["class"], subtree: true });
 const STAY_OPEN = new Set(["grp", "menu", "bellign", "bellignall"]);
-document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); const app = $(".app"); if (app) app.classList.remove("menu");
-  $$(".dd.open").forEach(d => d.classList.remove("open")); } });   // and an open alerts / account menu
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); closeMenus(); } });   // dropdowns (alerts, account) and the side menu
 window.addEventListener("hashchange", () => { S.navCount = (S.navCount || 0) + 1; S.navAnim = true; route(); });
 
 // ---------------------------------------------------------------- routing
@@ -1379,7 +1385,7 @@ function saveDock(patch) {
 const dockSelect = () => { const d = dockPref();
   return `<label class="f">${esc(L2("Bottom bar", "الشريط السفلي"))}<select data-change="dockset" data-k="dock_style">${DOCKS().map(([v, l]) => `<option value="${v}" ${d.style === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
     <label class="f">${esc(L2("Show the bottom bar", "إظهار الشريط السفلي"))}<select data-change="dockset" data-k="dock_where">${[["phone", L2("On phones", "على الهواتف")], ["all", L2("On phones and computers", "على الهواتف والكمبيوتر")]].map(([v, l]) => `<option value="${v}" ${d.where === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`; };
-S.H.dockset = el => saveDock({ [el.dataset.k]: el.value });
+S.GLOBAL_H.dockset = el => saveDock({ [el.dataset.k]: el.value });
 function dockSync() {
   const bar = $(".bottombar"); if (!bar) return;
   const app = $(".app"), page = (location.hash || "").replace(/^#\/?/, "").split(/[/?]/)[0];
@@ -1395,7 +1401,8 @@ function dockSync() {
     const prev = bar.dataset.cur || "";
     bar.dataset.cur = cur;
     // the tab left behind sinks away where it was (glow capsule), while the new one rises in
-    if (prev) { bar.style.setProperty("--pi", prev); bar.classList.toggle("bb-leave", false); void bar.offsetWidth; bar.classList.toggle("bb-leave", true);
+    if (prev && document.documentElement.classList.contains("dock-halo")) { bar.style.setProperty("--pi", prev);
+      bar.classList.toggle("bb-leave", false); void bar.offsetWidth; bar.classList.toggle("bb-leave", true);
       clearTimeout(bar._leaveT); bar._leaveT = setTimeout(() => bar.classList.toggle("bb-leave", false), 450); }
     if (on) { bar.classList.toggle("bb-rise", false); void bar.offsetWidth; bar.classList.toggle("bb-rise", true); }
   }

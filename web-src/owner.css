@@ -307,7 +307,7 @@ html:not(.dock-classic):not(.dock-liquid) .bottombar>.on,html:not(.dock-classic)
 .dock-halo .bottombar>.on svg.i,.dock-halo .bb-new.on>.btn svg.i{filter:drop-shadow(0 2px 6px color-mix(in srgb,var(--glow) 55%,transparent))}
 html.dock-halo:not(.dock-classic) .bottombar>.on{color:color-mix(in srgb,var(--glow) 45%,var(--dock-ink,var(--ink)))}
 /* the tab left behind: a copy of the capsule over it, sinking away */
-html.dock-halo .bb-ghost{display:block;position:absolute;top:0;bottom:0;left:6px;width:calc((100% - 12px) / 5);z-index:1;pointer-events:none;
+html.dock-halo .bb-ghost{display:block;position:absolute;top:0;bottom:0;left:6px;width:calc((100% - 12px) / var(--n,5));z-index:1;pointer-events:none;
   transform:translateX(calc(var(--pi,0) * 100%));opacity:0}
 html[dir=rtl].dock-halo .bb-ghost{left:auto;right:6px;transform:translateX(calc(var(--pi,0) * -100%))}
 html.dock-halo .bottombar.bb-leave .bb-ghost{opacity:1}
@@ -318,8 +318,9 @@ html:not(.dock-classic) .bottombar>a::after,html:not(.dock-classic) .bottombar>b
   content:"";position:absolute;inset:3px;border-radius:15px;pointer-events:none;opacity:0;z-index:-1;
   background:radial-gradient(circle 46px at var(--tx,50%) var(--ty,50%),color-mix(in srgb,var(--glow) 42%,transparent),transparent 70%)}
 html:not(.dock-classic) .bottombar .bb-tap::after{animation:bbTap .55s ease-out}
-html:not(.dock-classic) .bottombar>a:active svg.i,html:not(.dock-classic) .bottombar>button:active svg.i,
-html:not(.dock-classic) .bb-new>.btn:active svg.i{transform:scale(.84);transition-duration:.1s}
+html:not(.dock-classic) .bottombar>a:not(.on):active svg.i,html:not(.dock-classic) .bottombar>button:not(.on):active svg.i,
+html:not(.dock-classic) .bb-new:not(.on)>.btn:active svg.i,html.dock-halo .bottombar>.on:active svg.i,
+html.dock-halo .bb-new.on>.btn:active svg.i,html.dock-spot .bottombar>.on:active svg.i{transform:scale(.84);transition-duration:.1s}
 .dock-halo .bottombar>a:active svg.i,.dock-halo .bottombar>button:active svg.i,.dock-halo .bb-new>.btn:active svg.i{color:var(--glow)}
 
 /* spotlight: a lamp at the top edge casts a cone of light on the icon */

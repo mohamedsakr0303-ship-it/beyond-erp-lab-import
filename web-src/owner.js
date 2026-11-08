@@ -295,7 +295,7 @@ function shell() {
   drawBell(); applyDock();
 }
 // ================================================================== the bottom bar (phones; computers too if chosen on this device)
-// A glass bar whose marker glides to the page in use — a glowing wave, a spotlight, a floating bubble or a liquid drop —
+// A glass bar whose marker shows the page in use (never sliding across) — a glow capsule, a spotlight, a floating bubble or a liquid drop —
 // or the classic bar; the same looks as the ERP's. Kept per device (On this device, on the Notifications page).
 const DI = p => `<svg class="i" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const DOCK_IC = { overview: DI('<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>'), payments: DI('<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h3"/>'),
@@ -346,7 +346,8 @@ function dockSync() {
     const prev = bar.dataset.cur || "";
     bar.dataset.cur = cur;
     // the tab left behind sinks away where it was (glow capsule), while the new one rises in
-    if (prev) { bar.style.setProperty("--pi", prev); bar.classList.toggle("bb-leave", false); void bar.offsetWidth; bar.classList.toggle("bb-leave", true);
+    if (prev && document.documentElement.classList.contains("dock-halo")) { bar.style.setProperty("--pi", prev);
+      bar.classList.toggle("bb-leave", false); void bar.offsetWidth; bar.classList.toggle("bb-leave", true);
       clearTimeout(bar._leaveT); bar._leaveT = setTimeout(() => bar.classList.toggle("bb-leave", false), 450); }
     if (on) { bar.classList.toggle("bb-rise", false); void bar.offsetWidth; bar.classList.toggle("bb-rise", true); }
   }
@@ -801,8 +802,12 @@ PAGES.alerts = async view => {
   S.H.perm = async () => { if (!("Notification" in window)) return toast(L("This browser cannot show notifications.", "هذا المتصفح لا يدعم الإشعارات."), true); await Notification.requestPermission(); route(); };
   soundHandlers();
   S.H.dockset = el => { LSset("berp.console.dock", { ...dockPref(), [el.dataset.k]: el.value }); applyDock(); };
-  S.H.dockcol = el => { LSset("berp.console.dock", { ...dockPref(), color: el.dataset.v }); applyDock(); route(); };
-  S.H.dockcolpick = el => { LSset("berp.console.dock", { ...dockPref(), color: el.value }); applyDock(); route(); };
+  const dockColor = c => { LSset("berp.console.dock", { ...dockPref(), color: c }); applyDock();
+    const d = dockPref(), box = $(".dock-colors", view); if (!box) return;
+    $$("[data-a=dockcol]", box).forEach(b => b.classList.toggle(b.classList.contains("dock-sw") ? "on" : "pri", (b.dataset.v || "") === d.color.toLowerCase()));
+    const pk = $(".dock-sw.pick", box); if (pk) pk.classList.toggle("on", !!d.color && !DOCK_COLORS.includes(d.color.toLowerCase())); };
+  S.H.dockcol = el => dockColor(el.dataset.v);
+  S.H.dockcolpick = el => dockColor(el.value);
   view.innerHTML = `<div class="split"><div class="card"><div id="altbl"></div></div>
     <div><div class="card"><h2>${esc(L("On this device", "على هذا الجهاز"))}</h2>
       <p class="muted small">${esc(L("While this console is open (even in another tab), new notifications pop up on the screen. Phone and computer notifications for tickets, payments and visits also arrive when it is closed, if notifications are on in the ERP (Profile → Notifications).", "طالما اللوحة مفتوحة (حتى في تبويب آخر) تظهر الإشعارات الجديدة على الشاشة. وتصل إشعارات البلاغات والمدفوعات والزيارات للهاتف والكمبيوتر حتى وهي مغلقة إذا فُعّلت الإشعارات في النظام (الملف الشخصي ← الإشعارات)."))}</p>

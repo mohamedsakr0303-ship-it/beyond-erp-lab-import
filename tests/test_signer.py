@@ -445,7 +445,7 @@ class Packaging(unittest.TestCase):
             self.assertIn(f"{k}: ${{{{ secrets.{k} }}}}", wf)                          # from the repository's secrets only
             self.assertIn(k, sign)
         # any certificate secret switches signing on (a half-set-up one then stops the build instead of going unsigned)
-        on = 'if ("$env:SIGN_PFX_BASE64$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {'
+        on = 'if ("$env:SIGN_PFX_BASE64$env:SIGN_PFX_PASSWORD$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {'
         self.assertEqual(wf.count(on), 2)                                                   # the ERP app and the Signer
         self.assertIn("dist-online\\BeyondERP.exe", wf)                                    # each program before its installer
         self.assertIn("dist-signer\\BeyondERP-Signer\\BeyondERP-Signer.exe", wf)
@@ -464,6 +464,10 @@ class Packaging(unittest.TestCase):
         self.assertIn('@("/p", $env:SIGN_PFX_PASSWORD)', sign)                             # a .pfx without a password works
         self.assertIn("-UseBasicParsing", sign)                                             # Windows PowerShell 5.1 can download
         self.assertIn('-notin ".exe", ".dll", ".msi"', sign)                                # Inno's uninst.e32.tmp, for CodeSignTool
+        self.assertIn('throw "SIGN_PFX_PASSWORD is set but SIGN_PFX_BASE64 is not"', sign)    # a half-set-up .pfx stops too
+        self.assertIn('& $java.FullName -jar $jar.FullName @esArgs', sign)                     # secrets never pass through cmd.exe
+        self.assertIn('$ErrorActionPreference = "Continue"', sign)                            # a tool's stderr warning is not fatal
+        self.assertNotIn('$ErrorActionPreference = "Stop"', sign)
 
     def test_only_the_steps_that_sign_see_the_certificate(self):
         import re

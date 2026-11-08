@@ -214,7 +214,7 @@ jobs:
           # signed when a certificate is set up: the program first, then the installer and its uninstaller (by Inno Setup)
           $signer = "$pwd\packaging\sign.ps1"
           $sign = @()
-          if ("$env:SIGN_PFX_BASE64$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {
+          if ("$env:SIGN_PFX_BASE64$env:SIGN_PFX_PASSWORD$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {
             & powershell -NoProfile -ExecutionPolicy Bypass -File $signer dist-online\BeyondERP.exe
             if ($LASTEXITCODE -ne 0) { exit 1 }
             $sign = @("/DSign", ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f'))
@@ -253,7 +253,7 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           $signer = "$pwd\packaging\sign.ps1"
           $sign = @()
-          if ("$env:SIGN_PFX_BASE64$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {
+          if ("$env:SIGN_PFX_BASE64$env:SIGN_PFX_PASSWORD$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {
             & powershell -NoProfile -ExecutionPolicy Bypass -File $signer "dist-signer\BeyondERP-Signer\BeyondERP-Signer.exe"
             if ($LASTEXITCODE -ne 0) { exit 1 }
             $sign = @("/DSign", ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f'))

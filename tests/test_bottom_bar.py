@@ -2,6 +2,7 @@
 the capsule of the tab left behind sinking away where it is, light from a touch, the theme's colours, and nothing
 moving when the device asks for less motion. (How it looks on a phone is checked in a browser before a release.)"""
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -20,8 +21,9 @@ class GlowCapsule(unittest.TestCase):
             with self.subTest(app=app):
                 layers = re.search(r"const DOCK_LAYERS = `(.*?)`;", src, re.S).group(1)
                 self.assertLess(layers.index('class="bb-ghost"'), layers.index('class="bb-ind"'))   # the new capsule on top
-                self.assertIn('["halo"', src)
-                self.assertNotIn('"wave"]', src)
+                docks = re.search(r"const DOCKS = \(\) => \[(.*?)\]\];", src, re.S).group(1)
+                self.assertEqual(re.findall(r'\["(\w+)", L2?\(', docks), ["halo", "spot", "bubble", "liquid", "classic"])
+                self.assertIn(': "halo", where', src)                       # the default, and what an old "wave" becomes
 
     def test_a_new_tab_rises_in_and_the_one_left_behind_sinks_away_where_it_is(self):
         for app, (js, _css) in APPS.items():
@@ -40,7 +42,7 @@ class GlowCapsule(unittest.TestCase):
             with self.subTest(app=app):
                 self.assertIn('addEventListener("keydown", e => { if (e.key === "Escape") setTimeout(dockSync, 40); });', read(js))
         # the ERP's Escape also closes an open alerts or account menu
-        self.assertIn('$$(".dd.open").forEach(d => d.classList.remove("open")); } });', read("erp/static/app.js"))
+        self.assertIn('if (e.key === "Escape") { closeDrawer(); closeMenus(); } });', read("erp/static/app.js"))
 
     def test_a_touch_lights_up_inside_the_button_touched(self):
         for app, (js, css) in APPS.items():
@@ -93,9 +95,45 @@ class GlowCapsule(unittest.TestCase):
             with self.subTest(app=app):
                 rm = re.search(r"@media \(prefers-reduced-motion:reduce\)\{html\.dock-halo \.bb-ghost\{display:none!important\}(.*?)\}\}", style, re.S)
                 self.assertIsNotNone(rm)
+                listed = {s.strip() for s in rm.group(1).split("{")[0].split(",")}   # whole selectors, not substrings
                 for sel in (".bb-ghost i", ".dock-halo .bb-ind i::before", ".dock-halo .bb-ind i::after", ".bottombar .bb-tap::after", ".bb-ind i"):
-                    self.assertIn(sel, rm.group(1))
+                    self.assertIn(sel, listed)
                 self.assertIn("animation:none!important", rm.group(1))
+
+
+class BarStyleSavedAndGhostPlaced(unittest.TestCase):
+    def test_the_server_keeps_every_style_the_apps_offer(self):
+        sys.path.insert(0, str(ROOT))
+        from erp import chat
+        from erp.db import Database
+        db = Database(":memory:")
+        db.x("INSERT INTO users(username,pw_hash) VALUES (?,?)", ("sara", "x"))
+        uid = db.one("SELECT id FROM users WHERE username=?", ("sara",))["id"]
+        for style in ("spot", "halo", "bubble", "liquid", "classic", "halo"):
+            chat.save_profile(db, uid, {"prefs": {"dock_style": style}})
+            self.assertEqual(chat.profile(db, uid)["prefs"]["dock_style"], style)
+        chat.save_profile(db, uid, {"prefs": {"dock_style": "<b>"}})                   # anything else: kept as it was
+        self.assertEqual(chat.profile(db, uid)["prefs"]["dock_style"], "halo")
+
+    def test_the_style_selects_work_on_every_screen(self):
+        js = read("erp/static/app.js")
+        self.assertIn("S.GLOBAL_H.dockset = el => saveDock(", js)       # S.H is rebuilt from GLOBAL_H on each route
+        self.assertNotIn("S.H.dockset", js)
+
+    def test_the_console_ghost_has_as_many_columns_as_its_bar(self):
+        css = read("web-src/owner.css")
+        self.assertIn("html.dock-halo .bb-ghost{display:block;position:absolute;top:0;bottom:0;left:6px;width:calc((100% - 12px) / var(--n,5));", css)
+
+    def test_pressing_the_tab_in_use_leaves_a_lifted_icon_in_place(self):
+        for app, (_js, css) in APPS.items():
+            with self.subTest(app=app):
+                self.assertIn("html:not(.dock-classic) .bottombar>a:not(.on):active svg.i", read(css))
+                self.assertNotIn("html:not(.dock-classic) .bottombar>a:active svg.i", read(css))
+
+    def test_a_highlight_lost_in_the_bar_colour_falls_back_to_its_text(self):
+        theme = re.search(r"function applyTheme\(th\) \{(.*?)\n\}", read("erp/static/app.js"), re.S).group(1)
+        self.assertIn('if (hexOk(hl) && contrast(hl, th.dockbar) < 3) st.setProperty("--dock-hl", ink); }', theme)
+        self.assertIn('contrast(th.dockbar, "#ffffff") >= contrast(th.dockbar, "#1e2430")', theme)
 
 
 if __name__ == "__main__":
