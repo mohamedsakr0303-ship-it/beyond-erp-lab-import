@@ -200,6 +200,7 @@ jobs:
           if ($log -notmatch 'Running Sign Tool beyond: powershell .*-File "[^"]+\\sign\.ps1" "[^"]+"' -or $log -notmatch 'Not signed \(no code-signing certificate set up\)') {
             Write-Host "::error::Inno Setup did not hand the file to sign.ps1"; exit 1 }
           Write-Host "Signing steps check passed"
+          exit 0   # GitHub ends a pwsh step with the last tool's exit code: here ISCC's expected refusal
       - name: Windows installers
         if: runner.os == 'Windows'
         shell: pwsh
