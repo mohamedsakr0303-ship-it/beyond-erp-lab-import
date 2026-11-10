@@ -14247,7 +14247,7 @@ const PUBLIC_SITE = "https://mybeyonderp.com/";
 S.GLOBAL_H.shareapp = async () => {
   const ar = S.lang === "ar"; let code = S.referral && S.referral.on !== false && S.referral.code;
   if (!code && platformOn()) try { S.referral = await PLAT("referral_my"); code = S.referral.on !== false && S.referral.code; } catch { /* plain link */ }
-  const url = `${PUBLIC_SITE}${ar ? "ar.html" : ""}?${code ? `ref=${code}&` : ""}s=${Date.now().toString(36)}`;
+  const url = `${PUBLIC_SITE}${ar ? "ar" : ""}?${code ? `ref=${code}&` : ""}s=${Date.now().toString(36)}`;
   const title = ar ? "BeyondERP · أدِر أعمالك، لا أوراقها" : "BeyondERP · Run the business, not the paperwork";
   const text = ar ? "الحسابات والمبيعات والمخزون والمشروعات والموارد البشرية والرواتب في نظام واحد. جرّب BeyondERP مجاناً:"
     : "Accounting, sales, inventory, projects, HR and payroll in one place. Try BeyondERP free:";
@@ -14269,7 +14269,7 @@ PAGES.referrals = async view => {
   if (!platformOn()) { view.innerHTML = `<div class="card"><div class="empty">${L2("The referral program is part of the online workspace.", "برنامج الإحالة جزء من مساحة العمل الإلكترونية.")}</div></div>`; return; }
   const m = S.referral = await PLAT("referral_my"), ar = S.lang === "ar";
   if (!m.on) { view.innerHTML = `<div class="card"><div class="empty">${L2("The referral program is paused at the moment.", "برنامج الإحالة متوقف حالياً.")}</div></div>`; return; }
-  const url = `${PUBLIC_SITE}${ar ? "ar.html" : ""}?ref=${m.code}`;
+  const url = `${PUBLIC_SITE}${ar ? "ar" : ""}?ref=${m.code}`;
   const ST = { joined: [L2("Signed up", "سجّل"), "warn"], paid: [L2("Subscribed: reward earned", "اشترك: حصلت على المكافأة"), "ok"] };
   const RW = { available: [L2("Ready to use", "جاهزة للاستخدام"), "ok"], used: [L2("Used", "مستخدمة"), ""] };
   const step = (n, h, p) => `<div class="ref-step"><b class="ref-n">${n}</b><div><b>${esc(h)}</b><div class="muted">${esc(p)}</div></div></div>`;

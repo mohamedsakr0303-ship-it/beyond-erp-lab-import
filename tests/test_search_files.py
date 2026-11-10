@@ -45,14 +45,17 @@ class SearchFiles(unittest.TestCase):
         self.assertNotIn('href="data:image', html)
         self.assertIn("Sitemap: https://erp.example.com/sitemap.xml", (self.out / "robots.txt").read_text())
         self.assertIn("<loc>https://erp.example.com/</loc>", (self.out / "sitemap.xml").read_text())
-        self.assertIn('hreflang="ar" href="https://erp.example.com/ar.html"', html)
+        self.assertIn('hreflang="ar" href="https://erp.example.com/ar"', html)
         ar = (self.out / "ar.html").read_text(encoding="utf-8")
         self.assertIn('<html lang="ar" dir="rtl">', ar)
         self.assertIn("<title>BeyondERP · أدِر أعمالك، لا أوراقها</title>", ar)
-        self.assertIn('<link rel="canonical" href="https://erp.example.com/ar.html">', ar)
+        self.assertIn('<link rel="canonical" href="https://erp.example.com/ar">', ar)
         self.assertIn('content="https://erp.example.com/og-image-ar.jpg"', ar)
         self.assertIn('localStorage.setItem("berp.lang",\'"ar"\')', ar)          # opens in Arabic the first time
-        self.assertIn("<loc>https://erp.example.com/ar.html</loc>", (self.out / "sitemap.xml").read_text())
+        self.assertIn("<loc>https://erp.example.com/ar</loc>", (self.out / "sitemap.xml").read_text())
+        # the host redirects /ar.html to /ar: search engines must only ever be given the address that does not redirect
+        self.assertNotIn("ar.html", (self.out / "sitemap.xml").read_text())
+        self.assertNotIn("erp.example.com/ar.html", ar + html)
 
     def test_without_it(self):
         build_web.search_files()

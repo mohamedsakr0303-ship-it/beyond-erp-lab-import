@@ -115,7 +115,8 @@ AR = {"title": "BeyondERP · أدِر أعمالك، لا أوراقها",
 
 
 def arabic_page(html, site):
-    """The home page for Arabic searches and shares (ar.html): the same app, with its title, description and preview in
+    """The home page for Arabic searches and shares (the file ar.html, addressed as /ar: the host redirects /ar.html
+    there, and a search engine must be given the address that does not redirect): the same app, with its title, description and preview in
     Arabic, opening in Arabic for a first-time visitor."""
     html = html.replace('<html lang="en">', '<html lang="ar" dir="rtl">')
     html = re.sub(r"<title>.*?</title>", f"<title>{AR['title']}</title>", html)
@@ -128,8 +129,8 @@ def arabic_page(html, site):
         '<meta property="og:image:alt" content="BeyondERP: Run the business, not the paperwork.">',
         '<meta property="og:image:alt" content="BeyondERP: أدِر أعمالك، لا أوراقها.">')
     if site:
-        html = html.replace(f'<link rel="canonical" href="{site}">', f'<link rel="canonical" href="{site}ar.html">')
-        html = html.replace(f'<meta property="og:url" content="{site}">', f'<meta property="og:url" content="{site}ar.html">')
+        html = html.replace(f'<link rel="canonical" href="{site}">', f'<link rel="canonical" href="{site}ar">')
+        html = html.replace(f'<meta property="og:url" content="{site}">', f'<meta property="og:url" content="{site}ar">')
     html = re.sub(r"<noscript>.*?</noscript>", "<noscript><h1>BeyondERP</h1><p>أدِر أعمالك، لا أوراقها. نظام سحابي واحد للحسابات والمبيعات "
                   "والمشتريات والمخزون والمشروعات والموارد البشرية والرواتب، بالعربية والإنجليزية. فعّل JavaScript لاستخدام التطبيق.</p>"
                   "<h2>ماذا يقدم BeyondERP</h2><ul><li>الحسابات والأستاذ العام والتقارير المالية: قائمة الدخل والميزانية والتدفقات النقدية والموازنات</li>"
@@ -201,7 +202,7 @@ def search_files():
                                          '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n'
                                          + "".join(f"  <url><loc>{site}{p}</loc><lastmod>{datetime.date.today().isoformat()}</lastmod>"
                                                    f'<xhtml:link rel="alternate" hreflang="en" href="{site}"/>'
-                                                   f'<xhtml:link rel="alternate" hreflang="ar" href="{site}ar.html"/></url>\n' for p in ("", "ar.html"))
+                                                   f'<xhtml:link rel="alternate" hreflang="ar" href="{site}ar"/></url>\n' for p in ("", "ar"))
                                          + "</urlset>\n", encoding="utf-8")
     (OUT / "robots.txt").write_text(robots, encoding="utf-8")
 
