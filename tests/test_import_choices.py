@@ -1,0 +1,80 @@
+"""Import templates speak the user's language: the drop-downs of fixed choices show words (Arabic in an Arabic
+template), statement lines follow the row's Type and say what goes there, and every word imports as its code."""
+import io
+import re
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+import openpyxl  # noqa: E402
+
+from erp import choices, demo, importkit, interchange  # noqa: E402
+from erp.db import SUBTYPES, Database  # noqa: E402
+
+
+class ImportChoices(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.db = Database(":memory:")
+        demo.load(cls.db, "admin")
+
+    def test_an_arabic_template_has_no_codes_in_its_drop_downs(self):
+        for name in importkit.importable():
+            wb = openpyxl.load_workbook(io.BytesIO(importkit.template_xlsx(self.db, name, "ar")))
+            for col in wb["Lists"].iter_cols(min_row=2, values_only=True):
+                for v in col:
+                    with self.subTest(sheet=name, value=v):
+                        self.assertFalse(isinstance(v, str) and re.fullmatch(r"[a-z][a-z0-9_]+", v))
+
+    def test_every_word_in_either_language_imports_as_its_code(self):
+        for s in interchange.SHEETS:
+            for c in interchange.input_cols(s):
+                for v in [x for x in c.get("choices") or [] if isinstance(x, str) and x]:
+                    for w in (choices.label(s["name"], c["key"], v), choices.label(s["name"], c["key"], v, ar=True),
+                              choices.label(s["name"], c["key"], v, ar=True, long=True), v):
+                        with self.subTest(sheet=s["name"], col=c["key"], word=w):
+                            self.assertEqual(choices.to_code(s["name"], c, w), v)
+                            self.assertEqual(interchange._cell(w, c), v)
+
+    def test_every_statement_line_says_what_goes_there(self):
+        self.assertEqual(set(choices.SUBTYPE_INFO), {s for v in SUBTYPES.values() for s in v})
+        self.assertEqual(choices.label("Chart of Accounts", "subtype", "other_current_asset", ar=True), "أصول متداولة أخرى")
+        self.assertIn("العهد النقدية لدى العاملين", choices.SUBTYPE_INFO["other_current_asset"][3])
+
+    def test_the_statement_line_list_follows_the_rows_type_and_a_guide_sheet_explains_it(self):
+        wb = openpyxl.load_workbook(io.BytesIO(importkit.template_xlsx(self.db, "Chart of Accounts", "ar")))
+        self.assertIn("دليل البنود", wb.sheetnames)
+        dv = [d for d in wb.worksheets[0].data_validations.dataValidation if "INDIRECT" in (d.formula1 or "")]
+        self.assertEqual(len(dv), 1)
+        self.assertTrue(dv[0].showInputMessage)
+        names = set(wb.defined_names.keys())
+        self.assertTrue({f"ST_{k}" for k in range(1, len(SUBTYPES) + 1)} | {"ST_ALL"} <= names)
+        guide = "\n".join(str(c) for row in wb["دليل البنود"].iter_rows(values_only=True) for c in row if c)
+        self.assertIn("عهد نقدية لدى العاملين", guide)
+
+    def test_a_filled_arabic_template_imports(self):
+        wb = openpyxl.load_workbook(io.BytesIO(importkit.template_xlsx(self.db, "Chart of Accounts", "ar")))
+        ws = wb.worksheets[0]
+        heads = [c.value for c in ws[interchange.HEADER_ROW]]
+        line = choices.label("Chart of Accounts", "subtype", "other_current_asset", ar=True, long=True)
+        vals = {"رقم الحساب": "1036", "اسم الحساب": "عهدة م. أحمد", "النوع": "أصول", "بند القوائم المالية": line, "نشط": "نعم"}
+        for i, h in enumerate(heads, start=1):
+            if h in vals:
+                ws.cell(interchange.FIRST_DATA_ROW, i, vals[h])
+        buf = io.BytesIO()
+        wb.save(buf)
+        a = importkit.analyze(self.db, "Chart of Accounts", buf.getvalue(), "coa.xlsx")
+        out, _ = importkit.read(self.db, "Chart of Accounts", buf.getvalue(), "coa.xlsx", table=a["table"], header_row=a["header_row"])
+        self.assertEqual({k: out[0][k] for k in ("type", "subtype", "active")}, {"type": "Asset", "subtype": "other_current_asset", "active": "Yes"})
+
+    def test_the_import_screen_shows_formats_and_allowed_values_in_both_languages(self):
+        cols = {c["key"]: c for c in importkit.describe("Chart of Accounts")["columns"]}
+        self.assertIn(["Yes", "نعم"], cols["active"]["choice_words"])
+        self.assertEqual(cols["code"]["format_ar"], "نص")
+        self.assertIn('c.choice_words.map(w => w[S.lang === "ar" ? 1 : 0])', (ROOT / "erp/static/app.js").read_text(encoding="utf-8"))
+
+
+if __name__ == "__main__":
+    unittest.main()

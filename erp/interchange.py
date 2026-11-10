@@ -599,6 +599,9 @@ SHEETS = [
 from . import setup_sheets as _setup  # noqa: E402
 SHEETS += _setup.specs(C)
 SHEET_BY_NAME = {s["name"]: s for s in SHEETS}
+for _s in SHEETS:                 # each column knows its sheet (for the words of its drop-down, see choices.py)
+    for _c in _s["cols"]:
+        _c.setdefault("_sheet", _s["name"])
 POSTING_SHEETS = [s for s in SHEETS if s.get("legs")]
 
 
@@ -966,6 +969,9 @@ def _cell(v, col):
         v = int(v)
     if isinstance(v, str):
         v = v.strip()
+        if col.get("choices"):          # a word from the template's drop-down (either language) → its code
+            from . import choices
+            v = choices.to_code(col.get("_sheet"), col, v)
     return v
 
 

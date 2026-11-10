@@ -19,7 +19,7 @@ import difflib
 import io
 import re
 
-from . import accounting as acc, xlsafe
+from . import accounting as acc, choices, xlsafe
 from .interchange import FIRST_DATA_ROW, HEADER_ROW, SHEET_BY_NAME, SHEETS, _cell, header_map, input_cols
 
 # which screen a sheet belongs to (permission to import = permission to add there)
@@ -109,8 +109,10 @@ def describe(name):
         fmt = {"date": "date (2026-10-02, 02/10/2026 or an Excel date)", "num": "number", "money": "amount (number)",
                "pct": "percentage (25% or 0.25)", "acct": "account code from the chart of accounts",
                "bu": "business unit code", "tax": "tax code (VAT14…)"}.get(c["kind"], "text")
+        ch = [v for v in (c.get("choices") or []) if v not in ("", None)]
         out.append({"key": c["key"], "en": c["en"], "ar": c["ar"], "kind": c["kind"], "required": bool(c["required"]),
-                    "choices": c.get("choices") or [], "note": c.get("note") or "", "format": fmt,
+                    "choices": c.get("choices") or [], "note": c.get("note") or "", "format": fmt, "format_ar": _fmt(c["kind"], True),
+                    "choice_words": [[choices.label(s["name"], c["key"], v), choices.label(s["name"], c["key"], v, ar=True)] for v in ch],
                     "default_role": c.get("role") or ""})
     return {"name": s["name"], "ar": s.get("ar", ""), "title": s.get("title", ""), "columns": out}
 
@@ -159,8 +161,10 @@ def template_xlsx(db, name, lang="en", rows=None):
             if ar else "Enter data from row 5. Red headings are required. Keep the heading row (row 4) as it is. "
             "Row 3 is only an example and is not imported. See 'How to fill' for every column.").font = Font(size=9, color="555555")
     ex = {**EXAMPLES.get(s["name"], {}), **(EXAMPLES_AR.get(s["name"], {}) if ar else {})}
-    if ar:
-        ex = {k: tr.get(v, v) if isinstance(v, str) else v for k, v in ex.items()}
+    by_key = {c["key"]: c for c in cols}
+    word = lambda c, v: choices.label(s["name"], c["key"], v, ar, long=c["key"] == "subtype") if c.get("choices") else v  # noqa: E731
+    ex = {k: word(by_key[k], v) if k in by_key and by_key[k].get("choices") and v in by_key[k]["choices"]
+          else (tr.get(v, v) if ar and isinstance(v, str) else v) for k, v in ex.items()}
     lists = _lists(db)
     lst = wb.create_sheet("Lists")
     lcol = 0
@@ -171,22 +175,35 @@ def template_xlsx(db, name, lang="en", rows=None):
         h.alignment = Alignment(wrap_text=True, vertical="center")
         tip = next(x for x in d["columns"] if x["key"] == c["key"])
         note = (tr.get(tip["note"]) or "") if ar else tip["note"]
+        allowed = [choices.label(s["name"], c["key"], v, ar) for v in tip["choices"] if v not in ("", None)]
         h.comment = Comment((T("Required. ", "مطلوب. ") if c["required"] else "") + _fmt(tip["kind"], ar) +
-                            (f"{T('. Allowed: ', '. القيم: ')}{', '.join(map(str, tip['choices']))}" if tip["choices"] else "") +
+                            (f"{T('. Allowed: ', '. القيم: ')}{'، '.join(allowed) if ar else ', '.join(allowed)}" if allowed and len(allowed) <= 12 else
+                             (T(". Pick from the list", ". اختر من القائمة") if allowed else "")) +
                             (f". {note}" if note else "") +
                             (T(". Blank = the default account", ". فارغ = الحساب الافتراضي") if tip["default_role"] else ""), "BeyondERP")
         ws.column_dimensions[L(i)].width = max(12, min(40, c["width"] + 2))
         if c["key"] in ex:
             e = ws.cell(3, i, ex[c["key"]])
             e.font = Font(italic=True, size=8, color="999999")
-        values = c.get("choices") or lists.get(c["kind"])
+        # fixed choices show as words in the template's language (the importer turns them back into codes)
+        values = [word(c, v) for v in c["choices"] if v not in ("", None)] if c.get("choices") else lists.get(c["kind"])
         if values:
             lcol += 1
             lst.cell(1, lcol, c["ar"] if ar else c["en"])
             for r, v in enumerate(values, start=2):
                 lst.cell(r, lcol, v)
-            dv = DataValidation(type="list", formula1=f"=Lists!${L(lcol)}$2:${L(lcol)}${len(values) + 1}", allow_blank=True)
+            src = f"=Lists!${L(lcol)}$2:${L(lcol)}${len(values) + 1}"
+            if s["name"] == "Chart of Accounts" and c["key"] == "subtype" and "type" in by_key:
+                src, lcol = _subtype_lists(wb, lst, lcol, cols, ar, L)     # only the lines of the row's Type
+            dv = DataValidation(type="list", formula1=src, allow_blank=True)
             dv.showErrorMessage = bool(c.get("choices"))      # accounts / units may be new: warn only for fixed choices
+            dv.errorStyle = "warning"                          # an old file's codes are still accepted
+            if c["key"] == "subtype" and s["name"] == "Chart of Accounts":
+                dv.promptTitle = T("Statement line", "بند القوائم المالية")
+                dv.prompt = T("Choose the Type first: the list then shows only its lines, each with what goes there. "
+                              "Full guide: the 'Statement lines' sheet.",
+                              "اختر النوع أولاً: تظهر بنوده فقط، ومع كل بند ما يُسجَّل فيه. الدليل الكامل في ورقة «دليل البنود».")
+                dv.showInputMessage = True
             ws.add_data_validation(dv)
             dv.add(f"{L(i)}{FIRST_DATA_ROW}:{L(i)}{FIRST_DATA_ROW + 2000}")
         if c["kind"] == "date":
@@ -197,6 +214,8 @@ def template_xlsx(db, name, lang="en", rows=None):
         for i, c in enumerate(cols, start=1):
             v = row.get(c["key"])
             if v not in (None, ""):
+                if c.get("choices") and v in c["choices"]:
+                    v = word(c, v)
                 if c["kind"] == "date":
                     try:
                         v = _dt.date.fromisoformat(str(v)[:10])
@@ -215,17 +234,109 @@ def template_xlsx(db, name, lang="en", rows=None):
         c.fill = navy
     for r, x in enumerate(d["columns"], start=2):
         note = ((tr.get(x["note"]) or "") if ar else x["note"]) + (T(" Blank = the default account.", " فارغ = الحساب الافتراضي.") if x["default_role"] else "")
+        allowed = [choices.label(s["name"], x["key"], v, ar) for v in x["choices"] if v not in ("", None)]
+        if x["key"] == "subtype" and s["name"] == "Chart of Accounts":
+            allowed = [T("see the 'Statement lines' sheet", "انظر ورقة «دليل البنود»")]
         for i, v in enumerate([x["ar"] if ar else x["en"], T("Yes", "نعم") if x["required"] else "", _fmt(x["kind"], ar),
-                               ", ".join(map(str, x["choices"])), note.strip()], start=1):
+                               ("، " if ar else ", ").join(allowed), note.strip()], start=1):
             how.cell(r, i, v).alignment = Alignment(wrap_text=True, vertical="top")
     for i, w in enumerate((28, 9, 34, 34, 50), start=1):
         how.column_dimensions[L(i)].width = w
     how.cell(len(d["columns"]) + 3, 1, T("Your own file works too: import it from the same screen and match its columns to these. "
              "Headings in English or Arabic and common synonyms are matched automatically.",
              "يمكنك أيضاً استيراد ملفك الخاص من نفس الشاشة ومطابقة أعمدته بهذه. العناوين بالعربية أو الإنجليزية تُطابق تلقائياً.")).font = Font(italic=True, size=9)
+    if s["name"] == "Chart of Accounts":
+        _subtype_guide(wb, ar)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _subtype_lists(wb, lst, lcol, cols, ar, L):
+    """Lists for a drop-down of statement lines that follows the row's Type: one named list per Type (ST_1…), all of
+    them (ST_ALL) while no Type is chosen yet."""
+    from openpyxl.workbook.defined_name import DefinedName
+    types = list(choices.SUBTYPES)
+    tcol = lcol + 1
+    lst.cell(1, tcol, "Type")
+    for r, t in enumerate(types, start=2):
+        lst.cell(r, tcol, choices.label("Chart of Accounts", "type", t, ar))
+
+    def name(n, col, count):
+        ref = f"Lists!${L(col)}$2:${L(col)}${count + 1}"
+        try:
+            wb.defined_names[n] = DefinedName(n, attr_text=ref)
+        except TypeError:                     # older openpyxl
+            wb.defined_names.append(DefinedName(n, attr_text=ref))
+
+    name("ST_ALL", lcol, sum(len(v) for v in choices.SUBTYPES.values()))
+    for k, t in enumerate(types, start=1):
+        col = tcol + k
+        lines = choices.SUBTYPES[t]
+        lst.cell(1, col, t)
+        for r, st in enumerate(lines, start=2):
+            lst.cell(r, col, choices.label("Chart of Accounts", "subtype", st, ar, long=True))
+        name(f"ST_{k}", col, len(lines))
+    ti = next(i for i, c in enumerate(cols, start=1) if c["key"] == "type")
+    tref = f"${L(ti)}{FIRST_DATA_ROW}"
+    rng = f"Lists!${L(tcol)}$2:${L(tcol)}${len(types) + 1}"
+    return f'INDIRECT(IFERROR("ST_"&MATCH({tref},{rng},0),"ST_ALL"))', col
+
+
+def _subtype_guide(wb, ar):
+    """A visible sheet: every statement line by Type, what goes there, and where some everyday accounts belong."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+    g = wb.create_sheet("دليل البنود" if ar else "Statement lines")
+    if ar:
+        g.sheet_view.rightToLeft = True
+    T = lambda en, a: a if ar else en  # noqa: E731
+    g["A1"] = T("Statement lines — where each account goes", "بنود القوائم المالية — أين يوضع كل حساب")
+    g["A1"].font = Font(bold=True, size=13)
+    g["A2"] = T("Pick the Type, then the line that describes what the account holds. Unsure? Find a similar example below.",
+                "اختر النوع ثم البند الذي يصف ما يحتويه الحساب. لست متأكداً؟ ابحث عن مثال مشابه بالأسفل.")
+    g["A2"].font = Font(size=9, color="555555")
+    head = [T("Type", "النوع"), T("Statement line", "البند"), T("What goes here (examples)", "ما يُسجَّل فيه (أمثلة)")]
+    for j, h in enumerate(head, start=1):
+        c = g.cell(4, j, h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F2A44")
+    r = 5
+    for t, lines in choices.SUBTYPES.items():
+        for st in lines:
+            en, a, hen, har = choices.SUBTYPE_INFO[st]
+            for j, v in enumerate((choices.label("Chart of Accounts", "type", t, ar), a if ar else en, har if ar else hen), start=1):
+                g.cell(r, j, v).alignment = Alignment(wrap_text=True, vertical="top")
+            r += 1
+    r += 1
+    g.cell(r, 1, T("Common accounts", "حسابات شائعة")).font = Font(bold=True)
+    r += 1
+    for acct, t, st in COMMON_ACCOUNTS:
+        name = acct[1] if ar else acct[0]
+        for j, v in enumerate((name, choices.label("Chart of Accounts", "type", t, ar), choices.label("Chart of Accounts", "subtype", st, ar)), start=1):
+            g.cell(r, j, v)
+        r += 1
+    for col, w in zip("ABC", (30, 34, 70)):
+        g.column_dimensions[col].width = w
+
+
+# everyday accounts people ask about: (English, Arabic), Type, statement line
+COMMON_ACCOUNTS = [
+    (("Cash custody with employees", "عهد نقدية لدى العاملين"), "Asset", "other_current_asset"),
+    (("Employee advances / loans", "سلف وقروض العاملين"), "Asset", "other_current_asset"),
+    (("Petty cash", "صندوق المصروفات النثرية"), "Asset", "cash"),
+    (("Cheques under collection", "شيكات تحت التحصيل"), "Asset", "receivable"),
+    (("Advances to suppliers", "دفعات مقدمة للموردين"), "Asset", "prepaid"),
+    (("Input VAT", "ضريبة القيمة المضافة — مدخلات"), "Asset", "prepaid"),
+    (("Security deposits paid (long-term)", "تأمينات لدى الغير (طويلة الأجل)"), "Asset", "other_noncurrent_asset"),
+    (("Salaries payable", "رواتب مستحقة"), "Liability", "accrued"),
+    (("Social insurance payable", "تأمينات اجتماعية مستحقة"), "Liability", "accrued"),
+    (("Output VAT", "ضريبة القيمة المضافة — مخرجات"), "Liability", "tax_payable"),
+    (("Customer advances", "دفعات مقدمة من العملاء"), "Liability", "deferred_revenue"),
+    (("Customer security deposits", "تأمينات العملاء"), "Liability", "other_current_liability"),
+    (("Partner loans", "قروض الشركاء"), "Liability", "long_term_debt"),
+    (("Bank charges", "مصروفات بنكية"), "Expense", "general_admin"),
+    (("Fuel and vehicle costs", "وقود ومصروفات سيارات"), "Expense", "other_operating"),
+]
 
 
 def template_csv(name, rows=None):
