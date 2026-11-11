@@ -1883,15 +1883,20 @@ def to_json(db, secrets=False):
                        "sheets": export_data(db), "extras": export_extras(db, secrets=secrets)}, ensure_ascii=False, indent=1, default=str)
 
 
-def to_csv(db, sheet_name, template=False):
+def to_csv(db, sheet_name, template=False, lang=None):
+    """One sheet as CSV in the reader's language: its headings, and the words of its choice columns (imports back).
+    With no language: both languages in each heading ("Date / التاريخ") and the codes, as before."""
+    from . import choices
     sheet = SHEET_BY_NAME[sheet_name]
     cols = input_cols(sheet)
+    ar = lang == "ar"
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow([f"{c['en']} / {c['ar']}" for c in cols])
+    w.writerow([(c["ar"] if ar else c["en"]) if lang else f'{c["en"]} / {c["ar"]}' for c in cols])
+    word = lambda c, v: choices.label(sheet_name, c["key"], v, ar) if lang and c.get("choices") and v in c["choices"] and v not in ("", None) else v  # noqa: E731
     if not template:
         for r in export_data(db)[sheet_name]:
-            w.writerow([xlsafe.csv_out(r.get(c["key"], "")) for c in cols])
+            w.writerow([xlsafe.csv_out(word(c, r.get(c["key"], ""))) for c in cols])
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 

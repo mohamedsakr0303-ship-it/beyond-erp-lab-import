@@ -773,8 +773,10 @@ def products_table(db, p, lang="en"):
     cols = _mkcols([("Code", "الكود", "left"), ("Name", "الاسم", "left"), ("Kind", "النوع", "left"), ("Category", "التصنيف", "left"),
                     ("Price", "السعر", "right"), ("Status", "الحالة", "left"), ("In stock", "بالمخزن", "right", "num"),
                     ("Details", "المواصفات", "left")], lang)
-    rows = [{"cells": [r["code"], (r["name_ar"] if ar and r["name_ar"] else r["name"]), r["kind"], r["category"], r["price"], r["status"],
-                       r["in_stock"] if r["in_stock"] is not None else "", " · ".join(f"{a}: {b}" for a, b in r["specs"][:6])],
+    from . import choices
+    w = lambda k, v: choices.label("Products", k, v, ar) if v else v  # noqa: E731
+    rows = [{"cells": [r["code"], (r["name_ar"] if ar and r["name_ar"] else r["name"]), w("kind", r["kind"]), r["category"], r["price"], w("status", r["status"]),
+                       r["in_stock"] if r["in_stock"] is not None else "", " · ".join(f"{choices.spec_name(a, ar)}: {b}" for a, b in r["specs"][:6])],
              "style": "item", "indent": 0} for r in d["rows"]]
     return {"title": "المنتجات والوحدات" if ar else "Products & units", "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
             "columns": cols, "rows": rows, "lang": lang}
@@ -1175,9 +1177,9 @@ tr.note td{{color:#6b7280;font-style:italic;font-size:{size - 1}px}} .neg{{color
 </style></head><body>{f'<img class="wm" src="data:image/png;base64,{wm["data"]}" alt="">' if wm else ''}
 <div class="hd"><div><div class="co">{html.escape(company)}</div><h1>{html.escape(table['title'])}</h1>
 <div class="sub">{html.escape(table.get('subtitle', ''))}</div></div>{f'<img src="data:{logo["mime"]};base64,{logo["data"]}" alt="">' if logo else ''}</div>
-<button class="noprint" onclick="window.print()" style="margin-bottom:10px">Print / Save as PDF</button>
+<button class="noprint" onclick="window.print()" style="margin-bottom:10px">{'طباعة / حفظ PDF' if rtl else 'Print / Save as PDF'}</button>
 <table><thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table>
-<div class="foot">Generated {_dt.datetime.now():%Y-%m-%d %H:%M}</div>
+<div class="foot">{'أُعدّ في' if rtl else 'Generated'} {_dt.datetime.now():%Y-%m-%d %H:%M}</div>
 {'<script>window.onload=()=>setTimeout(()=>window.print(),300)</script>' if auto_print else ''}</body></html>"""
 
 
@@ -1362,10 +1364,17 @@ def to_docx(table, company="", logo=None, wm=None):
     return buf.getvalue()
 
 
-def to_csv(table):
+def to_csv(table, company=""):
+    """The report as CSV, saying what it is like the Excel and PDF exports: the company, the report and its period above
+    the table."""
     import csv
     buf = io.StringIO()
     w = csv.writer(buf)
+    for line in (company, table.get("title"), table.get("subtitle")):
+        if line:
+            w.writerow([line])
+    if company or table.get("title") or table.get("subtitle"):
+        w.writerow([])
     w.writerow([c["label"] for c in table["columns"]])
     for r in table["rows"]:
         w.writerow(["" if v is None else v for v in r["cells"]])

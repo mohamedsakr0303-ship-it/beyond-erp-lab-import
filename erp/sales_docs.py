@@ -1,6 +1,7 @@
 """Printable sales documents (print / save as PDF): quotation, sales contract with its payment schedule, customer
 statement, and a product brochure with photos and specifications. English or Arabic."""
 from . import sales
+from . import textl10n
 from .rental_docs import E, _kv, _shell
 
 T = {
@@ -76,7 +77,8 @@ def _specs(db, d, ar):
         p = sales.get_product(db, ln["product_id"])
         sp = sales._j(p["specs"], [])
         if sp:
-            out += f"<p><b>{E(ln['description'])}</b> — " + " · ".join(f"{E(a)}: {E(b)}" for a, b in sp) + "</p>"
+            from . import choices
+            out += f"<p><b>{E(ln['description'])}</b> — " + " · ".join(f"{E(choices.spec_name(a, ar))}: {E(b)}" for a, b in sp) + "</p>"
     return f"<h2>{L('specs', ar)}</h2>{out}" if out else ""
 
 
@@ -96,7 +98,7 @@ def sale_html(db, sid, kind="contract", lang=None):
         rec = [e for e in d["entries"] if e["type"] in ("receipt", "clear", "refund")]
         if rec:
             body += (f"<h2>{L('receipts', ar)}</h2><table><thead><tr><th>{L('date', ar)}</th><th>{L('desc', ar)}</th><th class='n'>{L('amount', ar)}</th></tr></thead><tbody>"
-                     + "".join(f"<tr><td>{E(e['date'])}</td><td>{E(e['memo'])}</td><td class='n'>{M(-e['amount'] if e['type'] == 'refund' else e['amount'])}</td></tr>" for e in rec)
+                     + "".join(f"<tr><td>{E(e['date'])}</td><td>{E(textl10n.text(e['memo'], 'ar' if ar else 'en'))}</td><td class='n'>{M(-e['amount'] if e['type'] == 'refund' else e['amount'])}</td></tr>" for e in rec)
                      + "</tbody></table>")
         body += _kv([(L("total", ar), M(d["total"])), (L("paid", ar), M(d["paid"])), (L("in_cheques", ar), M(d["in_cheques"])),
                      (L("balance", ar), f"<b>{M(d['balance'])}</b>"), (L("overdue", ar), M(d["overdue"]) if d["overdue"] else "")])
@@ -136,7 +138,8 @@ def product_html(db, pid, lang=None):
     body += _kv([("Code" if not ar else "الكود", E(p["code"])), ("Price" if not ar else "السعر", f"<b>{M(p['price'])}</b> {E(db.setting('currency') or '')}"),
                  ("Category" if not ar else "التصنيف", E(p["category"])), (L("project", ar), E(p["bu_name"]))])
     if p["specs"]:
-        body += f"<h2>{L('specs', ar)}</h2>" + _kv([(a, E(b)) for a, b in p["specs"]])
+        from . import choices
+        body += f"<h2>{L('specs', ar)}</h2>" + _kv([(E(choices.spec_name(a, ar)), E(b)) for a, b in p["specs"]])
     if p["description"]:
         body += f"<div class='pre' style='margin-top:8px'>{E(p['description'])}</div>"
     st = sales.settings(db)

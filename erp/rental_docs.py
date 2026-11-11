@@ -84,7 +84,7 @@ def _shell(db, title, body, ar, kind="report_pdf", auto_print=True):
     wm_html = f'<img class="wm" src="data:image/png;base64,{wm["data"]}" alt="">' if wm else ""
     return (f'<!doctype html><html lang="{"ar" if ar else "en"}" dir="{"rtl" if ar else "ltr"}"><head><meta charset="utf-8"><title>{E(title)}</title>'
             f'<style>:root{{--d:{b["dark"]};--f:\'{E(b["font"])}\'}}{CSS}</style></head><body>'
-            '<div class="bar"><button onclick="print()">Print / Save as PDF</button></div>'
+            f'<div class="bar"><button onclick="print()">{"طباعة / حفظ PDF" if ar else "Print / Save as PDF"}</button></div>'
             f'<div class="page">{wm_html}{head}{body}</div>'
             + ('<script>addEventListener("load",()=>setTimeout(()=>print(),350))</script>' if auto_print else "") + "</body></html>")
 
@@ -112,13 +112,21 @@ def _pieces(ln, ar):
     return " · ".join("%s × %s" % (_name(c, ar), format(c["per_unit"] * ln["qty"], ",.0f")) for c in ln["components"])
 
 
+
+def _unit(u, ar):
+    """A unit as the reader reads it (piece → قطعة on an Arabic document; "piece-month" → قطعة-شهر)."""
+    if not ar or not u:
+        return u or ""
+    from .textl10n import UNITS
+    return "-".join(UNITS.get(p.strip().lower(), {"month": "شهر", "day": "يوم", "week": "أسبوع"}.get(p.strip().lower(), p)) for p in str(u).split("-"))
+
 def _lines_tables(d, ar):
     rent = [ln for ln in d["lines"] if ln["kind"] != "charge"]
     one = [ln for ln in d["lines"] if ln["kind"] == "charge"]
     out = (f'<table><tr><th>#</th><th>{_lbl("desc", ar)}</th><th>{_lbl("unit", ar)}</th><th class="n">{_lbl("qty", ar)}</th>'
            f'<th class="n">{_lbl("rate", ar)}</th><th class="n">{_lbl("monthly", ar)}</th></tr>'
            + "".join(f'<tr><td>{i + 1}</td><td>{E(ln["description"])}' + (f'<div class="muted">{E(_pieces(ln, ar))}</div>' if ln["kind"] in ("kit", "sqm") else "")
-                     + f'</td><td>{E(ln["unit"])}</td><td class="n">{ln["qty"]:,.2f}</td><td class="n">{_money(ln["rate"])}</td><td class="n">{_money(ln["monthly"])}</td></tr>'
+                     + f'</td><td>{E(_unit(ln["unit"], ar))}</td><td class="n">{ln["qty"]:,.2f}</td><td class="n">{_money(ln["rate"])}</td><td class="n">{_money(ln["monthly"])}</td></tr>'
                      for i, ln in enumerate(rent))
            + f'<tr class="tot"><td colspan="5">{_lbl("rent", ar)}</td><td class="n">{_money(d["quote"]["monthly"])}</td></tr></table>')
     if one:
@@ -179,7 +187,7 @@ def contract_html(db, rid, lang=None):
                    *_extra_terms(r, ar)])
             + f'<h2>{_lbl("summary", ar)}</h2>' + _lines_tables(d, ar)
             + f'<h2>{_lbl("pieces", ar)}</h2><table><tr><th>#</th><th>{_lbl("piece", ar)}</th><th>{_lbl("unit", ar)}</th><th class="n">{_lbl("loss_price", ar)}</th></tr>'
-            + "".join(f'<tr><td>{i + 1}</td><td>{E(_name(it, ar))}</td><td>{E(it["unit"])}</td><td class="n">{_money(lp)}</td></tr>'
+            + "".join(f'<tr><td>{i + 1}</td><td>{E(_name(it, ar))}</td><td>{E(_unit(it["unit"], ar))}</td><td class="n">{_money(lp)}</td></tr>'
                       for i, (it, lp) in enumerate(pieces.values())) + "</table>"
             + f'<h2>{_lbl("terms", ar)}</h2><div class="pre">{E(st["contract_terms"].get("ar" if ar else "en") or "")}</div>'
             + f'<div class="pre" style="margin-top:6px">{E(st["terms"].get("ar" if ar else "en") or "")}</div>'
@@ -215,7 +223,7 @@ def handover_html(db, hid, lang=None):
         table = (f'<table><tr><th>#</th><th>{_lbl("piece", ar)}</th><th>{_lbl("unit", ar)}</th><th class="n">{_lbl("delivered", ar)}</th>'
                  f'<th>{_lbl("cond", ar)}</th><th class="n">{_lbl("loss_price", ar)}</th></tr>'
                  + "".join(f'<tr><td>{i + 1}</td><td>{E(_name(x, ar))}' + (f'<div class="muted">{_lbl("serial", ar)}: {E(", ".join(x["serial"]))}</div>' if x["serial"] else "")
-                           + f'</td><td>{E(x.get("unit"))}</td><td class="n">{x["qty"]:,.0f}</td><td>{_lbl("good", ar)}</td><td class="n">{_money(x.get("loss_price") or 0)}</td></tr>'
+                           + f'</td><td>{E(_unit(x.get("unit"), ar))}</td><td class="n">{x["qty"]:,.0f}</td><td>{_lbl("good", ar)}</td><td class="n">{_money(x.get("loss_price") or 0)}</td></tr>'
                            for i, x in enumerate(rows))
                  + f'<tr class="tot"><td colspan="3">{_lbl("grand", ar)}</td><td class="n">{sum(x["qty"] for x in rows):,.0f}</td><td colspan="2"></td></tr></table>')
     else:

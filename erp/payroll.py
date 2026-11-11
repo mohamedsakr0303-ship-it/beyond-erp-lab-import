@@ -742,6 +742,14 @@ def run_sheet_import(db, items, user=""):
 
 
 # ================================================================== printing
+
+def _word(v, ar):
+    """A stored method or status ("Bank Transfer", "draft") as the reader's word (Arabic: تحويل بنكي، مسودة)."""
+    if not v:
+        return v or ""
+    from . import choices
+    return choices.label("Employees", "method", v, ar=ar) if ar else (str(v).capitalize() if str(v).islower() else v)
+
 def payslips_html(db, rid, who="all", lang="en"):
     """Printable payslips (one per page) — bilingual labels, company logo when set."""
     import html as _h
@@ -761,7 +769,7 @@ def payslips_html(db, rid, who="all", lang="en"):
         ded = "".join(f"<tr><td>{nm(x)}</td><td class=n>{m(x['amount'])}</td></tr>" for x in c.get("deductions", []))
         info = [(L("Employee", "الموظف"), f"{_h.escape(e['name'])} ({_h.escape(e['code'])})"), (L("Job", "الوظيفة"), _h.escape(e["job_title"] or "—")),
                 (L("Department", "القسم"), _h.escape(e["department"] or "—")), (L("Days paid / units", "أيام / وحدات"), m(c.get("days_paid", 0))),
-                (L("Insurance no.", "الرقم التأميني"), _h.escape(e["insurance_no"] or "—")), (L("Paid by", "طريقة الصرف"), _h.escape(e["method"] or "—"))]
+                (L("Insurance no.", "الرقم التأميني"), _h.escape(e["insurance_no"] or "—")), (L("Paid by", "طريقة الصرف"), _h.escape(_word(e["method"], ar) or "—"))]
         pages.append(f"""<section class=slip><header><div><b>{co}</b><br>{L("Payslip", "قسيمة راتب")} — {_h.escape(r['period'])}</div>
           <div class=st>{L("Posted", "مرحّل") if r['status'] == 'posted' else L("Draft", "مسودة")}</div></header>
           <table class=info>{''.join(f'<tr><td>{a}</td><td>{b}</td></tr>' for a, b in info)}</table>
@@ -801,5 +809,5 @@ def register_table(db, rid, lang="en"):
     t = r["totals"]
     rows.append({"label": L("TOTAL", "الإجمالي"), "cells": [L("TOTAL", "الإجمالي"), t["gross"], t["kept"], t["advance"], t["si_emp"], t["tax"], t["martyrs"],
                                                             t["net"], t["si_er"], t["cost"]], "style": "grand", "indent": 0})
-    return {"title": L(f"Payroll register — {r['period']}", f"كشف الرواتب — {r['period']}"), "subtitle": L("Status: ", "الحالة: ") + r["status"],
+    return {"title": L(f"Payroll register — {r['period']}", f"كشف الرواتب — {r['period']}"), "subtitle": L("Status: ", "الحالة: ") + _word(r["status"], ar),
             "columns": cols, "rows": rows, "lang": lang, "name": "payroll_register"}

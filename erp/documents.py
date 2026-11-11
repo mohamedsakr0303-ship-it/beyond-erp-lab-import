@@ -668,7 +668,7 @@ def sheet_html(m, st, *, cols, rtl, title, logo=None, wm=None, font="Arial"):
             'pointer-events:none}tr{page-break-inside:avoid}.bar{position:sticky;top:0;background:#f3f3f3;padding:8px;'
             'text-align:center;z-index:5;font:13px Arial}@media print{.bar{display:none}}'
             + "".join(rules) + '</style></head><body>'
-            '<div class="bar"><button onclick="print()">Print / Save as PDF</button></div>'
+            f'<div class="bar"><button onclick="print()">{"طباعة / حفظ PDF" if rtl else "Print / Save as PDF"}</button></div>'
             f'{wm_html}<div class="page"><table><colgroup>{colgroup}</colgroup>{"".join(body)}</table></div>'
             '<script>addEventListener("load",()=>setTimeout(()=>print(),350))</script></body></html>')
 
@@ -776,7 +776,7 @@ def boq_model(db, kind, doc):
         m.ht(r, 16)
         r += 1
     r += 2
-    m.band(r, 1, N, f"CLIENT: {client}          LOCATION: {location}", S["client"])
+    m.band(r, 1, N, f"{T('العميل', 'CLIENT')}: {client}          {T('الموقع', 'LOCATION')}: {location}", S["client"])
     m.ht(r, 18)
     r += 2
     cat_tot = {}
@@ -897,7 +897,8 @@ def boq_file(db, boq_id, fmt="xlsx"):
     d = acc.get_boq(db, boq_id)
     if not d:
         raise ValidationError("BOQ not found")
-    return _boq_like(db, "boq", d, fmt, f"{d['client'] or d['bu_name'] or ''}_BOQ {d['rev'] or ''}".strip("_ "))
+    word = "مقايسة" if countries.profile(db)["doc_lang"] == "ar" else "BOQ"
+    return _boq_like(db, "boq", d, fmt, f"{d['client'] or d['bu_name'] or ''}_{word} {d['rev'] or ''}".strip("_ "))
 
 
 def invoice_file(db, xid, fmt="xlsx"):
@@ -921,8 +922,12 @@ def _boq_like(db, kind, d, fmt, name):
     if fmt == "xlsx":
         # the sheet name starts with Invoice / BOQ so the file imports back (any words after it are kept as they are)
         tag = str(d.get("number") or "") if kind == "invoice" else str(d.get("rev") or "")
-        tag = (tag if not tag.lower().startswith(kind) else tag[len(kind):]).strip()
-        sheet = re.sub(r"[\[\]:*?/\\']", " ", ("Invoice " if kind == "invoice" else "BOQ ") + tag)
+        words = ("invoice", "مستخلص", "فاتورة") if kind == "invoice" else ("boq", "مقايسة")
+        if tag.strip().lower().startswith(words):           # the number already names it ("Invoice 01"): keep it as it is
+            prefix = ""
+        else:
+            prefix = (("مستخلص " if kind == "invoice" else "مقايسة ") if rtl else ("Invoice " if kind == "invoice" else "BOQ "))
+        sheet = re.sub(r"[\[\]:*?/\\']", " ", prefix + tag)      # every prefix imports back (docsheet.kind_of)
         sheet = " ".join(sheet.split())[:31]
         data = write_xlsx(m, st, sheet=sheet, rtl=rtl, cols=cols, title=title,
                           company_name=co["name"], footer=b["footer"], logo=logo, wm=wm)
@@ -1413,7 +1418,7 @@ def offer_html(db, o, kind="offer_pdf", auto_print=True, preview=False):
     wm_html = f'<img class="wm" src="data:image/png;base64,{wm["data"]}" alt="">' if wm else ""
     return (f'<!doctype html><html lang="{cx["lang"]}" dir="{"rtl" if rtl_doc else "ltr"}"><head><meta charset="utf-8">'
             f'<title>{E(fill(o.get("title"), cx))}</title><style>{OFFER_CSS}</style></head><body>'
-            + ("" if preview else '<div class="bar"><button onclick="print()">Print / Save as PDF</button></div>')
+            + ("" if preview else f'<div class="bar"><button onclick="print()">{"طباعة / حفظ PDF" if rtl_doc else "Print / Save as PDF"}</button></div>')
             + f'<div class="odoc" style="font-family:\'{E(b["font"])}\',Arial,sans-serif">{wm_html}<div class="doc-body">{"".join(out)}</div>{foot}</div>'
             + ('<script>addEventListener("load",()=>setTimeout(()=>print(),350))</script>' if auto_print and not preview else "")
             + "</body></html>")

@@ -143,6 +143,40 @@ ROLE_AR = {
 
 # notes, cover descriptions, dashboard / partner pack / calculator labels
 MORE_AR = {
+    # workbook sentences (cover, partner pack, payables / receivables, audit)
+    'A count sheet per warehouse: one row per item counted; rows with the same count code form one count': 'ورقة جرد لكل مخزن: صف لكل صنف مجرود؛ الصفوف ذات كود الجرد نفسه تكوّن جرداً واحداً',
+    'Advances, payments and retention released on a subcontract': 'الدفعات المقدمة والمدفوعات والمحتجزات المردودة على عقد باطن',
+    'Changes to a contract': 'التعديلات على العقد',
+    'Client contracts and subcontracts': 'عقود العملاء وعقود الباطن',
+    "Each project's phases with a weight (its share of the project), planned dates and % complete": 'مراحل كل مشروع بوزنها (نصيبها من المشروع) وتواريخها المخططة ونسبة الإنجاز',
+    "Forms' saved fill-ins: pick one in the app to fill a form in": 'تعبئات النماذج المحفوظة: اختر إحداها في التطبيق لتملأ النموذج',
+    'Free to distribute (cash less floor, advances, held and reserve)': 'المتاح للتوزيع (النقدية ناقص الحد الآمن والدفعات المقدمة والمحتجز والاحتياطي)',
+    'Funding partners: share of client payments, less repaid (due now)': 'الشركاء الممولون: نصيبهم من دفعات العملاء ناقص ما رُدّ (المستحق الآن)',
+    'How shared costs are spread over projects': 'كيف تُوزَّع التكاليف المشتركة على المشروعات',
+    'Machines the company owns or runs': 'المعدات التي تملكها الشركة أو تشغّلها',
+    'Money held for remaining project costs (from the app, at export)': 'مبالغ محتجزة لتكاليف المشروعات المتبقية (من التطبيق، وقت التصدير)',
+    'Months of activity (first entry to the last one up to the report end, 30.4-day months)': 'أشهر النشاط (من أول قيد إلى آخر قيد حتى نهاية التقرير، شهر = 30.4 يوماً)',
+    'Names come from the data at export time — add a name in column A to track a new customer.': 'الأسماء مأخوذة من البيانات وقت التصدير — أضف اسماً في العمود A لمتابعة عميل جديد.',
+    'Names come from the data at export time — add a name in column A to track a new party.': 'الأسماء مأخوذة من البيانات وقت التصدير — أضف اسماً في العمود A لمتابعة جهة جديدة.',
+    'Net profit — billed (what partners can distribute from)': 'صافي الربح — المفوتر (ما يمكن للشركاء التوزيع منه)',
+    'No warehouse takes out more than it holds (Stock Moves, Sales Contracts)': 'لا يصرف أي مخزن أكثر مما لديه (حركات المخزون، عقود البيع)',
+    'One row per line of a certificate: the CUMULATIVE quantity executed to date': 'صف لكل بند في المستخلص: الكمية المنفذة التراكمية حتى تاريخه',
+    'One row per requested line; rows with the same request code form one request (nothing is booked)': 'صف لكل بند مطلوب؛ الصفوف ذات كود الطلب نفسه تكوّن طلباً واحداً (لا يُسجَّل قيد)',
+    'One row per worker per day: status, project, hours, overtime and output (for productivity)': 'صف لكل عامل في كل يوم: الحالة والمشروع والساعات والإضافي والإنتاج (لقياس الإنتاجية)',
+    'Ownership per stage of a project, where a stage is owned differently': 'الملكية لكل مرحلة من المشروع، حين تختلف ملكية المرحلة',
+    'Point-of-sale receipts (B2C)': 'إيصالات نقاط البيع (للمستهلكين)',
+    'Preventive maintenance: every N days and/or every N working hours': 'الصيانة الوقائية: كل عدد من الأيام و/أو كل عدد من ساعات التشغيل',
+    'Profit reserve kept in the company': 'احتياطي الأرباح المحتفظ به في الشركة',
+    'Profit still owed to partners (after the reserve, less distributions)': 'الأرباح المستحقة للشركاء (بعد الاحتياطي، ناقص التوزيعات)',
+    'Service, repairs and inspections done (cost to the equipment running-costs pool)': 'الخدمة والإصلاحات والفحوصات المنفذة (تكلفة على حساب تشغيل المعدات)',
+    'Stock Moves rows in date order (receipts and count gains first on a day)': 'صفوف حركات المخزون مرتبة بالتاريخ (الاستلام وزيادات الجرد أولاً في اليوم نفسه)',
+    "Suppliers' prices against a request's lines (by description); rows with the same request and supplier form one": 'أسعار الموردين لبنود الطلب (حسب الوصف)؛ الصفوف ذات الطلب والمورد نفسيهما تكوّن عرضاً واحداً',
+    'Tasks with who is responsible and when they are due (business unit blank = a company task)': 'المهام والمسؤول عنها وموعد استحقاقها (وحدة العمل فارغة = مهمة على الشركة)',
+    "The company's own entry models: one row per line, offered in the app's journal": 'نماذج القيود الخاصة بالشركة: صف لكل سطر، وتظهر في قيود التطبيق',
+    'What each cost category is made of, for the price forecast': 'مكونات كل فئة تكلفة، لتوقع الأسعار',
+    "Working hours (charged to the project at the machine's rate) and fuel per project": 'ساعات التشغيل (تُحمَّل على المشروع بسعر المعدة) والوقود لكل مشروع',
+    'E-invoice templates: the tax-authority details of a kind of document, for certain customers or a certain reaso': 'قوالب الفاتورة الإلكترونية: بيانات المصلحة لنوع من المستندات، لعملاء معينين أو لسبب معين',
+    'E-invoices other companies issued to this one (fetched from the tax authority; kept here for backups)': 'الفواتير الإلكترونية التي أصدرتها شركات أخرى لهذه الشركة (مُحمّلة من المصلحة؛ محفوظة هنا للنسخ الاحتياطية)',
     "Double-entry books with live statements. Type in the data sheets (blue text); every statement, the dashboard and the checks recalculate by themselves. All values in EGP. Import this same file back into the app from Import & Export.":
         "دفاتر بالقيد المزدوج وقوائم مالية حية. اكتب في أوراق الإدخال (النص الأزرق)؛ كل القوائم ولوحة المتابعة والفحوص تُعاد حسابها تلقائياً. كل القيم بالجنيه المصري. يمكن استيراد هذا الملف نفسه إلى البرنامج من الاستيراد والتصدير.",
     "What to type on which sheet, and what updates by itself": "ماذا تكتب في كل ورقة، وما الذي يتحدث تلقائياً",
@@ -207,9 +241,13 @@ MORE_AR = {
 
 # words inside formulas that show in a cell (codes compared by formulas — Yes, Posted, ALL OK — are never here)
 LITERALS_AR = {
+    # dates written into sentences: digits, not English month names ("31 December 2026") in the Arabic file
+    "dd mmm yyyy": "yyyy-mm-dd", "dd mmmm yyyy": "yyyy-mm-dd",
     "Management accounts as at ": "الحسابات الإدارية في ", "   ·   EGP   ·   period from ": "   ·   جنيه   ·   الفترة من ", " to ": " إلى ",
     "DO NOT DISTRIBUTE — below the cash floor (": "لا توزع — أقل من حد الأمان النقدي (", "Distribution possible up to ": "يمكن التوزيع حتى ",
     " above the cash floor": " فوق حد الأمان النقدي",
+    "DO NOT DISTRIBUTE — commitments exceed cash by ": "لا توزع — الالتزامات تتجاوز النقدية بمقدار ",
+    " (all profit owed to partners)": " (كل الأرباح المستحقة للشركاء)", " (limited by cash)": " (محدود بالنقدية)",
     "DO NOT DISTRIBUTE — the funding facility is short by ": "لا توزع — حد التمويل أقل بمقدار ", " once suppliers are paid": " بعد سداد الموردين",
     "CASH & BANK": "النقدية والبنوك", "FUNDING ROOM LEFT": "المتاح من حد التمويل",
     "Funding room left once suppliers are paid: ": "المتاح من حد التمويل بعد سداد الموردين: ", " — facility limit ": " — حد التمويل ", "ALL INTEGRITY CHECKS PASS": "كل فحوص السلامة سليمة", "REVIEW THE MODEL AUDIT": "راجع فحص سلامة الدفاتر",

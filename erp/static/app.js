@@ -2119,8 +2119,8 @@ function exportMenu(name, params) {
   if (!actionOk(screenKey(), "export")) return "";
   const base = `/api/reports/${name}?` + qs({ ...params, lang: params.lang || S.lang });
   return `<div class="dd"><button class="btn">${t("export")} ▾</button><div class="dd-menu">
-    <a href="${base}&format=pdf" target="_blank" rel="noopener">PDF (print)</a><a href="${base}&format=xlsx">Excel (.xlsx)</a>
-    <a href="${base}&format=docx">Word (.docx)</a><a href="${base}&format=csv">CSV</a></div></div>`;
+    <a href="${base}&format=pdf" target="_blank" rel="noopener">${esc(L2("PDF (print)", "PDF (طباعة)"))}</a><a href="${base}&format=xlsx">${esc(L2("Excel (.xlsx)", "إكسل (.xlsx)"))}</a>
+    <a href="${base}&format=docx">${esc(L2("Word (.docx)", "وورد (.docx)"))}</a><a href="${base}&format=csv">CSV</a></div></div>`;
 }
 // Client documents (company layout, logo & watermark per Settings → Documents & branding)
 function docMenu(base, formats, extra = "") {
@@ -5793,8 +5793,8 @@ PAGES.data = async (view) => {
   S.H.demoload = async el => { const k = ($("#demoind") || {}).value || ""; if (!await demoWarn(k)) return; el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
     try { await api("POST", "/api/demo", { industry: k, confirmed: true, lang: S.lang }); await refreshBoot(); toast(L2("Demo company loaded.", "تم تحميل الشركة التجريبية.")); location.hash = "#/dashboard"; } catch (e) { fail(e); el.disabled = false; } };
   S.H.impopen = el => importWizard(el.dataset.sheet);
-  S.H.csv = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value }));
-  S.H.csvt = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value, template: 1 }));
+  S.H.csv = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value, lang: S.lang }));
+  S.H.csvt = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value, template: 1, lang: S.lang }));
   const fmtSel = $("#impfmt");
   if (fmtSel) {
     fmtSel.addEventListener("change", () => { $("#impsheetl").style.display = fmtSel.value === "csv" ? "" : "none"; });

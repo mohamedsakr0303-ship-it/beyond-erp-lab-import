@@ -143,5 +143,17 @@ def to_code(sheet, col, v):
     return m.get(_norm(v), v)
 
 
+# the standard product details offered on the product screen (app.js SPEC_PRESETS): their Arabic names for documents
+SPEC_AR = {"Area": "المساحة", "Floor": "الدور", "Bedrooms": "غرف النوم", "Bathrooms": "الحمامات", "View": "الإطلالة",
+           "Finishing": "التشطيب", "Delivery": "الاستلام", "Brand": "الماركة", "Model": "الموديل", "Size": "المقاس",
+           "Colour": "اللون", "Material": "الخامة", "Warranty": "الضمان", "Duration": "المدة", "Includes": "يشمل"}
+
+
+def spec_name(k, ar):
+    """A product detail's name for the reader: a standard one in Arabic when the document is Arabic; the company's own
+    names as they were typed."""
+    return SPEC_AR.get(str(k).strip(), k) if ar else k
+
+
 def subtypes_by_type():
     return {t: list(v) for t, v in SUBTYPES.items()}

@@ -285,6 +285,14 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
                     cell.number_format = MONEY
                 elif c["kind"] == "pct":
                     cell.number_format = PCT
+        # settings: numbers as numbers (Excel flags numbers stored as text and cannot add them up). Only plain values: a
+        # leading zero (a phone number) or a long digit run (an ID) stays text, so nothing changes when it comes back
+        if s["name"] in ("Settings", "Payroll Settings") and "value" in [c["key"] for c in cols]:
+            vi = [c["key"] for c in cols].index("value") + 1
+            for ri in range(FIRST_DATA_ROW, last + 1):
+                v = ws.cell(ri, vi).value
+                if isinstance(v, str) and re.fullmatch(r"-?(0|[1-9]\d{0,8})(\.\d+)?", v.strip()):
+                    ws.cell(ri, vi).value = float(v) if "." in v else int(v)
         # settings: report period as real dates
         if s["name"] == "Settings":
             for ri in range(FIRST_DATA_ROW, last + 1):
@@ -999,7 +1007,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     _dashboard(wb, data, colmap, POSTING_SHEETS, rng, pl_refs, bs_refs, n_bu, audit_ref, currency, F, fill, L, hide)
     wb.move_sheet("Dashboard", offset=-(len(wb.sheetnames) - 2))
     _partner_pack(wb, data, colmap, POSTING_SHEETS, rng, within, upto, pl_refs, n_bu, audit_ref, currency, F, fill, L, WIPACCT, CUSTACCT,
-                  legs=leg_sum, role_f=ROLE_F, other_funders=_other_funders(db))
+                  legs=leg_sum, role_f=ROLE_F, other_funders=_other_funders(db), held=_held_for_costs(db))
     for name in hidden:
         wb[name].sheet_state = "hidden"
     # sheet order: as in the BEYOND V1.4 workbook — what partners and managers read first, then the books, then the
@@ -2247,6 +2255,17 @@ def _polish(wb, data, fill):
 
 
 # ------------------------------------------------------------------ partner pack
+def _held_for_costs(db):
+    """Money the app holds back for the remaining costs of projects (as the app's Partner Pack does), at export."""
+    try:
+        from . import partner_pack
+        rf = db.setting("report_from") or f"{acc.today()[:4]}-01-01"
+        rt = db.setting("report_to") or acc.today()
+        return round(float(partner_pack.compute(db, rf, rt).get("held_total") or 0), 2)
+    except Exception:      # noqa: BLE001 — the workbook is still made; the line then shows 0
+        return 0.0
+
+
 def _other_funders(db):
     """The other funding partners who are repaid a share of each client payment (for the Partner Pack's due-now line)."""
     try:
@@ -2257,7 +2276,7 @@ def _other_funders(db):
 
 
 def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, audit_ref, currency, F, fill, L, wipacct, custacct,
-                  legs=None, role_f=None, other_funders=()):
+                  legs=None, role_f=None, other_funders=(), held=0.0):
     """The partners' management accounts (BEYOND V1.4 'Partner Pack'), live formulas over this workbook:
     at a glance & project results, income statement earned vs cash, balance sheet, cash flow, partners' equity.
     Profit is distributable once BILLED: a project's billed profit = its net result when it has no revenue or makes a
@@ -2367,12 +2386,16 @@ def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, a
     st = colmap["Settings"]
     ws.cell(he + 5, 12, f'=IFERROR(VALUE(INDEX(Settings!${st["value"]}$5:${st["value"]}$500,MATCH("reserve_pct",Settings!$A$5:$A$500,0))&""),0.4)')
     RES = f"$L${he + 5}"
-    ws.cell(he + 6, 11, "Months of activity")
-    ws.cell(he + 6, 11, "Months of activity (first entry to today / report end)")
+    ws.cell(he + 6, 11, "Months of activity (first entry to the last one up to the report end, 30.4-day months)")
     firsts = ",".join(f'IF(COUNT({rng(sh["name"], "date")})=0,99999,MIN({rng(sh["name"], "date")}))' for sh in posting if "date" in colmap[sh["name"]])
     ws.cell(he + 5, 14, f"=MIN({firsts})")
     ws.cell(he + 5, 14).number_format = DATE
-    ws.cell(he + 6, 12, f'=MAX(1,(YEAR(MIN(ReportTo,TODAY()))-YEAR($N${he + 5}))*12+MONTH(MIN(ReportTo,TODAY()))-MONTH($N${he + 5})+1)')
+    # as the app's Partner Pack: days from the first entry to the last one up to the report end, in months of 30.4 days
+    lasts = ",".join(f'IF(COUNT({rng(sh["name"], "date")})=0,0,_xlfn.MAXIFS({rng(sh["name"], "date")},{rng(sh["name"], "date")},"<="&ReportTo))'
+                     for sh in posting if "date" in colmap[sh["name"]])
+    ws.cell(he + 6, 14, f"=MAX({lasts})")
+    ws.cell(he + 6, 14).number_format = DATE
+    ws.cell(he + 6, 12, f'=MAX(1,($N${he + 6}-$N${he + 5})/30.4)')
     setting = lambda key, default: (f'IFERROR(VALUE(INDEX(Settings!${st["value"]}$5:${st["value"]}$500,'  # noqa: E731
                                     f'MATCH("{key}",Settings!$A$5:$A$500,0))&""),{default})')
     # the funding partner's agreed share of each client payment, less what he was paid back = what is due to him now
@@ -2464,11 +2487,24 @@ def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, a
     put("Loans owed", f"=-({H(('short_term_debt', 'long_term_debt'))})")
     put("Partner capital — funding", f"=-({H(('capital', 'partner_current'))})")
     cash_now = H(("cash",))
+    # what can safely go to partners, the same steps as the app's Partner Pack: cash, less suppliers and staff owed, what is
+    # due to funding partners and the overhead buffer (the cash floor), client advances, money held for remaining project
+    # costs and the profit reserve — and never more than the profit still owed to partners
+    put("Money held for remaining project costs (from the app, at export)", held)
+    held_ref = f"$B${r[0] - 1}"
+    put("Profit reserve kept in the company", f"=MAX(0,{BILLED})*{RES}")
+    resv_ref = f"$B${r[0] - 1}"
+    adv = f"-({H(('deferred_revenue',))})"
+    owed_partners = (f"SUMPRODUCT(($L${SHARE}:$Q${SHARE}-ABS($L${DRW}:$Q${DRW})>0)*($L${SHARE}:$Q${SHARE}-ABS($L${DRW}:$Q${DRW})))")
+    put("Profit still owed to partners (after the reserve, less distributions)", f"={owed_partners}")
+    owed_ref = f"$B${r[0] - 1}"
+    put("Free to distribute (cash less floor, advances, held and reserve)", f"=({cash_now})-{FLOOR}-({adv})-{held_ref}-{resv_ref}")
+    free_ref = f"$B${r[0] - 1}"
     put("Distribution recommendation", f'=IF(AND({FAC}=1,{LIMIT}>0),IF({ROOM}<0,"DO NOT DISTRIBUTE — the funding facility is short by "'
                                          f'&TEXT(-{ROOM},"#,##0")&" once suppliers are paid","Funding room left once suppliers are paid: "&TEXT({ROOM},"#,##0")&'
                                          f'" — facility limit "&TEXT({LIMIT},"#,##0")),'
-                                         f'IF(({cash_now})<{FLOOR},"DO NOT DISTRIBUTE — below the cash floor ("&TEXT({FLOOR},"#,##0.00")&")",'
-                                         f'"Distribution possible up to "&TEXT(({cash_now})-{FLOOR},"#,##0.00")&" above the cash floor"))', fmt="General")
+                                         f'IF({free_ref}<=0,"DO NOT DISTRIBUTE — commitments exceed cash by "&TEXT(-{free_ref},"#,##0.00"),'
+                                         f'"Distribution possible up to "&TEXT(MIN({free_ref},{owed_ref}),"#,##0.00")&IF({owed_ref}<{free_ref}," (all profit owed to partners)"," (limited by cash)")))', fmt="General")
     put("Books integrity (Model Audit)", f'=IF({audit_ref}="ALL OK","ALL INTEGRITY CHECKS PASS","REVIEW THE MODEL AUDIT")', fmt="General")
     r[0] += 1
     put("PROJECT RESULTS", style="section")

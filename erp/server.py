@@ -4956,7 +4956,7 @@ def report(ctx, name):
     if fmt == "docx":
         return download(reports.to_docx(table, company, logo, wm), fname + ".docx", DOCX)
     if fmt == "csv":
-        return download(reports.to_csv(table), fname + ".csv", "text/csv; charset=utf-8")
+        return download(reports.to_csv(table, company), fname + ".csv", "text/csv; charset=utf-8")
     if fmt in ("html", "pdf"):
         return Reply(reports.to_html(table, company, auto_print=fmt == "pdf", font=ctx.db.setting("font_family"),
                                      size=int(ctx.db.setting("font_size", "13") or 13) - 2, logo=logo, wm=wm).encode("utf-8"),
@@ -5038,8 +5038,13 @@ def export_csv(ctx):
     if sheet not in interchange.SHEET_BY_NAME:
         raise acc.ValidationError("Unknown sheet")
     tpl = ctx.q.get("template") == "1"
-    return download(interchange.to_csv(ctx.db, sheet, template=tpl),
-                    re.sub(r"\W+", "_", sheet) + ("_template" if tpl else "") + ".csv", "text/csv; charset=utf-8")
+    if not tpl and not ctx.can("import_export.export", "view"):     # the data itself: the same right as the workbook export
+        raise PermissionError()
+    ar = ctx.q.get("lang") == "ar"
+    s = interchange.SHEET_BY_NAME[sheet]
+    name = (s.get("ar") or sheet) if ar else sheet
+    return download(interchange.to_csv(ctx.db, sheet, template=tpl, lang="ar" if ar else "en"),
+                    re.sub(r"\W+", "_", name).strip("_") + (("_قالب" if ar else "_template") if tpl else "") + ".csv", "text/csv; charset=utf-8")
 
 
 # ------------------------------------------------- per-screen templates & imports

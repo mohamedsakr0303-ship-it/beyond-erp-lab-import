@@ -214,6 +214,8 @@ def translations():
     from .workbook_ar_terms import EXAMPLE_AR, MORE_AR
     pairs.update(MORE_AR)
     pairs.update(EXAMPLE_AR)
+    from .notes_ar import NOTES_AR      # the column notes on headings
+    pairs.update(NOTES_AR)
     return pairs
 
 
@@ -242,6 +244,9 @@ def _literals(f):
     from .workbook_ar_terms import LITERALS_AR
     return re.sub(r'"([^"]*)"', lambda m: '"' + LITERALS_AR.get(m.group(1), m.group(1)) + '"', f)
 
+
+VALIDATION_AR = {"Enter a date (YYYY-MM-DD)": "أدخل تاريخاً (YYYY-MM-DD)", "Invalid date": "تاريخ غير صحيح",
+                 "Pick from the list": "اختر من القائمة", "Invalid value": "قيمة غير مسموحة"}
 
 GUIDE = "دليل الأكواد"
 
@@ -327,6 +332,8 @@ def localize(wb, extra_names=None):
                                                                      min_col=rg.min_col, max_col=rg.max_col) for cell in row}
         for row in ws.iter_rows():
             for c in row:
+                if "mmm" in (c.number_format or ""):      # month names would show in English: show the month as digits
+                    c.number_format = "yyyy-mm" if "d" not in c.number_format else "yyyy-mm-dd"
                 v = c.value
                 if isinstance(v, str) and (c in coded or v in CODES) and not v.startswith("="):
                     pass
@@ -370,6 +377,17 @@ def localize(wb, extra_names=None):
                         c.hyperlink.target = "#" + fix(c.hyperlink.target[1:])
         for dv in ws.data_validations.dataValidation:
             dv.formula1, dv.formula2 = fix(dv.formula1), fix(dv.formula2)
+            for attr in ("error", "errorTitle", "prompt", "promptTitle"):     # the messages Excel shows, in Arabic
+                msg = getattr(dv, attr, None)
+                if isinstance(msg, str) and msg and not re.search("[\u0600-\u06FF]", msg):
+                    setattr(dv, attr, VALIDATION_AR.get(msg) or tr.get(msg) or msg)
+        for row in ws.iter_rows(max_row=6):        # the notes on the headings (what each column takes), in Arabic
+            for c in row:
+                if c.comment is not None and not re.search("[\u0600-\u06FF]", c.comment.text or ""):
+                    ar_note = tr.get(c.comment.text) or tr.get((c.comment.text or "").strip())
+                    if ar_note:
+                        from openpyxl.comments import Comment
+                        c.comment = Comment(ar_note, c.comment.author or "BeyondERP")
         for cf in ws.conditional_formatting:
             for rule in cf.rules:
                 rule.formula = [fix(f) for f in (rule.formula or [])]
