@@ -39,7 +39,8 @@ def next_code(db):
 
 
 def get(db, cid):
-    c = db.one("SELECT * FROM custodies WHERE id=? OR code=?", (cid if str(cid).isdigit() else -1, text(cid)))
+    c = (db.one("SELECT * FROM custodies WHERE code=?", (text(cid),)) if str(cid).strip() else None) or \
+        db.one("SELECT * FROM custodies WHERE id=?", (cid if str(cid).isdigit() else -1,))   # a code first: a card coded "1" is not id 1
     if not c:
         raise ValidationError("Custody not found")
     return c
@@ -158,6 +159,12 @@ def statement(db, cid):
 # ------------------------------------------------------------------- save
 def save(db, d, cid=None, user=""):
     old = get(db, cid) if cid else None
+    if old:     # an edit changes only what it sends: the fields left out keep their values
+        keep = {"holder": old["holder"], "purpose": old["purpose"], "due_date": old["due_date"], "notes": old["notes"],
+                "float_amount": to_major(old["float_amount"] or 0), "bu_id": old["bu_id"]}
+        if "bu_code" in d and "bu_id" not in d:      # a business unit sent by its code replaces the old one
+            keep.pop("bu_id")
+        d = {**keep, **d}
     code = text(d.get("code"), maxlen=30) or (old["code"] if old else next_code(db))
     holder = text(d.get("holder"), "employee holding the custody", required=True)
     kind = d.get("kind") or (old and old["kind"]) or "temporary"

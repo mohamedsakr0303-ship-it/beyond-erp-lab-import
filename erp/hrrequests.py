@@ -11,6 +11,7 @@ On approval:
                            It is recovered through the payroll run (Advance recovery).
 Rejecting or cancelling an approved request removes the attendance it created."""
 import datetime as _dt
+import json
 
 from . import accounting as acc
 from .accounting import ValidationError, now_iso, num, text
@@ -277,9 +278,14 @@ def _apply(db, r):
     if r["kind"] in LEAVE_STATUS:
         status = LEAVE_STATUS[r["kind"]]
         for day in _days(r["date_from"], r["date_to"] or r["date_from"], _wd(policy(db)["weekend"])):
-            db.x("""INSERT INTO attendance(date, employee_id, bu_id, status, hours, notes) VALUES (?,?,?,?,0,?)
-                    ON CONFLICT(date, employee_id) DO UPDATE SET status=excluded.status, hours=0, notes=excluded.notes""",
-                 (day, emp["id"], None, status, _note(r["id"])))
+            old = db.one("SELECT * FROM attendance WHERE date=? AND employee_id=?", (day, emp["id"]))
+            if old:     # a day already recorded: keep what it was, so rejecting the leave later puts it back
+                prev = {k: old[k] for k in ("status", "hours", "overtime", "bu_id", "notes")}
+                db.x("UPDATE attendance SET status=?, hours=0, overtime=0, notes=? WHERE id=?",
+                     (status, _note(r["id"]) + " " + json.dumps(prev, ensure_ascii=False), old["id"]))
+            else:
+                db.x("INSERT INTO attendance(date, employee_id, bu_id, status, hours, notes) VALUES (?,?,?,?,0,?)",
+                     (day, emp["id"], None, status, _note(r["id"])))
     elif r["kind"] == "overtime":
         row = db.one("SELECT id, overtime FROM attendance WHERE date=? AND employee_id=?", (r["date_from"], emp["id"]))
         if row:
@@ -295,12 +301,36 @@ def _unapply(db, r):
         return
     if r["kind"] in LEAVE_STATUS:
         db.x("DELETE FROM attendance WHERE employee_id=? AND notes=?", (r["employee_id"], _note(r["id"])))
+        tag = _note(r["id"]) + " {"
+        for row in db.q("SELECT id, notes FROM attendance WHERE employee_id=? AND substr(notes,1,?)=?",
+                        (r["employee_id"], len(tag), tag)):
+            try:
+                prev = json.loads(row["notes"][len(tag) - 1:])
+            except ValueError:
+                continue
+            db.x("UPDATE attendance SET status=?, hours=?, overtime=?, bu_id=?, notes=? WHERE id=?",
+                 (prev.get("status") or "present", prev.get("hours") or 0, prev.get("overtime") or 0, prev.get("bu_id"),
+                  prev.get("notes") or "", row["id"]))
     elif r["kind"] == "overtime":
         row = db.one("SELECT id, overtime, notes FROM attendance WHERE date=? AND employee_id=?", (r["date_from"], r["employee_id"]))
         if row and row["notes"] == _note(r["id"]):
             db.x("DELETE FROM attendance WHERE id=?", (row["id"],))
         elif row:
             db.x("UPDATE attendance SET overtime=MAX(0, overtime-?) WHERE id=?", (r["hours"], row["id"]))
+
+
+_FEED_AR = {"Request approved": "تمت الموافقة على الطلب", "Request rejected": "تم رفض الطلب"}
+
+
+def feed_ar(title, body):
+    """An alert this module wrote, in Arabic (the feed stores one text; the bell shows it in the reader's language)."""
+    if title not in _FEED_AR:
+        return None
+    for en, ar, *_ in KINDS.values():
+        if body.startswith(en + " #"):
+            body = ar + body[len(en):]
+            break
+    return f"{_FEED_AR[title]}: {body}"
 
 
 def _tell(db, username, title, body, rid):

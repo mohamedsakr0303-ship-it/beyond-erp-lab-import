@@ -23,11 +23,13 @@ its own — nothing reaches the books unless you record what you actually paid.
 """
 import json
 import math
+import re
 from decimal import ROUND_HALF_UP, Decimal
 
 from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
+from .textl10n import Note
 
 EMP_TYPES = ("monthly", "daily", "hourly", "piece")
 COST_TYPES = list(acc.PAYROLL_TYPES)
@@ -235,7 +237,8 @@ def compute(emp, inp, s):
     net = r2(gross - kept - advance - si_emp - tax - martyrs)
     return {"earnings": [{"code": e[0], "name": e[1], "name_ar": e[2], "amount": e[3]} for e in earn],
             "deductions": [{"code": d[0], "name": d[1], "name_ar": d[2], "amount": d[3]} for d in ded]
-            + [x for x in ({"code": "si_emp", "name": "Social insurance (employee 11 %)", "name_ar": "التأمينات (حصة العامل)", "amount": si_emp},
+            + [x for x in ({"code": "si_emp", "name": f"Social insurance (employee {float(s['si_emp_rate']) * 100:g} %)",
+                            "name_ar": f"التأمينات (حصة العامل {float(s['si_emp_rate']) * 100:g} %)", "amount": si_emp},
                            {"code": "tax", "name": "Salary tax", "name_ar": "ضريبة كسب العمل", "amount": tax},
                            {"code": "martyrs", "name": "Martyrs Fund", "name_ar": "صندوق الشهداء", "amount": martyrs}) if x["amount"]],
             "gross": gross, "kept": kept, "advance": advance, "insurable": r2(insurable), "si_emp": si_emp, "si_er": si_er,
@@ -267,7 +270,8 @@ def list_employees(db, q=None, status=None):
 
 
 def get_employee(db, eid):
-    e = db.one("SELECT * FROM employees WHERE id=? OR code=?", (eid if str(eid).isdigit() else -1, text(eid)))
+    e = (db.one("SELECT * FROM employees WHERE code=?", (text(eid),)) if str(eid).strip() else None) or \
+        db.one("SELECT * FROM employees WHERE id=?", (eid if str(eid).isdigit() else -1,))   # a code first: an employee coded "1" is not id 1
     if not e:
         raise ValidationError("Employee not found")
     return _emp_row(db, e)
@@ -319,8 +323,14 @@ def save_employee(db, d, eid=None):
     cols = ("code,name,name_ar,national_id,job_title,department,emp_type,cost_type,account,bu_id,hire_date,end_date,status,basic,"
             "daily_rate,hourly_rate,piece_rate,piece_unit,allowances,insured,insurable_wage,insurance_no,taxed,method,bank_account,phone,notes")
     if eid:
-        db.x(f"UPDATE employees SET {', '.join(c + '=?' for c in cols.split(','))} WHERE id=?", vals + (get_employee(db, eid)["id"],))
-        new = get_employee(db, eid)["id"]
+        before = get_employee(db, eid)
+        db.x(f"UPDATE employees SET {', '.join(c + '=?' for c in cols.split(','))} WHERE id=?", vals + (before["id"],))
+        new = before["id"]
+        if before["name"] != name:      # salary advances and pay still owed follow the person to the new name
+            for role in ("employee_advances", "accrued_payroll"):
+                a = _role(db, role)
+                if a:
+                    db.x("UPDATE journal_lines SET party=? WHERE account=? AND party=?", (name, a, before["name"]))
     else:
         new = db.x(f"INSERT INTO employees({cols}) VALUES ({','.join('?' * len(cols.split(',')))})", vals).lastrowid
     if "username" in d:         # the app user who is this employee: their "My day" fills their attendance
@@ -381,18 +391,44 @@ def list_runs(db):
 
 def create_run(db, d):
     period = text(d.get("period"), "month", required=True)
-    if len(period) != 7 or period[4] != "-":
-        raise ValidationError("Month as YYYY-MM")
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", period):
+        raise ValidationError(Note("Month as YYYY-MM, e.g. 2026-09", "الشهر بصيغة YYYY-MM، مثال: 2026-09"))
     if db.one("SELECT 1 FROM payroll_runs WHERE period=?", (period,)):
-        raise ValidationError(f"There is already a payroll run for {period}")
+        raise ValidationError(Note(f"There is already a payroll run for {period}", f"يوجد بالفعل مسير رواتب لشهر {period}"))
     date = acc.clean_date(d.get("date") or _month_end(period))
+    if date[:7] != period:            # the run's entries belong to its month
+        raise ValidationError(Note(f"The run date {date} is outside {period}", f"تاريخ المسير {date} خارج شهر {period}"))
     rid = db.x("INSERT INTO payroll_runs(period,date,status,notes) VALUES (?,?,'draft',?)", (period, date, text(d.get("notes")))).lastrowid
-    s = settings(db)
-    for e in db.q("SELECT * FROM employees WHERE status='active' ORDER BY code"):
-        units = s["days_month"] if e["emp_type"] == "daily" else 0
-        db.x("INSERT INTO payroll_lines(run_id,employee_id,units,method) VALUES (?,?,?,?)", (rid, e["id"], units, e["method"] or ""))
+    # everyone employed during the month, leavers included up to their last month; daily workers start at 0 days and
+    # take their days from attendance (never a full month by default)
+    for e in db.q("SELECT * FROM employees WHERE (status='active' OR COALESCE(end_date,'')>=?) "
+                  "AND (COALESCE(hire_date,'')='' OR hire_date<=?) ORDER BY code", (period + "-01", _month_end(period))):
+        db.x("INSERT INTO payroll_lines(run_id,employee_id,units,method) VALUES (?,?,0,?)", (rid, e["id"], e["method"] or ""))
+    from . import labour
+    if db.one("SELECT 1 FROM attendance WHERE substr(date,1,7)=? LIMIT 1", (period,)):
+        labour.fill_payroll(db, rid)
+    month = settings(db)["days_month"]
+    for ln in db.q("SELECT l.id, l.absent_days, e.* FROM payroll_lines l JOIN employees e ON e.id=l.employee_id WHERE l.run_id=?", (rid,)):
+        out = _days_outside(ln, period)       # on top of the absences recorded in attendance (days while employed)
+        if out:
+            db.x("UPDATE payroll_lines SET absent_days=? WHERE id=?", (min(month, (ln["absent_days"] or 0) + out), ln["id"]))
     recover_advances(db, rid)
     return rid
+
+
+def _days_outside(e, period):
+    """Monthly staff who join or leave during the month: the calendar days outside their employment, as absent days
+    (the month counts as days_month days, so the pay is prorated)."""
+    if e["emp_type"] != "monthly":
+        return 0
+    first, last = period + "-01", _month_end(period)
+    hire, end = (e["hire_date"] or "")[:10], (e["end_date"] or "")[:10]
+    n = 0
+    if first < hire <= last:
+        n += int(hire[8:10]) - 1
+    if first <= end < last:
+        n += int(last[8:10]) - int(end[8:10])
+    return n
 
 
 def recover_advances(db, rid, only_unset=False):
@@ -469,6 +505,14 @@ def post_run(db, rid, user=""):
     if not all((si, tx, mf, adv, accrued)):
         raise ValidationError("Payroll accounts are missing from the chart of accounts")
     recover_advances(db, r["id"], only_unset=True)
+    from .hrrequests import advance_balance
+    for ln in db.q("SELECT * FROM payroll_lines WHERE run_id=?", (r["id"],)):   # never recover more than is still owed
+        inputs = json.loads(ln["inputs"] or "{}")
+        if inputs.get("advance"):
+            left = to_minor(max(0.0, advance_balance(db, get_employee(db, ln["employee_id"])["name"], r["date"])))
+            if inputs["advance"] > left:
+                inputs["advance"] = left
+                db.x("UPDATE payroll_lines SET inputs=? WHERE id=?", (json.dumps(inputs), ln["id"]))
     with db.tx():
         for ln in db.q("SELECT * FROM payroll_lines WHERE run_id=?", (r["id"],)):
             emp = get_employee(db, ln["employee_id"])
@@ -511,11 +555,22 @@ def post_run(db, rid, user=""):
 def unpost_run(db, rid, user=""):
     """Reopen a posted run: its entries are voided (kept for the audit trail), the lines become editable again."""
     r = _run(db, rid)
+    accrued = _role(db, "accrued_payroll")
+    for ln in db.q("SELECT l.entry_id, e.name FROM payroll_lines l JOIN employees e ON e.id=l.employee_id WHERE l.run_id=? "
+                   "AND l.entry_id IS NOT NULL", (r["id"],)):
+        # pay already handed over against this run: reopening would leave the payment with nothing owed behind it
+        owed = db.one("SELECT COALESCE(SUM(l.credit-l.debit),0) b FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                      "WHERE e.status='posted' AND l.account=? AND l.party=?", (accrued, ln["name"]))["b"]
+        mine = db.one("SELECT COALESCE(SUM(l.credit-l.debit),0) b FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                      "WHERE e.id=? AND e.status='posted' AND l.account=?", (ln["entry_id"], accrued))["b"]
+        if accrued and mine > 0 and owed - mine < 0:
+            raise ValidationError(Note(f"{ln['name']}: the pay of this run has already been paid out. Void that payment first, then unpost the run.",
+                                       f"{ln['name']}: تم صرف راتب هذا المسير بالفعل. ألغِ سند الصرف أولاً ثم ألغِ ترحيل المسير."))
     with db.tx():
         for ln in db.q("SELECT * FROM payroll_lines WHERE run_id=?", (r["id"],)):
             e = db.one("SELECT status FROM journal_entries WHERE id=?", (ln["entry_id"],)) if ln["entry_id"] else None
             if e and e["status"] != "void":
-                acc.void_entry(db, ln["entry_id"], f"payroll {r['period']} reopened", user)
+                acc.void_entry(db, ln["entry_id"], f"payroll {r['period']} reopened", user, payroll_run=True)
         db.x("UPDATE payroll_lines SET entry_id=NULL, result='' WHERE run_id=?", (r["id"],))
         db.x("UPDATE payroll_runs SET status='draft' WHERE id=?", (r["id"],))
 
@@ -596,6 +651,9 @@ def save_crew(db, d, cid=None):
         c = db.one("SELECT * FROM crew_sheets WHERE id=?", (cid,))
         if not c:
             raise ValidationError("Not found")
+        if _crew_paid(db, c):
+            raise ValidationError(Note("This crew sheet is paid and locked. Void its payment to change it.",
+                                       "هذه اليومية مصروفة ومقفلة. ألغِ قيد الصرف لتعديلها."))
         db.x("UPDATE crew_sheets SET date=?,crew=?,title=?,bu_id=?,lines=?,total=?,notes=? WHERE id=?", vals + (cid,))
         return int(cid)
     return db.x("INSERT INTO crew_sheets(date,crew,title,bu_id,lines,total,notes) VALUES (?,?,?,?,?,?,?)", vals).lastrowid
@@ -608,11 +666,18 @@ def delete_crew(db, cid):
     db.x("DELETE FROM crew_sheets WHERE id=?", (cid,))
 
 
+def _crew_paid(db, c):
+    return bool(c["entry_id"] and db.one("SELECT 1 FROM journal_entries WHERE id=? AND status!='void'", (c["entry_id"],)))
+
+
 def pay_crew(db, cid, d, user=""):
     """Record what you ACTUALLY paid the crew (it may differ from the sheet's total) as a labour cost."""
     c = db.one("SELECT * FROM crew_sheets WHERE id=?", (cid,))
     if not c:
         raise ValidationError("Not found")
+    if _crew_paid(db, c):
+        raise ValidationError(Note("This crew sheet is already paid. Void its payment first to pay it again.",
+                                   "تم صرف هذه اليومية بالفعل. ألغِ قيد الصرف أولاً لصرفها مرة أخرى."))
     amount = num(d.get("amount") if d.get("amount") not in (None, "") else to_major(c["total"]), "amount paid", allow_zero=False)
     bu = acc.bu_id_or_none(db, d.get("bu_id") or c["bu_id"])
     ct = d.get("cost_type") or ("Direct Labour (Cost of Revenue)" if bu else "Administrative Salaries (Shared Overhead)")
@@ -737,6 +802,11 @@ def run_sheet_import(db, items, user=""):
         lines.append({"employee_id": e["id"], "units": row.get("units"), "absent_days": row.get("absent_days"), "ot_day": row.get("ot_day"),
                       "ot_night": row.get("ot_night"), "ot_rest": row.get("ot_rest"), "paid": row.get("paid"), "method": row.get("method"),
                       "components": {c: row.get(c) for c in VARIABLE if row.get(c) not in (None, "")}})
+    if r:       # an existing draft: the sheet is the month's run, so lines for anyone not in it are left out
+        keep = {ln["employee_id"] for ln in lines}
+        for ln in db.q("SELECT id, employee_id FROM payroll_lines WHERE run_id=?", (rid,)):
+            if ln["employee_id"] not in keep:
+                db.x("DELETE FROM payroll_lines WHERE id=?", (ln["id"],))
     save_lines(db, rid, lines)
     post_run(db, rid, user)
 
@@ -757,7 +827,9 @@ def payslips_html(db, rid, who="all", lang="en"):
     ar = lang == "ar"
     L = lambda en, a: a if ar else en  # noqa: E731
     co = _h.escape(db.setting("company_name", "") or "")
-    cur = _h.escape(db.setting("currency", "EGP") or "EGP")
+    from .documents import AR_SYMBOL
+    code = db.setting("currency", "EGP") or "EGP"
+    cur = _h.escape(AR_SYMBOL.get(code, code) if ar else code)
     lines = r["lines"] if who == "all" else [x for x in r["lines"] if str(x["employee_id"]) == str(get_employee(db, who)["id"])]
     m = lambda v: f"{v:,.2f}"  # noqa: E731
     pages = []
@@ -767,7 +839,7 @@ def payslips_html(db, rid, who="all", lang="en"):
         nm = lambda x: _h.escape((x.get("name_ar") if ar and x.get("name_ar") else x["name"]))  # noqa: E731
         earn = "".join(f"<tr><td>{nm(x)}</td><td class=n>{m(x['amount'])}</td></tr>" for x in c.get("earnings", []))
         ded = "".join(f"<tr><td>{nm(x)}</td><td class=n>{m(x['amount'])}</td></tr>" for x in c.get("deductions", []))
-        info = [(L("Employee", "الموظف"), f"{_h.escape(e['name'])} ({_h.escape(e['code'])})"), (L("Job", "الوظيفة"), _h.escape(e["job_title"] or "—")),
+        info = [(L("Employee", "الموظف"), f"{_h.escape((e.get('name_ar') if ar else '') or e['name'])} ({_h.escape(e['code'])})"), (L("Job", "الوظيفة"), _h.escape(e["job_title"] or "—")),
                 (L("Department", "القسم"), _h.escape(e["department"] or "—")), (L("Days paid / units", "أيام / وحدات"), m(c.get("days_paid", 0))),
                 (L("Insurance no.", "الرقم التأميني"), _h.escape(e["insurance_no"] or "—")), (L("Paid by", "طريقة الصرف"), _h.escape(_word(e["method"], ar) or "—"))]
         pages.append(f"""<section class=slip><header><div><b>{co}</b><br>{L("Payslip", "قسيمة راتب")} — {_h.escape(r['period'])}</div>
@@ -804,7 +876,8 @@ def register_table(db, rid, lang="en"):
     rows = []
     for ln in r["lines"]:
         c = ln["result"] or {}
-        rows.append({"label": f"{ln['code']} — {ln['name']}", "cells": [f"{ln['code']} — {ln['name']}", c.get("gross", 0), c.get("kept", 0), c.get("advance", 0),
+        nm = ((db.one("SELECT name_ar FROM employees WHERE id=?", (ln["employee_id"],)) or {"name_ar": ""})["name_ar"] if ar else "") or ln["name"]
+        rows.append({"label": f"{ln['code']} — {nm}", "cells": [f"{ln['code']} — {nm}", c.get("gross", 0), c.get("kept", 0), c.get("advance", 0),
                      c.get("si_emp", 0), c.get("tax", 0), c.get("martyrs", 0), c.get("net", 0), c.get("si_er", 0), c.get("cost", 0)], "style": "item", "indent": 0})
     t = r["totals"]
     rows.append({"label": L("TOTAL", "الإجمالي"), "cells": [L("TOTAL", "الإجمالي"), t["gross"], t["kept"], t["advance"], t["si_emp"], t["tax"], t["martyrs"],

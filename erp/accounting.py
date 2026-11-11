@@ -73,6 +73,8 @@ def clean_date(value, field="date"):
         _dt.date.fromisoformat(value)
     except ValueError:
         raise ValidationError(f"{field} is not a real date") from None
+    if not "1900" <= value[:4] <= "2199":      # 0206 or 2206 for 2026: a typing slip, not a date in the books
+        raise ValidationError(f"{field}: the year {value[:4]} looks mistyped")
     return value
 
 
@@ -695,13 +697,19 @@ def _unlink_documents(db, eid, user=""):
         stockcost.apply(db, item_id, k, why=f"entry #{eid} undone", user=user)
 
 
-def void_entry(db, eid, reason="", user=""):
+def void_entry(db, eid, reason="", user="", payroll_run=False):
     with db.tx():
         e = db.one("SELECT * FROM journal_entries WHERE id=?", (eid,))
         if not e:
             raise ValidationError("Entry not found")
         if e["status"] == "void":
             raise ValidationError("Already void")
+        if not payroll_run and db.one("SELECT 1 FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id "
+                                      "WHERE l.entry_id=? AND r.status='posted'", (eid,)):
+            # voiding one employee's entry would leave the run 'posted' with totals the books no longer have
+            from .textl10n import Note
+            raise ValidationError(Note("This entry belongs to a posted payroll run. Open the run and Unpost it instead.",
+                                       "هذا القيد جزء من مسير رواتب مُرحَّل. افتح المسير واستخدم «إلغاء الترحيل» بدلاً من ذلك."))
         check_open(db, e["date"])
         if e["reversed_by"] or e["reversal_of"]:
             raise ValidationError("This entry is part of a reversal pair and cannot be voided")
@@ -723,6 +731,8 @@ def reverse_entry(db, eid, date=None, user=""):
             raise ValidationError("Entry not found")
         if e["status"] != "posted" or e["reversed_by"] or e["reversal_of"]:
             raise ValidationError("Only a live, un-reversed entry can be reversed")
+        if date and clean_date(date) < e["date"]:
+            raise ValidationError(f"The reversal cannot be dated before the entry it reverses ({e['date']})")
         _stock_undo_guard(db, eid)
         lines = [{"account": ln["account"], "debit": ln["credit"], "credit": ln["debit"], "party": ln.get("party", "")}
                  for ln in e["lines"]]
@@ -801,6 +811,10 @@ def save_account(db, d, old_code=None):
             used = db.one("SELECT 1 FROM journal_lines WHERE account=? LIMIT 1", (old_code,))
             if used and cur["type"] != typ:
                 raise ValidationError("This account has postings; its type cannot change (subtype can)")
+            if used and (cur["subtype"] == "cash") != (sub == "cash"):
+                # cash ↔ not cash re-states every past cash flow and the money lists; open a new account instead
+                raise ValidationError("This account has postings; it cannot move into or out of Cash & cash equivalents. "
+                                      "Open a new account and move the balance.")
             db.conn.execute("UPDATE accounts SET code=?, name=?, name_ar=?, type=?, subtype=?, normal=?, active=? "
                             "WHERE code=?", (code, name, name_ar, typ, sub, normal_for(typ, sub), active, old_code))
         else:

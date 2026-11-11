@@ -1933,6 +1933,10 @@ def parties(ctx):
         raise PermissionError()
     kind = ctx.q.get("kind") or "payable"
     subtypes = {"payable": ("payable",), "payroll": ("accrued",), "all": ("payable", "accrued")}.get(kind, ("payable",))
+    if not (ctx.can("payroll.runs") or ctx.can("payroll.entries") or ctx.can("accounting.journal")):
+        subtypes = tuple(x for x in subtypes if x != "accrued")      # pay still owed to each employee is salary data
+        if not subtypes:
+            raise PermissionError()
     return ok({"rows": acc.party_balances(ctx.db, subtypes=subtypes, date_to=ctx.q.get("date_to")),
                "names": [r["party"] for r in ctx.db.q("SELECT DISTINCT party FROM journal_entries WHERE party<>'' "
                                                       "ORDER BY party LIMIT 2000")],
@@ -3294,6 +3298,9 @@ def pr_settings_save(ctx):
 
 @route("POST", "/api/payroll/preview", "payroll")
 def pr_preview(ctx):
+    # a named employee's pay is for those who see employees or runs; the calculator (typed figures) for any payroll screen
+    if ctx.body.get("employee_id") and not (ctx.can("payroll.employees") or ctx.can("payroll.runs")):
+        raise PermissionError()
     return ok(payroll.preview(ctx.db, ctx.body))
 
 
@@ -3794,8 +3801,10 @@ def alerts(ctx):
         out += stockplan.bell_rows(ctx.db)
     feed = ctx.db.q("SELECT id, title, body, href FROM alert_feed WHERE username=? AND read_at IS NULL ORDER BY id DESC LIMIT 20",
                     (ctx.user["username"],)) if ctx.can("team.alerts") else []
+    from .hrrequests import feed_ar
     for f in reversed(feed):
-        out.insert(0, {"level": "warn", "en": f"{f['title']}: {f['body']}", "ar": f"{f['title']}: {f['body']}", "href": f["href"] or "#/alerts",
+        out.insert(0, {"level": "warn", "en": f"{f['title']}: {f['body']}", "ar": feed_ar(f["title"], f["body"]) or f"{f['title']}: {f['body']}",
+                       "href": f["href"] or "#/alerts",
                        "kind": "feed", "id": f["id"]})
     from . import alerttypes          # what this person's department (and they themselves) are set to receive
     out = alerttypes.filter_rows(ctx.db, ctx.user, out)
