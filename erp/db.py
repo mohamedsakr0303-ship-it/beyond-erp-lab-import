@@ -133,11 +133,12 @@ CREATE TABLE IF NOT EXISTS journal_lines (
     account TEXT NOT NULL REFERENCES accounts(code) ON UPDATE CASCADE ON DELETE RESTRICT,
     debit INTEGER NOT NULL DEFAULT 0 CHECK (debit >= 0),
     credit INTEGER NOT NULL DEFAULT 0 CHECK (credit >= 0),
-    party TEXT DEFAULT ''                  -- a line's own party (e.g. each partner in a share transfer); '' = the entry's
+    party TEXT DEFAULT '',                 -- a line's own party (e.g. each partner in a share transfer); '' = the entry's
+    memo TEXT DEFAULT '',                  -- the line's own description ('' = the entry's)
+    cost_item TEXT DEFAULT ''              -- the work item a cost line is for (costitems.py); '' = not tagged
 );
 CREATE INDEX IF NOT EXISTS ix_jl_entry ON journal_lines(entry_id);
 CREATE INDEX IF NOT EXISTS ix_jl_account ON journal_lines(account);
-CREATE INDEX IF NOT EXISTS ix_jl_party ON journal_lines(party);
 -- each line with its party (the line's own, else the entry's) — a lookup by party uses an index on both sides
 CREATE VIEW IF NOT EXISTS party_lines AS
     SELECT l.id AS id, l.party AS party FROM journal_lines l WHERE l.party<>''
@@ -1712,6 +1713,25 @@ CREATE TABLE IF NOT EXISTS maintenance_logs (
     entry_id INTEGER REFERENCES journal_entries(id) ON DELETE SET NULL
 );
 
+-- Cost items (costitems.py): one catalogue of work items for every project, a budget per project and item
+CREATE TABLE IF NOT EXISTS cost_items (
+    code TEXT PRIMARY KEY,                     -- "01", "01.02", "01.02.03": the tree is in the code
+    name TEXT NOT NULL,
+    name_ar TEXT DEFAULT '',
+    parent TEXT DEFAULT '',
+    unit TEXT DEFAULT '',
+    keywords TEXT DEFAULT '',                  -- words that recognise it in a description
+    active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS cost_budgets (
+    id INTEGER PRIMARY KEY,
+    bu_id INTEGER NOT NULL REFERENCES business_units(id) ON DELETE CASCADE,
+    item TEXT NOT NULL,
+    amount INTEGER NOT NULL DEFAULT 0,
+    qty REAL NOT NULL DEFAULT 0,
+    UNIQUE(bu_id, item)
+);
+
 -- Daily attendance of workers on projects: hours, overtime and what they produced
 CREATE TABLE IF NOT EXISTS attendance (
     id INTEGER PRIMARY KEY,
@@ -2190,7 +2210,10 @@ class Database:
                         self.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,role) "
                                           "VALUES (?,?,?,?,?,?,?)", (code, name, ACCOUNT_NAMES_AR.get(code, ""),
                                                                      typ, sub, normal_for(typ, sub), role))
-        self._add_cols("journal_lines", [("party", "TEXT DEFAULT ''")])
+        self._add_cols("journal_lines", [("party", "TEXT DEFAULT ''"), ("memo", "TEXT DEFAULT ''"), ("cost_item", "TEXT DEFAULT ''")])
+        # indexes on columns that older books gained later (never in SCHEMA: an old file would not open)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS ix_jl_party ON journal_lines(party)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS ix_jl_item ON journal_lines(cost_item)")
         self._add_cols("extract_lines", [("account", "TEXT DEFAULT ''")])
         # extracts (مستخلصات): the client's layout — project / work titles, extract no., what was paid before, deductions,
         # running or final; and the share of each item executed (النسبة)

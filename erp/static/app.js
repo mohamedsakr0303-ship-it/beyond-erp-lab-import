@@ -5648,6 +5648,76 @@ PAGES.materials = async (view, parts, q) => {
     `<div class="card"><h2>${esc(tb.title)}</h2><div class="muted" style="margin:-4px 0 10px;font-size:.85em">${esc(tb.subtitle || "")}</div>${reportTable(tb)}</div>`;
   S.H.doprint = () => openApi("/api/reports/materials_used?" + qs({ ...params, format: "pdf" }), true);
 };
+PAGES.costitems = async (view, parts, q) => {
+  // Cost items: one catalogue of work items for every project; budget against actual; tagging cost lines from their descriptions
+  const tab = q.tab || "report", ar = S.lang === "ar", canEdit = can("projects", "edit");
+  const cat = (await api("GET", "/api/cost-items")).rows;
+  const nm = c => (ar && c.name_ar) || c.name;
+  const itemOpts = (sel) => `<option value="">${esc(L2("— not tagged —", "— بدون بند —"))}</option>` +
+    cat.filter(c => c.active).map(c => `<option value="${esc(c.code)}"${c.code === sel ? " selected" : ""}>${esc(c.code)} ${"· ".repeat(c.code.split(".").length - 1)}${esc(nm(c))}</option>`).join("");
+  const tabs = `<div class="tabs">${[["report", L2("Budget and actual", "الموازنة والفعلي")], ["tag", L2("Tag costs", "تصنيف التكاليف")], ["catalogue", L2("Catalogue", "دليل البنود")]]
+    .map(([k, l]) => `<a class="tab${k === tab ? " on" : ""}" href="#/costitems?${qs({ ...q, tab: k })}">${esc(l)}</a>`).join("")}</div>`;
+  const intro = `<p class="muted">${esc(L2("One list of work items for all projects. Each cost line can say which item it was for, so every project shows its budget against what was spent, by trade and item, without a separate account per project.",
+    "قائمة واحدة لبنود الأعمال لكل المشروعات. كل سطر تكلفة يمكن أن يحدد البند الذي صُرف عليه، فيظهر لكل مشروع موازنته مقابل المنصرف فعلاً حسب البند، دون حساب منفصل لكل مشروع."))}</p>`;
+  if (!cat.length) {
+    view.innerHTML = tabs + `<div class="card">${intro}<p>${esc(L2("No cost items yet.", "لا توجد بنود تكلفة بعد."))}</p>${canEdit ? `<button class="btn pri" data-a="cistd">${esc(L2("Start with the standard building trades", "ابدأ ببنود أعمال البناء القياسية"))}</button>` : ""}</div>`;
+    S.H.cistd = async () => { await api("POST", "/api/cost-items/standard", {}); route(); };
+    return;
+  }
+  if (tab === "catalogue") {
+    view.innerHTML = tabs + `<div class="card">${intro}<div class="tbl"><table><thead><tr><th>${esc(L2("Code", "الكود"))}</th><th>${esc(L2("Name", "الاسم"))}</th><th>${esc(L2("Arabic name", "الاسم بالعربية"))}</th><th>${esc(L2("Unit", "الوحدة"))}</th><th>${esc(L2("Words in descriptions", "كلمات في البيان"))}</th><th></th></tr></thead><tbody>` +
+      cat.map(c => `<tr${c.active ? "" : ' class="muted"'}><td>${esc(c.code)}</td><td style="padding-inline-start:${(c.code.split(".").length - 1) * 14 + 6}px">${esc(c.name)}</td><td>${esc(c.name_ar)}</td><td>${esc(c.unit)}</td><td class="muted" style="font-size:.85em">${esc(c.keywords)}</td>` +
+        `<td>${canEdit ? `<button class="btn sm" data-a="ciedit" data-c="${esc(c.code)}">${t("edit")}</button>` : ""}</td></tr>`).join("") + `</tbody></table></div>` +
+      (canEdit ? `<div class="toolbar"><button class="btn pri" data-a="ciedit">${esc(L2("Add an item", "إضافة بند"))}</button><button class="btn" data-a="cistd">${esc(L2("Add the standard trades", "إضافة البنود القياسية"))}</button></div>` : "") + `</div>`;
+    S.H.cistd = async () => { const r = await api("POST", "/api/cost-items/standard", {}); toast(L2(`${r.added} added`, `أضيف ${r.added}`)); route(); };
+    S.H.ciedit = el => {
+      const c = cat.find(x => x.code === el.dataset.c) || { code: "", name: "", name_ar: "", unit: "", keywords: "", active: 1 };
+      drawer(c.code ? `${c.code} ${nm(c)}` : L2("New cost item", "بند تكلفة جديد"), form([
+        { k: "code", l: L2("Code (01 = a trade, 01.02 = an item under it)", "الكود (01 = بند رئيسي، 01.02 = بند تحته)"), v: c.code, req: true },
+        { k: "unit", l: L2("Unit", "الوحدة"), v: c.unit }, { k: "name", l: L2("Name", "الاسم"), v: c.name }, { k: "name_ar", l: L2("Arabic name", "الاسم بالعربية"), v: c.name_ar },
+        { k: "keywords", l: L2("Words that recognise it in a description", "كلمات تدل عليه في البيان"), v: c.keywords, type: "textarea", span: "span2" },
+        { k: "active", l: L2("Active", "نشط"), v: !!c.active, type: "checkbox" }]),
+        async v => { await api("POST", "/api/cost-items", { ...v, active: v.active ? 1 : 0, old_code: c.code || null }); toast(t("saved")); },
+        { extraButtons: c.code ? `<button class="btn danger" type="button" data-a="cidel">${t("delete")}</button>` : "" });
+      S.H.cidel = async () => { try { await api("DELETE", "/api/cost-items/" + encodeURIComponent(c.code)); closeDrawer(); route(); } catch (e) { toast(e.message, true); } };
+    };
+    return;
+  }
+  const bus = buOpts(L2("All projects", "كل المشروعات"));
+  const pick = `<label>${esc(L2("Project", "المشروع"))} <select data-change="cibu">${bus.map(([v, l]) => `<option value="${esc(v)}"${String(v) === String(q.bu_id || "") ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+  S.H.cibu = el => setQ({ ...q, bu_id: el.value });
+  if (tab === "tag") {
+    const d = await api("GET", "/api/cost-items/suggest?" + qs({ bu: q.bu_id || "", limit: 300 }));
+    view.innerHTML = tabs + `<div class="card"><p class="muted">${esc(L2("Cost lines without an item, with the item their description points to. Check the suggestion, change it if needed, then apply.",
+      "سطور تكلفة بدون بند، مع البند الذي يدل عليه بيانها. راجع الاقتراح وعدّله إن لزم ثم اعتمد."))}</p><div class="toolbar">${pick}<span style="flex:1"></span>
+      ${canEdit ? `<button class="btn pri" data-a="ciapply">${esc(L2("Apply the checked lines", "اعتماد السطور المحددة"))}</button>` : ""}</div>
+      <div class="tbl"><table><thead><tr><th><input type="checkbox" data-change="ciall" checked></th><th>${t("date")}</th><th>${esc(L2("Description", "البيان"))}</th><th class="num">${esc(L2("Amount", "المبلغ"))}</th><th>${esc(L2("Cost item", "بند التكلفة"))}</th></tr></thead><tbody>` +
+      (d.rows.map(r => `<tr><td><input type="checkbox" class="cichk" data-l="${r.line_id}"${r.suggested ? " checked" : ""}></td><td>${fd(r.date)}</td><td>${esc(r.memo)}</td><td class="num">${money(r.amount)}</td><td><select class="cisel" data-l="${r.line_id}">${itemOpts(r.suggested)}</select></td></tr>`).join("")
+        || `<tr><td colspan="5" class="muted">${esc(L2("Every cost line has its item.", "كل سطور التكلفة لها بنود."))}</td></tr>`) + `</tbody></table></div></div>`;
+    S.H.ciall = el => document.querySelectorAll(".cichk").forEach(x => { x.checked = el.checked; });
+    S.H.ciapply = async () => {
+      const lines = [...document.querySelectorAll(".cichk")].filter(x => x.checked).map(x => ({ line_id: +x.dataset.l, item: document.querySelector(`.cisel[data-l="${x.dataset.l}"]`).value })).filter(x => x.item);
+      if (!lines.length) return toast(L2("Nothing checked", "لم يتم تحديد شيء"));
+      const r = await api("POST", "/api/cost-items/tag", { lines }); toast(L2(`${r.tagged} lines tagged`, `تم تصنيف ${r.tagged} سطر`)); route();
+    };
+    return;
+  }
+  const r = await api("GET", "/api/cost-items/report?" + qs({ bu: q.bu_id || "", from: q.date_from || "", to: q.date_to || "" }));
+  const pct = v => v === null || v === undefined ? "" : `${numf(v)} %`;
+  view.innerHTML = tabs + `<div class="card"><div class="toolbar">${pick}</div>
+    <div class="kpis" style="margin:8px 0 14px"><div class="kpi"><div class="l">${esc(L2("Costs", "التكاليف"))}</div><div class="v">${money(r.total)}</div></div>
+      <div class="kpi"><div class="l">${esc(L2("Budget", "الموازنة"))}</div><div class="v">${money(r.budget)}</div></div>
+      <div class="kpi"><div class="l">${esc(L2("Tagged with an item", "مصنفة على بنود"))}</div><div class="v">${pct(r.tagged_pct)}</div>${r.untagged ? `<div class="muted" style="font-size:.8em"><a href="#/costitems?${qs({ ...q, tab: "tag" })}">${esc(L2("Not tagged: ", "غير مصنف: "))}${money(r.untagged)}</a></div>` : ""}</div></div>
+    <div class="tbl"><table><thead><tr><th>${esc(L2("Item", "البند"))}</th><th class="num">${esc(L2("Budget", "الموازنة"))}</th><th class="num">${esc(L2("Actual", "الفعلي"))}</th><th class="num">${esc(L2("Left", "المتبقي"))}</th><th class="num">${esc(L2("Used", "المستخدم"))}</th>${canEdit && q.bu_id ? "<th></th>" : ""}</tr></thead><tbody>` +
+    r.rows.map(x => `<tr${x.level ? "" : ' style="font-weight:600"'}><td style="padding-inline-start:${x.level * 14 + 6}px">${esc(x.code)} ${esc(x.name)}</td><td class="num">${x.budget ? money(x.budget) : ""}</td><td class="num">${money(x.actual)}</td>` +
+      `<td class="num"${x.left !== null && x.left < 0 ? ' style="color:var(--bad)"' : ""}>${x.left === null ? "" : money(x.left)}</td><td class="num">${pct(x.used_pct)}</td>` +
+      (canEdit && q.bu_id ? `<td><button class="btn sm" data-a="cibud" data-c="${esc(x.code)}" data-b="${x.budget || ""}">${esc(L2("Budget", "الموازنة"))}</button></td>` : "") + `</tr>`).join("") +
+    `</tbody></table></div>${canEdit && q.bu_id ? `<div class="toolbar"><button class="btn" data-a="cibud">${esc(L2("Set a budget for an item", "تحديد موازنة لبند"))}</button></div>` : ""}</div>`;
+  S.H.cibud = el => drawer(L2("Budget", "الموازنة"), form([
+    { k: "item", l: L2("Cost item", "بند التكلفة"), type: "select", v: el.dataset.c || "", opts: cat.filter(c => c.active).map(c => [c.code, `${c.code} ${nm(c)}`]), req: true },
+    { k: "amount", l: L2("Budget", "الموازنة"), type: "number", v: el.dataset.b || "" }, { k: "qty", l: L2("Quantity (optional)", "الكمية (اختياري)"), type: "number" }]),
+    async v => { await api("PUT", "/api/cost-items/budget", { ...v, bu: q.bu_id }); });
+};
 PAGES.report = async (view, parts, q) => {
   const name = parts[1];
   const f = { income_statement: ["dates", "compare", "bu", "detail", "allocate", "lang"], balance_sheet: ["asof", "compare", "bu", "lang"],

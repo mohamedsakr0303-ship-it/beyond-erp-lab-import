@@ -99,4 +99,8 @@ NOTES_AR = {
     "e.g. PO-0101": "مثال: PO-0101",
     "cost needs a business unit; stock a warehouse": "التكلفة تحتاج وحدة عمل؛ والمخزون يحتاج مخزناً",
     "e.g. CC-0001 / SC-0001": "مثال: CC-0001 / SC-0001",
+    "The line's own description; blank = the voucher's": "بيان السطر نفسه؛ فارغ = بيان القيد",
+    "Cost lines: the work item (code from 'Cost Items'), e.g. 03.01": "سطور التكلفة: بند الأعمال (كود من «بنود التكلفة»)، مثال: 03.01",
+    "words that recognise this item in a description (to suggest it); separated by spaces":
+        "كلمات تدل على هذا البند في البيان (لاقتراحه)؛ مفصولة بمسافات",
 }

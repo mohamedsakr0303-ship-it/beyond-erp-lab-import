@@ -115,6 +115,19 @@ SHEETS = [
               C("role", "System Role", "الدور في النظام", width=18),
               C("name_ar", "Arabic Name", "الاسم بالعربية", width=34),
               C("active", "Active", "نشط", width=7, choices=["Yes", "No"])]},
+    {"name": "Cost Items", "ar": "بنود التكلفة", "module": "business_units",
+     "title": "Cost items: one catalogue of work items for every project (01 = a trade, 01.02 = an item under it). "
+              "Cost lines are tagged with them; budgets are per project and item",
+     "cols": [C("code", "Code", "الكود", width=10, required=True), C("name", "Name", "الاسم", width=30, required=True),
+              C("name_ar", "Arabic Name", "الاسم بالعربية", width=30), C("unit", "Unit", "الوحدة", width=8),
+              C("keywords", "Words in Descriptions", "كلمات في البيان", width=36,
+                note="words that recognise this item in a description (to suggest it); separated by spaces"),
+              C("active", "Active", "نشط", width=7, choices=["Yes", "No"])]},
+    {"name": "Cost Budgets", "ar": "موازنات بنود التكلفة", "module": "business_units",
+     "title": "What each project expects to spend on each cost item",
+     "cols": [C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu", required=True),
+              C("item", "Cost Item", "بند التكلفة", width=10, required=True),
+              C("amount", "Budget", "الموازنة", kind="money"), C("qty", "Quantity", "الكمية", kind="num")]},
     {"name": "Tax Codes", "ar": "أكواد الضرائب", "module": "tax",
      "title": "VAT and withholding-tax codes with their e-invoice (ETA) tax type / sub-type. Rates are editable",
      "cols": [C("code", "Code", "الكود", width=12, required=True), C("name", "Name", "الاسم", width=30, required=True),
@@ -585,6 +598,8 @@ SHEETS = [
               C("debit", "Debit", "مدين", kind="money"), C("credit", "Credit", "دائن", kind="money"),
               C("line_party", "Line Party", "طرف السطر", width=14,
                 note="Only when a line belongs to someone other than the voucher's party (e.g. each partner in a share transfer)"),
+              C("line_memo", "Line Description", "بيان السطر", width=26, note="The line's own description; blank = the voucher's"),
+              C("cost_item", "Cost Item", "بند التكلفة", width=10, note="Cost lines: the work item (code from 'Cost Items'), e.g. 03.01"),
               C("item", "Item", "الصنف", width=18,
                 note="Item line: the item or material (debit = qty × unit price, made by the app). Leave empty on normal lines"),
               C("item_unit", "Item Unit", "وحدة الصنف", width=8), C("item_qty", "Item Qty", "كمية الصنف", kind="num"),
@@ -646,6 +661,11 @@ def export_data(db):
     _site_sheets(db, out)
     from . import budgets   # budgets carry no money, so the export can include them (re-import replaces, never doubles)
     out["Budgets"] = budgets.export_rows(db)
+    from . import costitems
+    for c in costitems.items(db):
+        out["Cost Items"].append({k: c[k] for k in ("code", "name", "name_ar", "unit", "keywords")} | {"active": "Yes" if c["active"] else "No"})
+    for b in db.q("SELECT c.*, b.code AS bu_code FROM cost_budgets c JOIN business_units b ON b.id=c.bu_id ORDER BY b.code, c.item"):
+        out["Cost Budgets"].append({"bu_code": b["bu_code"], "item": b["item"], "amount": to_major(b["amount"]), "qty": b["qty"] or ""})
     for t in db.q("SELECT * FROM tax_codes ORDER BY kind, code"):
         out["Tax Codes"].append({k: t[k] for k in ("code", "name", "name_ar", "kind", "rate", "eta_type", "eta_subtype")}
                                 | {"active": "Yes" if t["active"] else "No"})
@@ -841,7 +861,8 @@ def export_data(db):
                                                 "bu_code": e["bu_code"] or "", "party": e["party"], "ref": e["ref"],
                                                 "memo": e["memo"], "account": ln["account"],
                                                 "debit": ln["debit"] or "", "credit": ln["credit"] or "",
-                                                "line_party": ln.get("party", ""), **_alloc_cols(e)})
+                                                "line_party": ln.get("party", ""), "line_memo": ln.get("memo", ""),
+                                                "cost_item": ln.get("cost_item", ""), **_alloc_cols(e)})
     return out
 
 
@@ -1900,7 +1921,7 @@ def to_csv(db, sheet_name, template=False, lang=None):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", "hr_requests", "presence", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
+WIPE_ORDER = ("cost_budgets", "cost_items", "year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", "hr_requests", "presence", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "einv_received", "einv_templates", "stock_alert_log", "stock_minimums", "stock_recosts", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
@@ -1911,7 +1932,8 @@ WIPE_ORDER = ("year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", 
 # key is there (so changes made in the app are never overwritten); several rows sharing a key (an invoice and its
 # lines, an order and its items) come in or stay out together. Other sheets compare the whole row.
 ONLY_NEW_KEYS = {
-    "Chart of Accounts": ("code",), "Tax Codes": ("code",), "Business Units": ("code",), "Parties": ("name",), "Partners": ("name",),
+    "Chart of Accounts": ("code",), "Tax Codes": ("code",), "Business Units": ("code",), "Cost Items": ("code",),
+    "Cost Budgets": ("bu_code", "item"), "Parties": ("name",), "Partners": ("name",),
     "Fixed Assets": ("code",), "E-Invoice Templates": ("code",), "E-Invoices Received": ("uuid",), "Warehouses": ("name",), "Stock Items": ("name",), "Products": ("code",), "Employees": ("code",),
     "Loans": ("code",), "Cash Custody": ("code",), "Rental Equipment": ("code",), "Rental Contracts": ("ref",), "Sales Contracts": ("code",),
     "Service Plans": ("code",), "Service Subscriptions": ("code",), "Purchase Orders": ("code",), "Contracts": ("code",),
@@ -2125,6 +2147,9 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
             run("Chart of Accounts", lambda r: _imp_account(db, r))
             run("Tax Codes", lambda r: _imp_tax_code(db, r))
             run("Business Units", lambda r: _imp_bu(db, r))
+            from . import costitems
+            run("Cost Items", lambda r: costitems.save(db, {**r, "active": 0 if str(r.get("active") or "").lower() in ("no", "0", "false") else 1}))
+            run("Cost Budgets", lambda r: costitems.save_budget(db, r.get("bu_code"), r.get("item"), r.get("amount"), r.get("qty")))
             run("Parties", lambda r: _imp_party(db, r))
             run("Partners", lambda r: _imp_partner(db, r))
             run("Partner Shares", lambda r: _imp_share(db, r))
@@ -2631,6 +2656,7 @@ def _imp_journal(db, rows, errors, counts, user):
                                               for _, r in items if acc.text(r.get("item"))],
                                     # a later row naming another party than the voucher's: that line is that party's
                                     "lines": [{"account": r.get("account"), "debit": r.get("debit"), "credit": r.get("credit"),
+                                               "memo": r.get("line_memo"), "cost_item": r.get("cost_item"),
                                                "party": r.get("line_party") or (r.get("party") if acc.text(r.get("party")) not in
                                                                                 ("", acc.text(first.get("party"))) else None)}
                                               for _, r in items if not acc.text(r.get("item"))]}, user)

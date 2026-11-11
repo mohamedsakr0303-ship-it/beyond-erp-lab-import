@@ -4281,6 +4281,63 @@ def _u(ctx):
     return ctx.user["username"]
 
 
+# ---------------------------------------------------------------- cost items (بنود التكلفة)
+@route("GET", "/api/cost-items", "projects.overview")
+def ci_list(ctx):
+    from . import costitems
+    return ok({"rows": costitems.items(ctx.db)})
+
+
+@route("POST", "/api/cost-items", "projects.overview", "edit")
+def ci_save(ctx):
+    from . import costitems
+    code = costitems.save(ctx.db, ctx.body, ctx.body.get("old_code") or None)
+    ctx.log("cost_item.save", code)
+    return ok({"code": code})
+
+
+@route("DELETE", "/api/cost-items/<code>", "projects.overview", "edit")
+def ci_del(ctx, code):
+    from . import costitems
+    costitems.delete(ctx.db, code)
+    ctx.log("cost_item.delete", code)
+    return ok({})
+
+
+@route("POST", "/api/cost-items/standard", "projects.overview", "edit")
+def ci_standard(ctx):
+    from . import costitems
+    return ok({"added": costitems.load_standard(ctx.db)})
+
+
+@route("GET", "/api/cost-items/report", "projects.overview")
+def ci_report(ctx):
+    from . import costitems
+    return ok(costitems.report(ctx.db, ctx.q.get("bu") or None, ctx.q.get("from") or None, ctx.q.get("to") or None,
+                               lang="ar" if ctx.lang == "ar" else "en"))
+
+
+@route("GET", "/api/cost-items/suggest", "projects.overview")
+def ci_suggest(ctx):
+    from . import costitems
+    return ok({"rows": costitems.suggest(ctx.db, ctx.q.get("bu") or None, int(ctx.q.get("limit") or 300))})
+
+
+@route("POST", "/api/cost-items/tag", "projects.overview", "edit")
+def ci_tag(ctx):
+    from . import costitems
+    n = costitems.tag_lines(ctx.db, ctx.body.get("lines") or [])
+    ctx.log("cost_item.tag", str(n))
+    return ok({"tagged": n})
+
+
+@route("PUT", "/api/cost-items/budget", "projects.overview", "edit")
+def ci_budget(ctx):
+    from . import costitems
+    costitems.save_budget(ctx.db, ctx.body.get("bu"), ctx.body.get("item"), ctx.body.get("amount"), ctx.body.get("qty"))
+    return ok({})
+
+
 @route("GET", "/api/projects", "projects.overview")
 def prj_overview(ctx):
     from . import projects

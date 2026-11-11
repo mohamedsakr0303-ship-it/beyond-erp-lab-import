@@ -100,6 +100,17 @@ def guard(db, sc, method, path, q, body):
                 q["bu_id"] = str(sc.first())
             else:
                 raise ValidationError("Choose one of your permitted projects for this report.")
+    # cost items: the report and the suggestions are per project; tagging only lines of their projects
+    if path in ("/api/cost-items/report", "/api/cost-items/suggest") and not q.get("bu"):
+        if len(sc.ids) == 1:
+            q["bu"] = str(sc.first())
+        else:
+            raise ValidationError("Choose one of your permitted projects.")
+    if path == "/api/cost-items/tag" and method == "POST":
+        for x in (body or {}).get("lines") or []:
+            r = db.one("SELECT e.bu_id FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id WHERE l.id=?", (int(x.get("line_id") or 0),))
+            if r and not sc.ok(r["bu_id"]):
+                _deny("This is not on one of your projects")
     # the dashboard, its cards and insights: figures of their project only
     if path in ("/api/dashboard", "/api/dashboard/view", "/api/insights") and not q.get("bu_id") and sc.ids:
         q["bu_id"] = str(sc.first())

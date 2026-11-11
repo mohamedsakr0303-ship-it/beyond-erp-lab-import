@@ -164,6 +164,8 @@ def _validate_lines(db, lines):
     funder = {}
     out, dr, cr = [], 0, 0
     touched = set()
+    extra = []
+    known_items = None
     for ln in lines:
         acc = text(ln.get("account"))
         if not acc:
@@ -184,7 +186,14 @@ def _validate_lines(db, lines):
             if acc not in funder:
                 funder[acc] = name_for_account(db, acc)
             party = funder[acc]
+        item = text(ln.get("cost_item"), maxlen=40)
+        if item:
+            if known_items is None:
+                known_items = {r["code"] for r in db.q("SELECT code FROM cost_items")}
+            if item not in known_items:
+                raise ValidationError(f"Unknown cost item {item}. Add it under Cost items first.")
         out.append((acc, d, c, party))
+        extra.append((text(ln.get("memo") or ln.get("line_memo"), maxlen=500), item))
         touched.add((acc, party))
         dr += d
         cr += c
@@ -194,7 +203,20 @@ def _validate_lines(db, lines):
         raise ValidationError("Debit and credit are on the same account. Choose the source and destination accounts.")
     if dr != cr:
         raise ValidationError(f"Debits ({to_major(dr):,.2f}) must equal credits ({to_major(cr):,.2f})")
-    return out
+    return _Lines(out, extra)
+
+
+class _Lines(list):
+    """Validated lines (account, debit, credit, party), with each line's description and cost item alongside."""
+    def __init__(self, rows, extra):
+        super().__init__(rows)
+        self.extra = extra
+
+
+def _insert_lines(db, eid, vlines):
+    extra = getattr(vlines, "extra", None) or [("", "")] * len(vlines)
+    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party,memo,cost_item) VALUES (?,?,?,?,?,?,?)",
+                        [(eid, a, d, c, p, m, it) for (a, d, c, p), (m, it) in zip(vlines, extra)])
 
 
 def check_open(db, date):
@@ -228,8 +250,7 @@ def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", line
                                        json.dumps(meta or {}, ensure_ascii=False),
                                        json.dumps(e["history"] + [snap], ensure_ascii=False), eid))
         db.conn.execute("DELETE FROM journal_lines WHERE entry_id=?", (eid,))
-        db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party) VALUES (?,?,?,?,?)",
-                            [(eid, a, d, c, p) for a, d, c, p in vlines])
+        _insert_lines(db, eid, vlines)
         _wip_after(db, kind, bu_id, e.get("bu_id"))
         return eid
     cur = db.conn.execute(
@@ -238,8 +259,7 @@ def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", line
         (clean_date(date), kind, text(memo, maxlen=1000), bu_id, text(party), text(ref),
          json.dumps(meta or {}, ensure_ascii=False), reversal_of, user or "", now_iso().replace("T", " ")))
     eid = cur.lastrowid
-    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party) VALUES (?,?,?,?,?)",
-                        [(eid, a, d, c, p) for a, d, c, p in vlines])
+    _insert_lines(db, eid, vlines)
     _wip_after(db, kind, bu_id)
     return eid
 
@@ -289,7 +309,8 @@ def get_entry(db, eid):
     e["meta"] = json.loads(e["meta"] or "{}")
     e["history"] = json.loads(e["history"] or "[]")
     e["lines"] = [{"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
-                   "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {})}
+                   "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {}),
+                   **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {})}
                   for r in db.q("SELECT l.*, a.name, a.name_ar FROM journal_lines l JOIN accounts a ON a.code=l.account "
                                 "WHERE entry_id=? ORDER BY l.id", (eid,))]
     e["amount"] = round(sum(ln["debit"] for ln in e["lines"]), 2)
@@ -789,8 +810,7 @@ def edit_entry(db, eid, d, user=""):
                          text(d.get("ref", e["ref"])), json.dumps(meta, ensure_ascii=False),
                          json.dumps(e["history"] + [snap], ensure_ascii=False), eid))
         db.conn.execute("DELETE FROM journal_lines WHERE entry_id=?", (eid,))
-        db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party) VALUES (?,?,?,?,?)",
-                            [(eid, a, dd, c, p) for a, dd, c, p in vlines])
+        _insert_lines(db, eid, vlines)
         # work in progress follows the corrected entry (both the old and the new business unit)
         new_bu = bu_id_or_none(db, d.get("bu_id", e["bu_id"]))
         for bu in {e["bu_id"], new_bu}:
