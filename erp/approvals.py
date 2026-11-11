@@ -29,12 +29,16 @@ def needs_approval(db, user):
 
 def check(db, run):
     """Run the posting inside a transaction that is always rolled back — only to surface errors now."""
+    from .accounting import POSTING_HELD
+    held = POSTING_HELD.set(False)      # a trial posting, always rolled back: allowed for the person who waits for approval
     try:
         with db.tx():
             run()
             raise _DryRun()
     except _DryRun:
         pass
+    finally:
+        POSTING_HELD.reset(held)
 
 
 def _summary(body):

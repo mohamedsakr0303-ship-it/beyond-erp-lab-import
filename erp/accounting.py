@@ -230,9 +230,33 @@ def check_open(db, date):
 _REPLACE = {"eid": None}
 
 
+# Set by the server for a request of someone whose work waits for approval: nothing of theirs reaches the books
+# directly, whatever screen it comes from (the system's own bookkeeping, such as work in progress, still runs).
+import contextvars as _cv
+POSTING_HELD = _cv.ContextVar("posting_held", default=False)
+# Going over a limit (a contract, a bill of quantities, a purchase request): asked once, done when confirmed
+OVER_OK = _cv.ContextVar("over_ok", default=False)
+
+
+class NeedsConfirm(ValidationError):
+    """Allowed, but only once the person confirms (the screen asks and sends it again with confirm_over)."""
+
+
+def over_limit(msg):
+    from .db import CLOCK
+    if OVER_OK.get() or CLOCK["at"] is not None:      # confirmed, or a change replayed from the shared log
+        return
+    raise NeedsConfirm(msg)
+
+
 def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", lines, meta=None,
                   reversal_of=None, user=""):
     """Insert a balanced entry. Caller must hold a transaction (db.tx())."""
+    if POSTING_HELD.get() and user != "system":
+        from .textl10n import Note
+        raise PermissionError(Note("Your entries need approval before they reach the books. Save it as a draft or voucher for approval, "
+                                   "or ask someone with posting rights to post it.",
+                                   "قيودك تحتاج إلى اعتماد قبل ترحيلها. احفظها كمسودة أو كقيد للاعتماد، أو اطلب من شخص لديه صلاحية الترحيل ترحيلها."))
     cu, _CU_PAY["c"] = _CU_PAY["c"], None
     if cu and not str(ref or "").startswith("CU:") and any(text(l.get("account")) == cu["account"] for l in lines):
         # paid from (or into) a custody: the holder's line, and the entry belongs on that custody's statement
@@ -705,6 +729,17 @@ def _undo_recosts(db, eid, user="", reverse_on=None):
             db.conn.execute("UPDATE journal_entries SET status='void', meta=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), r["entry_id"]))
 
 
+def _owned_guard(db, eid):
+    """An entry another document made (a purchase receipt, a subcontractor certificate, a crew sheet) is changed from
+    that document, so the two never disagree; voiding it releases the document instead."""
+    from .textl10n import Note
+    for table, en, ar in (("po_receipts", "a purchase order's receipt", "استلام أمر شراء"),
+                          ("sub_certificates", "a subcontractor certificate", "مستخلص مقاول باطن"), ("crew_sheets", "a crew sheet", "يومية عمال")):
+        if db.one(f"SELECT 1 FROM {table} WHERE entry_id=? LIMIT 1", (eid,)):
+            raise ValidationError(Note(f"This entry was made by {en}. Change it there, or void this entry and record it again.",
+                                       f"هذا القيد ناتج عن {ar}. عدّله من هناك، أو ألغِ هذا القيد وسجّله من جديد."))
+
+
 def _unlink_documents(db, eid, user=""):
     from . import equity, stockcost
     equity.undo_change(db, entry_id=eid)  # an ownership change booked by this entry goes with it
@@ -715,6 +750,13 @@ def _unlink_documents(db, eid, user=""):
     db.conn.execute("UPDATE equipment_usage SET entry_id=NULL WHERE entry_id=?", (eid,))
     db.conn.execute("UPDATE maintenance_logs SET entry_id=NULL WHERE entry_id=?", (eid,))
     db.conn.execute("DELETE FROM sub_recognitions WHERE entry_id=?", (eid,))
+    m = json.loads((db.one("SELECT meta FROM journal_entries WHERE id=?", (eid,)) or {}).get("meta") or "{}")
+    if m.get("bill") and m.get("bill_period"):          # a bill's payment undone: that period is due again
+        others = db.one("SELECT 1 FROM journal_entries WHERE id<>? AND status='posted' AND reversed_by IS NULL "
+                        "AND json_extract(meta,'$.bill')=? AND json_extract(meta,'$.bill_period')=?",
+                        (eid, m["bill"], m["bill_period"]))
+        if not others:
+            db.conn.execute("UPDATE cost_subs SET next_due=? WHERE id=? AND next_due>?", (m["bill_period"], m["bill"], m["bill_period"]))
     pos = [r["po_id"] for r in db.q("SELECT DISTINCT po_id FROM po_receipts WHERE entry_id=?", (eid,))]
     if pos:
         from . import purchasing
@@ -796,6 +838,7 @@ def edit_entry(db, eid, d, user=""):
         if db.one("SELECT 1 FROM stock_moves WHERE entry_id=?", (eid,)) or db.one("SELECT 1 FROM material_lines WHERE entry_id=?", (eid,)) or \
                 db.one("SELECT 1 FROM extracts WHERE entry_id=?", (eid,)):
             raise ValidationError("This entry belongs to a stock movement or invoice. Reverse it and re-enter.")
+        _owned_guard(db, eid)
         vlines = _validate_lines(db, d.get("lines") or e["lines"])
         snap = {k: e[k] for k in ("date", "memo", "bu_code", "party", "lines")}
         snap.update(ref=e["ref"], edited_at=now_iso(), edited_by=user)
@@ -1350,6 +1393,8 @@ def save_extract(db, d, extract_id=None):
             r = db.one("SELECT COALESCE(MAX(seq_no),0) AS n, COUNT(*) AS c FROM extracts WHERE bu_id=?", (bu,))
             seq_no = max(r["n"] or 0, r["c"] or 0) + 1
         doc_type, ref_id, reason = _note_fields(db, d, extract_id)
+        if ref_id:      # a credit / debit note belongs to its invoice's business unit (its revenue and receivable)
+            bu = db.one("SELECT bu_id FROM extracts WHERE id=?", (int(ref_id),))["bu_id"] or bu
         vals = (bu, boq_id, number, clean_date(d.get("date")), text(d.get("customer")), vat_code, wht_code,
                 text(d.get("project")), text(d.get("work")), seq_no, prev, to_minor(num(d.get("deductions") or 0, "deductions")),
                 text(d.get("notes"), maxlen=2000), 1 if d.get("final") in (1, True, "1", "true", "yes", "Yes") else 0,
@@ -1481,6 +1526,13 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
         raise ValidationError("Already invoiced")
     if x["total"] <= 0:
         raise ValidationError("The progress bill total must be greater than zero")
+    over = [ln for ln in x["lines"] if ln.get("contract_qty") and ln["qty"] > 0
+            and ln["billed_before"] + ln["qty"] > ln["contract_qty"] + 1e-9]
+    if over:          # billing past the bill of quantities: allowed for variations, but only when confirmed
+        ln = over[0]
+        over_limit(f"{ln['item_no'] or ln['description']}: {ln['billed_before'] + ln['qty']:,.2f} billed in all, more than the "
+                   f"{ln['contract_qty']:,.2f} in the bill of quantities" + (f" (and {len(over) - 1} more line(s))" if len(over) > 1 else "")
+                   + ". Save only if a variation covers it.")
     ar = account_code(db, ar_account or db.acct("ar"), types=("Asset",))
     rev = account_code(db, revenue_account or db.acct("revenue"), types=("Revenue",))
     if (x.get("doc_type") or "I") == "C":
@@ -2104,6 +2156,7 @@ def replace_doc(db, eid, fn, d, user="", **kw):
         if db.one("SELECT 1 FROM stock_moves WHERE entry_id=?", (eid,)) or \
                 db.one("SELECT 1 FROM extracts WHERE entry_id=?", (eid,)):
             raise ValidationError("This entry belongs to a stock movement or invoice. Reverse it and re-enter.")
+        _owned_guard(db, eid)
         _REPLACE["eid"] = eid
         try:
             out = fn(db, d, user, **kw)
@@ -2482,6 +2535,17 @@ _CATEGORY_TYPE = {"customer": "customer", "employee": "employee", "driver": "sup
                   "consultant": "supplier"}
 
 
+PARTY_NAME_COLUMNS = ("party", "customer", "supplier", "vendor", "client")
+
+
+def rename_party_everywhere(db, old, new):
+    """A contact's new name in every table that stores it by name (journal lines included), in one go."""
+    for (t,) in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
+        for c in db.conn.execute(f"PRAGMA table_info({t})").fetchall():
+            if c[1] in PARTY_NAME_COLUMNS:
+                db.conn.execute(f"UPDATE {t} SET {c[1]}=? WHERE {c[1]}=?", (new, old))
+
+
 def save_party(db, d, party_id=None):
     v = {k: text(d.get(k), maxlen=2000 if k in ("notes", "bank_details") else 300) for k in PARTY_FIELDS}
     if not v["name"]:
@@ -2508,9 +2572,8 @@ def save_party(db, d, party_id=None):
                 raise ValidationError("Party not found")
             db.conn.execute(f"UPDATE parties SET {','.join(k + '=?' for k in PARTY_FIELDS)} WHERE id=?",
                             tuple(v[k] for k in PARTY_FIELDS) + (int(party_id),))
-            if old["name"] != v["name"]:  # keep vouchers linked to the renamed party
-                db.conn.execute("UPDATE journal_entries SET party=? WHERE party=?", (v["name"], old["name"]))
-                db.conn.execute("UPDATE extracts SET customer=? WHERE customer=?", (v["name"], old["name"]))
+            if old["name"] != v["name"]:  # everything that names the party follows it (its statements, contracts, orders…)
+                rename_party_everywhere(db, old["name"], v["name"])
             return int(party_id)
         if dup:
             raise ValidationError("A party with this name already exists")

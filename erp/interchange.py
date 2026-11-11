@@ -2098,6 +2098,15 @@ def _choice_words_to_codes(data):
 
 
 def import_data(db, data, mode="append", dry_run=False, user=""):
+    """Import sheets (history from a file: going over a contract or a request is not asked about)."""
+    tok = acc.OVER_OK.set(True)
+    try:
+        return _import_data(db, data, mode, dry_run, user)
+    finally:
+        acc.OVER_OK.reset(tok)
+
+
+def _import_data(db, data, mode="append", dry_run=False, user=""):
     """Import sheets. All-or-nothing: any row error rolls everything back and is reported.
     mode "new": only rows that are not in the books yet (see only_new), then as "append"."""
     if mode not in ("append", "replace", "new"):

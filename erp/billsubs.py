@@ -140,6 +140,8 @@ def pay(db, sid, d, user=""):
     amount = to_minor(acc.num(d.get("amount") if d.get("amount") not in (None, "") else to_major(s["amount"]), "amount", allow_zero=False))
     date = acc.clean_date(d.get("date") or acc.today())
     period = s["next_due"]
+    if period and period > acc.today() and s["last_paid"]:
+        acc.over_limit(f"{s['name']}: the next payment is not due until {period} (last paid {s['last_paid']}). Pay it in advance?")
     memo = f"{s['name']}" + (f" — {s['plan']}" if s["plan"] else "") + f" ({CYCLE_LABEL[s['cycle']][0]} due {period})"
     parts = []
     if s["alloc"] == "split":

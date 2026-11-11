@@ -2082,6 +2082,9 @@ def boq_edit(ctx, bid):
 
 @route("DELETE", "/api/boqs/<bid>", "estimating.boqs", "edit")
 def boq_del(ctx, bid):
+    x = ctx.db.one("SELECT number FROM extracts WHERE boq_id=? AND status='posted' LIMIT 1", (int(bid),))
+    if x:   # its invoices measure against it (billed to date); deleting it would lose that history
+        raise acc.ValidationError(f"Invoice {x['number']} is billed against this BOQ, so it cannot be deleted.")
     ctx.db.x("DELETE FROM boqs WHERE id=?", (int(bid),))
     return ok()
 
@@ -2116,6 +2119,23 @@ def rental_next_extract(ctx, rid):
     return ok({"id": xid})
 
 
+def _invoice_owner(ctx, xid):
+    """An invoice made by another document (a sale, a rental, a subscription, a visit) is changed from there; one with
+    posted credit / debit notes is corrected by another note. None when the Invoices screen may change it."""
+    x = int(xid)
+    for table, what in (("sales_orders", ("the sale", "عملية البيع")), ("rental_invoices", ("the rental contract", "عقد الإيجار")),
+                        ("sub_invoices", ("the subscription", "الاشتراك")), ("sub_visits", ("the service visit", "زيارة الخدمة"))):
+        if ctx.db.one(f"SELECT 1 FROM {table} WHERE extract_id=? LIMIT 1", (x,)):
+            from .textl10n import Note
+            return Note(f"This invoice belongs to {what[0]}. Change or cancel it from there.",
+                        f"هذه الفاتورة تابعة لـ{what[1]}. عدّلها أو ألغها من هناك.")
+    if ctx.db.one("SELECT 1 FROM extracts WHERE ref_id=? AND status='posted' LIMIT 1", (x,)):
+        from .textl10n import Note
+        return Note("Credit or debit notes are posted against this invoice. Correct it with another note.",
+                    "توجد إشعارات خصم أو إضافة مرحّلة على هذه الفاتورة. صححها بإشعار آخر.")
+    return None
+
+
 @route("POST", "/api/extracts/<xid>/reopen")
 def extract_reopen(ctx, xid):
     """Adjust an issued invoice / extract: its invoice entry is voided (kept in the audit trail) and it becomes a draft
@@ -2128,6 +2148,9 @@ def extract_reopen(ctx, xid):
     st = str(x.get("eta_status") or "").lower()
     if x.get("eta_uuid") and st and not any(w in st for w in ("cancel", "reject", "invalid")):
         raise acc.ValidationError((f"This invoice was submitted to the tax authority (e-invoice status: {x['eta_status']}). Cancel the e-invoice first, then reopen it."))
+    why = _invoice_owner(ctx, xid)
+    if why:
+        raise acc.ValidationError(why)
     if x["status"] == "posted" and x["entry_id"]:
         acc.void_entry(ctx.db, x["entry_id"], ctx.body.get("reason") or "Extract reopened to adjust", ctx.user["username"])
     ctx.log("extract.reopen", xid)
@@ -2156,17 +2179,19 @@ def extract_add(ctx):
     number = acc.text(body.get("number"))
     if number.endswith("-"):           # the suggested prefix left as it was: the next number in that series
         body["number"] = acc.next_in_series(ctx.db, number)
-    xid = acc.save_extract(ctx.db, body)
-    if ctx.body.get("post"):
-        acc.post_extract(ctx.db, xid, user=ctx.user["username"])
+    with ctx.db.tx():           # saved and posted together: a posting that fails leaves no draft behind
+        xid = acc.save_extract(ctx.db, body)
+        if ctx.body.get("post"):
+            acc.post_extract(ctx.db, xid, user=ctx.user["username"])
     return ok({"id": xid})
 
 
 @route("PUT", "/api/extracts/<xid>", "sales.invoices", "edit")
 def extract_edit(ctx, xid):
-    acc.save_extract(ctx.db, ctx.body, int(xid))
-    if ctx.body.get("post"):
-        acc.post_extract(ctx.db, int(xid), user=ctx.user["username"])
+    with ctx.db.tx():
+        acc.save_extract(ctx.db, ctx.body, int(xid))
+        if ctx.body.get("post"):
+            acc.post_extract(ctx.db, int(xid), user=ctx.user["username"])
     return ok({"id": int(xid)})
 
 
@@ -2180,6 +2205,9 @@ def extract_del(ctx, xid):
     x = ctx.db.one("SELECT status FROM extracts WHERE id=?", (int(xid),))
     if x and x["status"] == "posted":
         raise acc.ValidationError("Posted invoices cannot be deleted. Reverse the invoice entry first.")
+    why = _invoice_owner(ctx, xid)
+    if why:
+        raise acc.ValidationError(why)
     bu = ctx.db.one("SELECT bu_id FROM extracts WHERE id=?", (int(xid),))
     ctx.db.x("DELETE FROM extracts WHERE id=?", (int(xid),))
     if bu:
@@ -2324,8 +2352,13 @@ def item_edit(ctx, iid):
     from . import dedupe
     b = ctx.body
     dedupe.check_sku(ctx.db, b.get("sku"), int(iid))
-    ctx.db.x("UPDATE stock_items SET name=?, unit=?, sku=?, reorder_level=?, category=?, std_cost=?, price=?, notes=? WHERE id=?",
-             (*_item_vals(b), int(iid)))
+    old = ctx.db.one("SELECT name FROM stock_items WHERE id=?", (int(iid),))
+    with ctx.db.tx():
+        ctx.db.x("UPDATE stock_items SET name=?, unit=?, sku=?, reorder_level=?, category=?, std_cost=?, price=?, notes=? WHERE id=?",
+                 (*_item_vals(b), int(iid)))
+        new = ctx.db.one("SELECT name FROM stock_items WHERE id=?", (int(iid),))
+        if old and new and old["name"] != new["name"]:     # the products that sell it follow the new name
+            ctx.db.x("UPDATE products SET stock_item=? WHERE stock_item=?", (new["name"], old["name"]))
     return ok()
 
 
@@ -4190,6 +4223,14 @@ def party_del(ctx, pid):
     x = ctx.db.one("SELECT number FROM extracts WHERE customer=? LIMIT 1", (p["name"],))
     if x:
         raise acc.ValidationError((f"{p['name']} is the customer on invoice {x['number']}. Its tax ID and address are required for that invoice and its e-invoice, so it cannot be deleted."))
+    bal = ctx.db.one("SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM party_lines pl JOIN journal_lines l ON l.id=pl.id "
+                     "JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account "
+                     "WHERE pl.party=? AND e.status='posted' AND a.type IN ('Asset','Liability')", (p["name"],))["n"]
+    if bal:     # still owed (to or by them): their statement would lose its name
+        raise acc.ValidationError(f"{p['name']} has an open balance of {abs(to_major(bal)):,.2f}. Settle it first, or keep the contact.")
+    for t, c in (("contracts", "party"), ("purchase_orders", "supplier")):
+        if ctx.db.one(f"SELECT 1 FROM {t} WHERE {c}=? AND status NOT IN ('closed','cancelled') LIMIT 1", (p["name"],)):
+            raise acc.ValidationError(f"{p['name']} has an open {'contract' if t == 'contracts' else 'purchase order'}. Close it first.")
     ctx.db.x("DELETE FROM parties WHERE id=?", (int(pid),))
     ctx.log("party.delete", p["name"])
     return ok()
@@ -4620,6 +4661,12 @@ def prq_quote_edit(ctx, pid, qid):
 @route("DELETE", "/api/purchase-requests/<pid>/quotes/<qid>", "purchasing.requests", "add")
 def prq_quote_del(ctx, pid, qid):
     from . import procurement
+    q = ctx.db.one("SELECT q.pr_id, r.status FROM pr_quotes q JOIN purchase_requests r ON r.id=q.pr_id WHERE q.id=?", (int(qid),))
+    pr = ctx.db.one("SELECT id FROM purchase_requests WHERE id=? OR code=?", (int(pid) if str(pid).isdigit() else -1, str(pid)))
+    if not q or not pr or q["pr_id"] != pr["id"]:
+        raise acc.ValidationError("Quote not found on this request")
+    if q["status"] not in ("draft", "submitted", "approved") and not ctx.can("purchasing.requests", "edit"):
+        raise acc.ValidationError(f"This request is {q['status']}: its quotes are kept")
     procurement.delete_quote(ctx.db, qid)
     return ok()
 
@@ -6569,11 +6616,18 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
     acc._CU_PAY["c"] = None              # a custody chosen by a request that failed never carries over to the next one
     reply = _handle(app, method, target, headers, raw, as_user, dry)
     lang = headers.get("x-lang") or (parse_qs(urlparse(target).query).get("lang") or [""])[-1]
+    if lang != "ar" and isinstance(reply, Reply) and reply.status >= 400 and b'"error_ar"' in (reply.body or b""):
+        try:
+            data = json.loads(reply.body)
+            data.pop("error_ar", None)
+            reply.body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+        except ValueError:
+            pass
     if lang == "ar" and isinstance(reply, Reply) and reply.status >= 400 and "json" in (reply.ctype or ""):
         try:                                   # the message in the reader's language
             data = json.loads(reply.body)
             if isinstance(data, dict) and isinstance(data.get("error"), str):
-                data["error"] = textl10n.error(data["error"], "ar")
+                data["error"] = data.pop("error_ar", "") or textl10n.error(data["error"], "ar")
                 for e in data.get("errors") or []:       # an import's problems, row by row
                     if isinstance(e, dict) and isinstance(e.get("error"), str):
                         e["error"] = textl10n.import_row_error(e["error"], e.get("sheet"), "ar")
@@ -6663,11 +6717,18 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             ctx.cloud_hook = getattr(app, "cloud", None)
             ctx.scope = sc
             ai_change = (q.get("_ai") or q.get("_undo")) if method != "GET" else None   # the assistant's change, or a person's own save
-            if ai_change and re.fullmatch(r"[\w-]{6,60}", ai_change):   # the assistant's change: recorded so it can be undone
-                from . import aiundo
-                reply = aiundo.capture(db, ai_change, user, lambda: fn(ctx, **match.groupdict()))
-            else:
-                reply = fn(ctx, **match.groupdict())
+            from . import approvals as _apr
+            held = acc.POSTING_HELD.set(method != "GET" and as_user is None and _apr.needs_approval(db, user))
+            over = acc.OVER_OK.set(bool(isinstance(body, dict) and body.get("confirm_over")) or as_user is not None)
+            try:
+                if ai_change and re.fullmatch(r"[\w-]{6,60}", ai_change):   # the assistant's change: recorded so it can be undone
+                    from . import aiundo
+                    reply = aiundo.capture(db, ai_change, user, lambda: fn(ctx, **match.groupdict()))
+                else:
+                    reply = fn(ctx, **match.groupdict())
+            finally:
+                acc.POSTING_HELD.reset(held)
+                acc.OVER_OK.reset(over)
             if method == "GET" and match.groupdict() and isinstance(reply, Reply) and reply.status == 200 and reply.body == b'{"ok": true}':
                 return ok({"error": "Not found"}, 404)       # a record asked for by its number that is not there
             if sc and method == "GET" and isinstance(reply, Reply) and reply.status == 200 and "json" in (reply.ctype or ""):
@@ -6678,7 +6739,9 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             return reply
         return ok({"error": "Not found"}, 404)
     except PermissionError as e:
-        return ok({"error": str(e) or "You do not have permission for this action."}, 403)
+        return ok({"error": str(e) or "You do not have permission for this action.", **_ar_of(e)}, 403)
+    except acc.NeedsConfirm as e:
+        return ok({"error": str(e), "code": "confirm", **_ar_of(e)}, 409)
     except (acc.ValidationError, LookupError, ValueError, json.JSONDecodeError) as e:
         msg = str(e)
         bad = re.match(r"(?:invalid literal for int\(\) with base 10|could not convert string to float): '?(.*?)'?$", msg)
@@ -6686,10 +6749,16 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             if match is not None and bad.group(1) in [str(v) for v in match.groupdict().values()]:
                 return ok({"error": "Not found"}, 404)
             msg = f"'{bad.group(1)}' is not a number"
-        return ok({"error": msg}, 400)
+        return ok({"error": msg, **_ar_of(e)}, 400)
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
         return ok({"error": f"Server error: {e.__class__.__name__}"}, 500)
+
+
+def _ar_of(e):
+    """The Arabic a message carries itself (textl10n.Note), for the reader who reads Arabic."""
+    a = getattr(e.args[0], "ar", "") if e.args else ""
+    return {"error_ar": a} if a else {}
 
 
 class Handler(BaseHTTPRequestHandler):

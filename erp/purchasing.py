@@ -8,7 +8,7 @@ import json
 
 from . import accounting as acc
 from .accounting import ValidationError, num, text
-from .db import to_major, to_minor
+from .db import tax_of, to_major, to_minor
 
 STATUSES = ("draft", "approved", "partial", "received", "closed", "cancelled")
 LINE_KINDS = ("cost", "expense", "stock")
@@ -62,7 +62,7 @@ def save(db, d, user="", po_id=None):
     lines = _clean_lines(db, d.get("lines"), bu_id, wh_id)
     vat_code = acc.tax_code(db, d.get("vat_code"), "vat")[0] if d.get("vat_code") else ""
     wht_code = acc.tax_code(db, d.get("wht_code"), "wht")[0] if d.get("wht_code") else ""
-    pr = _request_for(db, d, lines)
+    pr = _request_for(db, d, lines, po_id)
     vals = dict(date=acc.clean_date(d.get("date")), supplier=supplier, bu_id=bu_id, warehouse_id=wh_id,
                 expected=acc.clean_date(d.get("expected"), "expected date") if d.get("expected") else "",
                 vat_code=vat_code, wht_code=wht_code, terms=text(d.get("terms"), maxlen=2000), notes=text(d.get("notes"), maxlen=2000),
@@ -93,7 +93,7 @@ def save(db, d, user="", po_id=None):
     return pid
 
 
-def _request_for(db, d, lines):
+def _request_for(db, d, lines, po_id=None):
     """The purchase request an order is raised from (pr_id or pr_code): it must be approved, and each line taken from
     it must be one of its lines. Lines may be changed, added or left out — the order is the buyer's to finish."""
     ref = d.get("pr_id") or d.get("pr_code")
@@ -105,10 +105,24 @@ def _request_for(db, d, lines):
     pr = procurement.get(db, ref)
     if pr["status"] not in ("approved", "ordered"):
         raise ValidationError(f"Purchase request {pr['code']} is {pr['status']}: approve it before ordering")
-    mine = {ln["id"] for ln in pr["lines"]}
+    mine = {ln["id"]: ln for ln in pr["lines"]}
+    this_po = {}                     # an order being edited: its own earlier quantities are not "already ordered"
+    if po_id:
+        for r in db.q("SELECT pr_line_id, SUM(qty) q FROM po_lines WHERE po_id=(SELECT id FROM purchase_orders WHERE id=? OR code=?) "
+                      "AND pr_line_id IS NOT NULL GROUP BY 1", (int(po_id) if str(po_id).isdigit() else -1, str(po_id))):
+            this_po[r["pr_line_id"]] = r["q"] or 0
+    asked = {}
     for ln in lines:
         if ln["pr_line_id"] not in mine:
             ln["pr_line_id"] = None
+        else:
+            asked[ln["pr_line_id"]] = asked.get(ln["pr_line_id"], 0) + (ln["qty"] or 0)
+    for lid, q in asked.items():
+        r = mine[lid]
+        left = r["qty"] - (r["ordered"] - this_po.get(lid, 0))
+        if q > left + 1e-9:
+            acc.over_limit(f"{r['description']}: {q:,.2f} ordered, but the request {pr['code']} has {max(left, 0):,.2f} left "
+                           f"to order (of {r['qty']:,.2f}).")
     return pr
 
 
@@ -209,6 +223,16 @@ def receive(db, po_id, d, user=""):
         raise ValidationError("Enter the quantity received on at least one line")
     by_id = {ln["id"]: ln for ln in po["lines"]}
     pay_left = to_minor(num(d.get("paid") or 0, "paid now"))
+    due_all = 0
+    for lid, q in want.items():          # paid now can be at most what this receipt owes
+        ln = by_id.get(lid)
+        if ln:
+            net = to_minor(q * ln["rate"])
+            due_all += net + tax_of(net, acc.tax_code(db, po["vat_code"], "vat")[1] if po["vat_code"] else 0) \
+                - tax_of(net, acc.tax_code(db, po["wht_code"], "wht")[1] if po["wht_code"] else 0)
+    if pay_left > due_all:
+        raise ValidationError(f"Paid now ({to_major(pay_left):,.2f}) is more than this receipt owes ({to_major(due_all):,.2f}). "
+                              "Record the rest as an advance to the supplier.")
     ref = text(d.get("supplier_ref"))
     ids = []
     with db.tx():
@@ -219,8 +243,8 @@ def receive(db, po_id, d, user=""):
             if q > ln["left"] + 1e-9:
                 raise ValidationError(f"{ln['description']}: only {ln['left']:g} still to receive")
             net = to_minor(q * ln["rate"])
-            vat = int(round(net * (acc.tax_code(db, po["vat_code"], "vat")[1] if po["vat_code"] else 0)))
-            wht = int(round(net * (acc.tax_code(db, po["wht_code"], "wht")[1] if po["wht_code"] else 0)))
+            vat = tax_of(net, acc.tax_code(db, po["vat_code"], "vat")[1] if po["vat_code"] else 0)
+            wht = tax_of(net, acc.tax_code(db, po["wht_code"], "wht")[1] if po["wht_code"] else 0)
             paid = min(pay_left, net + vat - wht)
             pay_left -= paid
             memo = f"{po['code']} — {ln['description']}" + (f" ({ref})" if ref else "")

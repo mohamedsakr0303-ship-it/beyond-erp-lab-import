@@ -55,6 +55,11 @@ async function api(method, path, body, raw) {
   try { let r;
     try { r = await apiCall(method, path, body, raw); }
     catch (e) {   // looks like an entry already in the books: show it and let the person decide
+      if (e.status === 409 && e.data && e.data.code === "confirm") {     // over a contract / quantities / request: asked once
+        if (!await uiConfirm(e.message, { title: L2("Please confirm", "يرجى التأكيد"), ok: L2("Save anyway", "حفظ على أي حال"), cancel: L2("Cancel", "إلغاء"), danger: false })) {
+          const x = new Error(L2("Not saved.", "لم يُحفظ.")); x.duplicate = true; throw x; }
+        return await api(method, path, { ...(body && typeof body === "object" ? body : {}), confirm_over: 1 }, raw);
+      }
       if (!(e.status === 409 && e.data && e.data.code === "duplicate" && body && typeof body === "object")) throw e;
       const ds = e.data.duplicates || [];
       const msg = L2("A matching entry is already in the books:", "يوجد قيد مطابق في الدفاتر:") + "\n\n" +

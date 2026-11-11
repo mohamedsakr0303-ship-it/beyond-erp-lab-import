@@ -286,6 +286,9 @@ def save_certificate(db, cid, d, cert_id=None):
         base = by_line.get(lid)
         desc = base["description"] if base else text(ln.get("description"), f"line {i} description", required=True)
         rate = to_minor(base["rate"]) if base else to_minor(num(ln.get("rate") or 0, f"line {i} rate"))
+        if base and base["qty"] and q > base["qty"] + 1e-9:
+            acc.over_limit(f"{desc}: {q:,.2f} {base['unit'] or ''} certified to date, more than the {base['qty']:,.2f} in the "
+                           "contract. Save only if a variation covers it.")
         rows.append((lid, desc, base["unit"] if base else text(ln.get("unit")), rate, q))
     if not rows:
         raise ValidationError("Enter the quantity executed to date on at least one line")
@@ -396,6 +399,11 @@ def pay(db, cid, d, user=""):
     date = acc.clean_date(d.get("date"))
     party = c["party"]
     if kind == "advance":
+        given = to_major(db.one("SELECT COALESCE(SUM(l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                                "WHERE e.status='posted' AND e.ref=?", (f"{c['code']}/ADV",))["n"])
+        if c["revised_value"] and given + amount > c["revised_value"] + 0.004:
+            acc.over_limit(f"Advances to {party} would reach {given + amount:,.2f}, more than the contract value "
+                           f"({c['revised_value']:,.2f}).")
         money = acc.money_account(db, d.get("method"), d.get("paid_from"))
         return acc.post_entry(db, date=date, kind="Payment Voucher", bu_id=c["bu_id"], party=party, ref=f"{c['code']}/ADV",
                               memo=f"Advance to {party} ({c['code']})", user=user,
