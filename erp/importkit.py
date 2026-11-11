@@ -339,20 +339,34 @@ COMMON_ACCOUNTS = [
 ]
 
 
-def template_csv(name, rows=None):
+def template_csv(name, rows=None, lang="en"):
+    """The layout as CSV, in one language like the Excel template: headings, an example row and the words of choice
+    columns in the user's language (the importer reads either language back)."""
     s = sheet(name)
     cols = input_cols(s)
-    from .workbook import EXAMPLES
-    ex = EXAMPLES.get(s["name"], {})
+    ar = lang == "ar"
+    from .workbook import EXAMPLES, EXAMPLES_AR
+    ex = {**EXAMPLES.get(s["name"], {}), **(EXAMPLES_AR.get(s["name"], {}) if ar else {})}
+    tr = {}
+    if ar:
+        from .workbook_ar import translations
+        tr = translations()
+
+    def show(c, v):
+        if v in (None, ""):
+            return ""
+        if c.get("choices") and v in c["choices"]:
+            return choices.label(s["name"], c["key"], v, ar)
+        return tr.get(v, v) if ar and isinstance(v, str) and not rows else v
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow([f"{c['en']} / {c['ar']}" for c in cols])
+    w.writerow([c["ar"] if ar else c["en"] for c in cols])
     if rows:
         for row in rows:
-            w.writerow([row.get(c["key"], "") for c in cols])
+            w.writerow([show(c, row.get(c["key"], "")) for c in cols])
     elif ex:
-        w.writerow([ex.get(c["key"], "") for c in cols])
-    return ("﻿" + buf.getvalue()).encode("utf-8")
+        w.writerow([show(c, ex.get(c["key"], "")) for c in cols])
+    return ("\ufeff" + buf.getvalue()).encode("utf-8")
 
 
 # ------------------------------------------------------------------- reading
@@ -474,22 +488,25 @@ def read(db, name, raw, filename="", mapping=None, table=None, header_row=None):
         raise acc.ValidationError("Match a column of your file to: " + ", ".join(missing))
     keys = {c["key"]: c for c in s["cols"]}
     rows = next(r for t, r in _tables(raw, filename) if t == a["table"])
-    from .workbook import EXAMPLES
-    example = {k: str(_cell(v, keys[k])) for k, v in EXAMPLES.get(s["name"], {}).items() if k in keys and v not in ("", None)}
+    from .workbook import EXAMPLES, EXAMPLES_AR
+    examples = []
+    for ex in (EXAMPLES.get(s["name"], {}), {**EXAMPLES.get(s["name"], {}), **EXAMPLES_AR.get(s["name"], {})}):
+        e = {k: str(_cell(v, keys[k])) for k, v in ex.items() if k in keys and v not in ("", None)}
+        if e and e not in examples:
+            examples.append(e)
+    first = a["header_row"] + 2              # the CSV template carries its example right under the headings
     out, nums = [], []
     for n, raw_row in enumerate(rows[a["header_row"] + 1:], start=a["header_row"] + 2):
         row = {}
         for i, k in m.items():
             if k in keys and i < len(raw_row):
                 v = raw_row[i]
-                if isinstance(v, str):
-                    v = v.translate(_AR_DIGITS) if re.fullmatch(r"[\s٠-٩0-9.,٫٬()+-]+", v) else v
-                    if keys[k]["kind"] in ("num", "money", "pct") and re.fullmatch(r"\s*\(?[\d,]+(\.\d+)?\)?\s*", v):
-                        v = ("-" if "(" in v else "") + v.strip(" ()").replace(",", "")
+                if isinstance(v, str) and keys[k]["kind"] in ("text", "acct", "bu", "tax") and re.fullmatch(r"[\s٠-٩]+", v):
+                    v = v.translate(_AR_DIGITS)          # a code typed in Arabic digits (numbers and dates: see _cell)
                 row[k] = _cell(v, keys[k])
-        if example and all(str(row.get(k, "")) == v for k, v in example.items() if k in m.values()) \
-                and any(k in m.values() for k in example):
-            continue            # the template's own example row (the CSV template has it under the headings): never imported
+        if n == first and any(all(str(row.get(k, "")) == v for k, v in e.items() if k in m.values()) and any(k in m.values() for k in e)
+                              for e in examples):
+            continue            # the template's own example row: never imported (a real row like it further down is)
         if any(v not in ("", None) for v in row.values()):
             out.append(row)
             nums.append(n)

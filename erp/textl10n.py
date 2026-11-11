@@ -252,6 +252,16 @@ def error(msg, lang, depth=0):
 _SEEDS = [("warehouses", "name", "Main Store", "المخزن الرئيسي"), ("chat_rooms", "name", "General", "عام")]
 
 
+def seed_alias(table, col, name):
+    """The other language's name of one of the app's starting records ("Main Store" ⇄ "المخزن الرئيسي"), or None: a file
+    made in Arabic still finds the main store of books that kept its English name, and the other way round."""
+    n = str(name or "").strip()
+    for t, c, en, ar in _SEEDS:
+        if t == table and c == col and n in (en, ar):
+            return ar if n == en else en
+    return None
+
+
 def seed_names(db, lang):
     """The app's own starting records (main store, general chat room) named in the company's language."""
     for table, col, en, ar in _SEEDS:

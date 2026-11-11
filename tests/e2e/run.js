@@ -53,6 +53,8 @@ async function open(browser, viewport = { width: 1280, height: 800 }, touch = fa
     await sleep(400);
   }
   await page.evaluate(() => document.querySelectorAll("#nnudge,#tourbar").forEach(n => n.remove()));
+  // the device-setup card comes back on a timer (about 20 s after sign-in) and can land over a button a journey clicks
+  await page.addStyleTag({ content: "#nnudge{display:none!important}" });
   return page;
 }
 

@@ -115,9 +115,10 @@ def label(sheet, key, code, ar=False, long=False):
 
 
 def _norm(s):
-    s = str(s).split(SEP)[0].strip().lower()
+    s = re.split(r"\s[—–-]\s", str(s))[0].strip().lower().replace("&", " and ")     # without the " — examples" tail
     s = re.sub(r"[إأآ]", "ا", s).replace("ة", "ه").replace("ى", "ي")
-    return re.sub(r"[\s_]+", " ", s)
+    s = re.sub(r"(^|\s)(?:ال)(?=[\u0600-\u06FF]{2})", r"\1", s)                     # الشهر = شهر
+    return re.sub(r"[\s_]+", " ", s).strip()
 
 
 _maps = {}

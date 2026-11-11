@@ -156,6 +156,10 @@ def import_rows(db, rows, counts):
             continue
         wh = db.one("SELECT id FROM warehouses WHERE name=?", (r.get("warehouse") or "",))
         if not wh:
+            from .textl10n import seed_alias
+            alias = seed_alias("warehouses", "name", r.get("warehouse"))
+            wh = db.one("SELECT id FROM warehouses WHERE name=?", (alias,)) if alias else None
+        if not wh:
             continue
         cid = db.conn.execute("INSERT INTO stock_counts(code,date,warehouse_id,status,counted_by,posted_by,notes) VALUES (?,?,?,?,?,?,?)",
                               (r["code"], r.get("date") or acc.today(), wh["id"], r.get("status") or "counting", r.get("counted_by") or "",

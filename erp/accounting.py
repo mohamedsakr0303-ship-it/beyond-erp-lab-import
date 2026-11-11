@@ -826,6 +826,10 @@ def delete_account(db, code):
 def _warehouse(db, value):
     w = db.one("SELECT * FROM warehouses WHERE id=? OR name=?", (value, text(value)))
     if not w:
+        from .textl10n import seed_alias
+        alias = seed_alias("warehouses", "name", value)
+        w = db.one("SELECT * FROM warehouses WHERE name=?", (alias,)) if alias else None
+    if not w:
         raise ValidationError(f"Unknown warehouse: {value}")
     return w
 

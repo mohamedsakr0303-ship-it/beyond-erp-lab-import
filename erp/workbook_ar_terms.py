@@ -330,6 +330,7 @@ CODES_AR_BY_COL = {
     "Parties.receiver_type": {"P": "شخص طبيعي"}, "E-Receipts.buyer_type": {"P": "شخص طبيعي"},
     "E-Receipts.payment_method": {"P": "نقاط"},
     "Loans.interest_type": {"declining": "نسبة سنوية على الرصيد المتناقص", "fixed": "مبلغ فوائد إجمالي ثابت", "none": "بدون فائدة"},
+    "Recurring Entries.unit": {"month": "شهر"},
     "Chart of Accounts.subtype": {"interest": "مصروف الفوائد", "depreciation": "مصروف الإهلاك", "amortization": "مصروف الاستهلاك"},
     "Parties.type": {"both": "عميل ومورد", "employee": "موظف"},
     "Loans.schedule_type": {"none": "بدون جدول"},

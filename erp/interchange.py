@@ -955,6 +955,7 @@ def _cell(v, col):
         s = str(v).strip()
         if not s:
             return ""
+        s = s.translate(_AR_DIGITS).replace("،", ",")
         for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%Y/%m/%d"):
             try:
                 return _dt.datetime.strptime(s[:10], fmt).date().isoformat()
@@ -962,17 +963,79 @@ def _cell(v, col):
                 pass
         if s.replace(".", "", 1).isdigit():  # Excel serial number
             return (_dt.date(1899, 12, 30) + _dt.timedelta(days=int(float(s)))).isoformat()
-        return s
+        return _date_words(s) or s
     if isinstance(v, (_dt.datetime, _dt.date)):
         return acc.clean_date(v)
     if isinstance(v, float) and v.is_integer() and col["kind"] in ("text", "acct", "bu"):
         v = int(v)
     if isinstance(v, str):
         v = v.strip()
+        if col["kind"] in ("num", "money", "pct"):
+            v = _number_text(v, col["kind"] == "pct")
         if col.get("choices"):          # a word from the template's drop-down (either language) → its code
             from . import choices
             v = choices.to_code(col.get("_sheet"), col, v)
     return v
+
+
+_AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩٫٬", "0123456789.,")
+_MONTHS = {}
+for _i, _names in enumerate((("jan", "january", "يناير"), ("feb", "february", "فبراير"), ("mar", "march", "مارس"), ("apr", "april", "أبريل", "ابريل"),
+                             ("may", "مايو"), ("jun", "june", "يونيو", "يونيه"), ("jul", "july", "يوليو", "يوليه"), ("aug", "august", "أغسطس", "اغسطس"),
+                             ("sep", "sept", "september", "سبتمبر"), ("oct", "october", "أكتوبر", "اكتوبر"), ("nov", "november", "نوفمبر"),
+                             ("dec", "december", "ديسمبر")), start=1):
+    for _n in _names:
+        _MONTHS[_n] = _i
+
+
+def _date_words(s):
+    """Dates as people type them: 02.10.2026, 02/10/26, 2-Oct-2026, October 2, 2026, 2 أكتوبر 2026 (day first)."""
+    m = re.fullmatch(r"(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})", s)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.fullmatch(r"(\d{1,2})[\s./-]+([^\W\d]+)\.?[\s,./-]+(\d{2}|\d{4})", s) or None
+        if m and m.group(2).lower() in _MONTHS:
+            d, mo, y = int(m.group(1)), _MONTHS[m.group(2).lower()], int(m.group(3))
+        else:
+            m = re.fullmatch(r"([^\W\d]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?[\s,]+(\d{4})", s)
+            if not (m and m.group(1).lower() in _MONTHS):
+                return None
+            d, mo, y = int(m.group(2)), _MONTHS[m.group(1).lower()], int(m.group(3))
+    if y < 100:
+        y += 2000
+    try:
+        return _dt.date(y, mo, d).isoformat()
+    except ValueError:
+        return None
+
+
+def _number_text(v, pct=False):
+    """A number typed as text → text Python reads the same way the person meant it: Arabic digits, (brackets) for
+    minus, thousands commas, a decimal comma (12,50 · 1.250,50) and a % sign. Anything unclear is left as typed, so
+    the import says which row and value it could not read instead of guessing."""
+    s = v.translate(_AR_DIGITS).replace("٪", "%").replace("\u00a0", "").replace(" ", "")
+    if not s:
+        return v
+    sign = ""
+    if re.fullmatch(r"\(.+\)", s):
+        sign, s = "-", s[1:-1]
+    elif s[0] in "+-":
+        sign, s = ("-" if s[0] == "-" else ""), s[1:]
+    percent = s.endswith("%")
+    if percent:
+        s = s[:-1]
+    if re.fullmatch(r"\d{1,3}(,\d{3})+(\.\d+)?", s):            # 1,250.50
+        s = s.replace(",", "")
+    elif re.fullmatch(r"\d{1,3}(\.\d{3})+,\d+", s):              # 1.250,50
+        s = s.replace(".", "").replace(",", ".")
+    elif re.fullmatch(r"\d+,\d{1,2}", s):                         # 12,50
+        s = s.replace(",", ".")
+    elif not re.fullmatch(r"\d+(\.\d+)?|\.\d+", s):
+        return v
+    if percent and pct:
+        return sign + repr(float(s) / 100)
+    return v if percent else sign + s
 
 
 def rows_from_table(sheet, headers, raw_rows):
@@ -1620,10 +1683,15 @@ def _imp_extras(db, ex, mode, counts):
     if mode == "replace":
         for t in ("offers", "offer_types", "loans", "custodies"):
             db.conn.execute(f"DELETE FROM {t}")
-    if ex.get("loans"):
-        counts["Loans"] = loans.import_rows(db, ex["loans"])
-    if ex.get("custodies"):
-        counts["Cash custody"] = custody.import_rows(db, ex["custodies"])
+    added = lambda t: db.one(f"SELECT COUNT(*) AS n FROM {t}")["n"]  # noqa: E731
+    for key, label, table, mod in (("loans", "Loans", "loans", loans), ("custodies", "Cash custody", "custodies", custody)):
+        if ex.get(key):
+            before = added(table)
+            n = mod.import_rows(db, ex[key])
+            if mode == "new":            # "only new": count what was really added, not what was already there
+                n = added(table) - before
+            if n:
+                counts[label] = n
     if isinstance(ex.get("payroll"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM employees")):
         payroll.import_rows(db, ex["payroll"], counts)
     if isinstance(ex.get("rentals"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM rentals")):
@@ -1657,14 +1725,17 @@ def _imp_extras(db, ex, mode, counts):
             if not tid and o.get("type_name"):     # e.g. a workbook's design offer: the company's own offer type, by name
                 t = db.one("SELECT id FROM offer_types WHERE name=?", (acc.text(o["type_name"]),))
                 tid = t["id"] if t else None
-            if o.get("replace_same") and db.one("SELECT 1 FROM offers WHERE number=?", (acc.text(o["number"]),)):
+            exists = db.one("SELECT 1 FROM offers WHERE number=?", (acc.text(o["number"]),))
+            if exists and mode == "new" and not o.get("replace_same"):
+                continue                 # "only new": an offer already in the books stays as it is, and is not counted
+            if o.get("replace_same") and exists:
                 db.conn.execute("DELETE FROM offers WHERE number=?", (acc.text(o["number"]),))
             db.conn.execute("INSERT INTO offers(number,type_id,date,client,project,bu_id,status,content) VALUES (?,?,?,?,?,?,?,?)",
                             (acc.text(o["number"]), tid, o.get("date"), acc.text(o.get("client")),
                              acc.text(o.get("project")), bu["id"] if bu else None, o.get("status") or "Draft",
                              str(o.get("content") or "{}")))
             n += 1
-    if ex.get("offer_types") or ex.get("offers"):
+    if n:
         counts["Offers"] = n
     if isinstance(ex.get("services"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM subscriptions")):
         from . import services
@@ -1983,6 +2054,22 @@ def docs_to_rows(db, data):
     return notes
 
 
+def _choice_words_to_codes(data):
+    """Every way rows reach the importer (a file, the JSON backup, a demo or industry template in Arabic) carries the
+    words of a choice column the same way: turned back into its code here, whatever the source."""
+    from . import choices
+    for name, rows in (data or {}).items():
+        sh = SHEET_BY_NAME.get(name)
+        if not sh or not isinstance(rows, list):
+            continue
+        cols = [c for c in sh["cols"] if c.get("choices")]
+        for r in rows:
+            if isinstance(r, dict):
+                for c in cols:
+                    if isinstance(r.get(c["key"]), str):
+                        r[c["key"]] = choices.to_code(name, c, r[c["key"]].strip())
+
+
 def import_data(db, data, mode="append", dry_run=False, user=""):
     """Import sheets. All-or-nothing: any row error rolls everything back and is reported.
     mode "new": only rows that are not in the books yet (see only_new), then as "append"."""
@@ -1990,7 +2077,9 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
         raise acc.ValidationError("mode must be append, new or replace")
     errors, counts, stats = [], {}, {}
     skipped = None
+    _choice_words_to_codes(data)
     doc_notes = docs_to_rows(db, data)       # invoice / BOQ sheets in the client's own layout
+    asked = mode
     if mode == "new":
         data, skipped = only_new(db, data)
         mode = "append"
@@ -2100,7 +2189,7 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
                 if rows:
                     counts[name] = n
             if isinstance(data.get("_extras"), dict):
-                _imp_extras(db, data["_extras"], mode, counts)
+                _imp_extras(db, data["_extras"], "new" if asked == "new" else mode, counts)
             from . import wip      # every project's work in progress, from what was just imported
             wip.sync_all(db)
             db.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('lock_date', ?)",
@@ -2118,8 +2207,8 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
         out.setdefault("skipped", {})[k] = out.get("skipped", {}).get(k, 0) + v
     if stats.get("updated"):
         out["updated"] = stats["updated"]
-    if doc_notes:
-        out["notes"] = doc_notes
+    if doc_notes or stats.get("notes"):
+        out["notes"] = list(doc_notes or []) + stats.get("notes", [])
     return out
 
 
@@ -2329,6 +2418,10 @@ def _imp_item(db, r):
                 continue
             w = db.one("SELECT id FROM warehouses WHERE name=?", (name.strip(),))
             if not w:
+                from .textl10n import seed_alias
+                alias = seed_alias("warehouses", "name", name)
+                w = db.one("SELECT id FROM warehouses WHERE name=?", (alias,)) if alias else None
+            if not w:
                 raise acc.ValidationError(f"Unknown warehouse: {name.strip()}")
             whs[w["id"]] = q.strip()
         st["warehouses"] = whs
@@ -2395,14 +2488,24 @@ def _imp_boqs(db, rows, errors, counts, stats):
 
 
 def _imp_invoices(db, data, errors, counts, user, stats):
-    lines = {}
-    for r in data.get("Invoice Lines") or []:
+    lines, first_row = {}, {}
+    for i, r in enumerate(data.get("Invoice Lines") or [], start=FIRST_DATA_ROW):
         lines.setdefault(acc.text(r.get("number")), []).append(r)
+        first_row.setdefault(acc.text(r.get("number")), i)
     n = 0
     heads = {acc.text(r.get("number")) for r in data.get("Sales Invoices") or []}
     for num_ in [k for k in lines if k and k not in heads]:   # only the lines of an invoice already in the books
-        if not db.one("SELECT 1 FROM extracts WHERE number=?", (num_,)):
-            errors.append({"sheet": "Invoice Lines", "row": FIRST_DATA_ROW, "error": f"Invoice {num_} is not in 'Sales Invoices' or in the books"})
+        old_ = db.one("SELECT id FROM extracts WHERE number=?", (num_,))
+        if old_:          # the file's lines become the invoice's lines: say so plainly when that changes how many it has
+            had = db.one("SELECT COUNT(*) AS n FROM extract_lines WHERE extract_id=?", (old_["id"],))["n"]
+            if had != len(lines[num_]):
+                from .textl10n import Note
+                stats.setdefault("notes", []).append(Note(
+                    f"Invoice {num_}: its {had} lines in the books are replaced by the {len(lines[num_])} line(s) in the file",
+                    f"الفاتورة {num_}: سطورها الـ{had} في الدفاتر تُستبدل بالسطور الـ{len(lines[num_])} الموجودة في الملف"))
+        if not old_:
+            errors.append({"sheet": "Invoice Lines", "row": first_row[num_],      # the row of its first line, where the user looks
+                           "error": f"Invoice {num_} is not in 'Sales Invoices' or in the books"})
     # invoices first, then the credit / debit notes that name them
     heads_rows = sorted(data.get("Sales Invoices") or [], key=lambda r: "دائن" in str(r.get("doc_type") or "") or "مدين" in str(r.get("doc_type") or "")
                         or str(r.get("doc_type") or "").strip()[:1].upper() in ("C", "D"))

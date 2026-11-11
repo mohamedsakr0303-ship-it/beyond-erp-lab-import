@@ -5074,7 +5074,7 @@ def template_sheet(ctx):
                      else demo.translate_sheets(demo.sheets(ind), lang)).get(name) or []
     fname = re.sub(r"\W+", "_", name).strip("_") + ("_demo" if demo_rows is not None else "_template")
     if (ctx.q.get("format") or "xlsx") == "csv":
-        return download(importkit.template_csv(name, demo_rows), fname + ".csv", "text/csv; charset=utf-8")
+        return download(importkit.template_csv(name, demo_rows, ctx.q.get("lang") or "en"), fname + ".csv", "text/csv; charset=utf-8")
     return download(importkit.template_xlsx(ctx.db, name, ctx.q.get("lang") or "en", demo_rows), fname + ".xlsx", XLSX)
 
 

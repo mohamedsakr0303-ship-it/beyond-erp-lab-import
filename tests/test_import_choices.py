@@ -76,5 +76,68 @@ class ImportChoices(unittest.TestCase):
         self.assertIn('c.choice_words.map(w => w[S.lang === "ar" ? 1 : 0])', (ROOT / "erp/static/app.js").read_text(encoding="utf-8"))
 
 
+
+class TypedAsPeopleTypeThem(unittest.TestCase):
+    """Numbers, dates and percentages as they arrive from real files, read the same on every import path."""
+    def test_numbers(self):
+        m = {"kind": "money"}
+        for typed, want in (("12,50", "12.50"), ("1.250,50", "1250.50"), ("1,250.50", "1250.50"), ("١٬٢٥٠٫٥٠", "1250.50"),
+                            ("(1,200)", "-1200"), ("12 500", "12500"), ("1,5,3", "1,5,3"), ("abc", "abc")):
+            with self.subTest(typed=typed):
+                self.assertEqual(interchange._cell(typed, m), want)
+
+    def test_percentages(self):
+        p = {"kind": "pct"}
+        self.assertEqual(float(interchange._cell("25%", p)), 0.25)
+        self.assertEqual(float(interchange._cell("٢٥٪", p)), 0.25)
+
+    def test_dates(self):
+        d = {"kind": "date"}
+        for typed in ("٠٢/١٠/٢٠٢٦", "٢٠٢٦-١٠-٠٢", "02.10.2026", "2-Oct-2026", "02/10/26", "October 2, 2026", "2 أكتوبر 2026", "2026-10-02"):
+            with self.subTest(typed=typed):
+                self.assertEqual(interchange._cell(typed, d), "2026-10-02")
+        self.assertEqual(interchange._cell("31/02/2026", d), "31/02/2026")      # not a real date: left for the error
+
+    def test_statement_lines_typed_loosely(self):
+        c = next(c for c in interchange.SHEET_BY_NAME["Chart of Accounts"]["cols"] if c["key"] == "subtype")
+        for typed in ("Other current assets - employee cash custody", "أصول متداولة أخرى – العهد", "اصول متداوله اخري"):
+            self.assertEqual(choices.to_code("Chart of Accounts", c, typed), "other_current_asset")
+        self.assertEqual(choices.to_code("Chart of Accounts", c, "Property and equipment"), "fixed_asset")
+
+
+class DemoAndExistingBooks(unittest.TestCase):
+    def test_the_arabic_and_english_demo_files_import_into_any_books(self):
+        from erp import textl10n
+        for lang in ("ar", "en"):
+            for books_ar in (False, True):
+                with self.subTest(lang=lang, books_ar=books_ar):
+                    db = Database(":memory:")
+                    if books_ar:
+                        textl10n.seed_names(db, "ar")
+                    r = interchange.import_data(db, demo.translate_sheets(demo.sheets(), lang), mode="replace", dry_run=True)
+                    self.assertGreater(sum(r["counts"].values()), 300)
+
+    def test_a_lines_only_file_says_it_replaces_the_invoices_lines(self):
+        db = Database(":memory:")
+        demo.load(db, "admin")
+        r = interchange.import_data(db, {"Invoice Lines": [{"number": "INV-D001", "description": "x", "qty": 1, "unit": "m", "price": 10}]},
+                                    mode="append", dry_run=True)
+        self.assertTrue(any("INV-D001" in n and "replaced" in n for n in r.get("notes", [])))
+
+    def test_only_new_counts_only_what_it_adds(self):
+        from erp import workbook
+        db = Database(":memory:")
+        demo.load(db, "admin")
+        before = {t: db.one(f"SELECT COUNT(*) AS n FROM {t}")["n"] for t in ("loans", "custodies", "offers")}
+        import tempfile
+        path = Path(tempfile.mkdtemp()) / "books.xlsx"
+        path.write_bytes(workbook.build_workbook(db))
+        r = interchange.import_data(db, interchange.read_xlsx(path), mode="new")
+        after = {t: db.one(f"SELECT COUNT(*) AS n FROM {t}")["n"] for t in before}
+        self.assertEqual(before, after)
+        for k in ("Loans", "Cash custody", "Offers"):
+            self.assertNotIn(k, r["counts"])
+
+
 if __name__ == "__main__":
     unittest.main()
