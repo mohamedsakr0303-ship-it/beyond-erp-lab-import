@@ -13,7 +13,7 @@ import datetime as _dt
 import json
 import re
 
-from . import accounting as acc
+from . import accounting as acc, yearend
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
 
@@ -282,6 +282,11 @@ def save(db, d, aid=None, user=""):
             st = status(db, old)
             if code != old["code"] and _entries(db, old["code"]):
                 raise ValidationError("This asset has journal entries; its code cannot be changed.")
+            buy = db.one("SELECT id FROM journal_entries WHERE ref=? AND status='posted'", (f"FA:{old['code']}",))
+            if buy and cost != old["cost"]:
+                # the register would no longer match the books: the purchase entry carries the cost
+                raise ValidationError("The purchase of this asset is booked at its present cost. Correct the purchase entry "
+                                      "(or reverse it and register the asset again) to change the cost.")
             if st["depreciation"] and accum != old["accum_account"]:
                 raise ValidationError("Depreciation is already recorded to the previous accumulated depreciation account; it cannot be changed.")
             db.conn.execute("UPDATE fixed_assets SET code=?, name=?, account=?, accum_account=?, expense_account=?, "
@@ -346,15 +351,26 @@ def plan_depreciation(db, through, ids=None):
         months = _months_between(frm, end) if end >= frm else 0
         if months <= 0:
             continue
-        amount = sum(month_amounts(a["cost"], a["salvage"], to_minor(st["accumulated"]), st["months_left"], months,
-                                   st["method"], st["factor"], a["life_months"]))
-        if end == st["end_month"]:
-            amount = to_minor(st["remaining"])  # the last month takes the rounding
-        if amount <= 0:
-            continue
-        out.append({"id": a["id"], "code": a["code"], "name": a["name"], "from": frm, "to": end, "months": months,
-                    "amount": to_major(amount), "expense_account": a["expense_account"], "accum_account": a["accum_account"],
-                    "bu_id": a["bu_id"]})
+        amts = list(month_amounts(a["cost"], a["salvage"], to_minor(st["accumulated"]), st["months_left"], months,
+                                  st["method"], st["factor"], a["life_months"]))
+        if end == st["end_month"] and amts:
+            amts[-1] += to_minor(st["remaining"]) - sum(amts)    # the last month takes the rounding
+        # months caught up late are booked in their own financial year (one entry per year), never all in the last one
+        chunks, fy = [], None
+        for i, amt in enumerate(amts):
+            m = _add_months(frm, i)
+            y = yearend.year_of(db, m + "-01")[1]
+            if y != fy:
+                chunks.append({"from": m, "to": m, "months": 0, "amount": 0})
+                fy = y
+            c = chunks[-1]
+            c["to"], c["months"], c["amount"] = m, c["months"] + 1, c["amount"] + amt
+        for c in chunks:
+            if c["amount"] <= 0:
+                continue
+            out.append({"id": a["id"], "code": a["code"], "name": a["name"], "from": c["from"], "to": c["to"], "months": c["months"],
+                        "amount": to_major(c["amount"]), "expense_account": a["expense_account"], "accum_account": a["accum_account"],
+                        "bu_id": a["bu_id"]})
     return {"through": through, "rows": out, "total": round(sum(r["amount"] for r in out), 2)}
 
 
@@ -412,8 +428,9 @@ def due(db, through=None):
     return {"through": p["through"], "count": len(p["rows"]), "total": p["total"]} if p["rows"] else None
 
 
-def run_depreciation(db, through, ids=None, user=""):
-    """Book the depreciation up to a month: one entry per asset, dated the last day of that month."""
+def run_depreciation(db, through, ids=None, user="", on_date=None):
+    """Book the depreciation up to a month: one entry per asset and financial year, dated the last day of its last
+    month (or on_date, a disposal, when that comes first)."""
     plan = plan_depreciation(db, through, ids)
     if not plan["rows"]:
         raise ValidationError(f"Nothing to depreciate up to {plan['through']}")
@@ -422,7 +439,7 @@ def run_depreciation(db, through, ids=None, user=""):
         for r in plan["rows"]:
             span = r["from"] if r["from"] == r["to"] else f"{r['from']} to {r['to']}"
             made.append(acc._insert_entry(
-                db, date=_month_end(r["to"]), kind="Depreciation", memo=f"Depreciation {r['name']} ({r['code']}) — {span}",
+                db, date=min(_month_end(r["to"]), on_date) if on_date else _month_end(r["to"]), kind="Depreciation", memo=f"Depreciation {r['name']} ({r['code']}) — {span}",
                 bu_id=r["bu_id"], ref=f"FA:{r['code']}:DEP:{r['from']}:{r['to']}",
                 lines=[{"account": r["expense_account"], "debit": r["amount"]},
                        {"account": r["accum_account"], "credit": r["amount"]}],
@@ -441,7 +458,9 @@ def plan_disposal(db, aid, d):
     if d.get("depreciate_first", True) not in (False, 0, "0", "false") and a["life_months"]:
         p = plan_depreciation(db, date[:7], [a["id"]])
         if p["rows"]:
-            catch_up = p["rows"][0]
+            rs = p["rows"]
+            catch_up = {**rs[0], "to": rs[-1]["to"], "months": sum(r["months"] for r in rs),
+                        "amount": round(sum(r["amount"] for r in rs), 2)}
             notes.append(f"Depreciation {catch_up['from']} to {catch_up['to']} ({catch_up['amount']:,.2f}) is booked first.")
     accumulated = to_minor(st["accumulated"]) + (to_minor(catch_up["amount"]) if catch_up else 0)
     proceeds = to_minor(num(d.get("proceeds"), "sale price"))
@@ -469,7 +488,7 @@ def dispose(db, aid, d, user=""):
         pl = plan_disposal(db, aid, d)
         a = pl["asset"]
         if pl["catch_up"]:
-            run_depreciation(db, pl["catch_up"]["to"], [a["id"]], user)
+            run_depreciation(db, pl["catch_up"]["to"], [a["id"]], user, on_date=pl["date"])
         return acc._insert_entry(db, date=pl["date"], kind="Asset Disposal", memo=pl["memo"], bu_id=a["bu_id"],
                                  party=text(d.get("buyer")), ref=f"FA:{a['code']}:DISPOSAL", lines=pl["lines"],
                                  meta={"asset": a["code"], "gain": pl["gain"]}, user=user)

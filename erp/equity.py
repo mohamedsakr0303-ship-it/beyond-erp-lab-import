@@ -855,6 +855,18 @@ def plan_appropriate(db, d):
         for k, v in _split(bp, vec).items():
             base[k] += v
         in_units += bp
+    # profit of periods already shared that changed since (a cost or invoice dated back into them): shared now, by
+    # the sharing ratio, so nothing is left unshared
+    late = 0
+    for a in appropriations(db):
+        if a["period_from"] and a["period_to"] and a["period_to"] < sf:
+            now = to_minor(acc.income_statement(db, a["period_from"], a["period_to"])["net_profit"])
+            diff = now - to_minor(a["profit"] or 0)
+            if diff:
+                late += diff
+                notes.append(f"{a['period_from']} to {a['period_to']}: profit changed by {to_major(diff):,.2f} after it was shared "
+                             f"(entries dated back into it); the change is shared now.")
+    profit += late
     for k, v in _split(profit - in_units, ratio).items():
         base[k] += v
     # 2 · legal reserve, out of a profit only, until it reaches the cap
@@ -939,8 +951,13 @@ def plan_appropriate(db, d):
         notes.append("Business units with their own partner shares: each unit's result goes to its owners; the reserve, "
                      "salaries and interest are borne by the sharing ratio.")
     memo = text(d.get("memo")) or f"Profit shared {sf} to {st_}"
-    return _plan(APPROPRIATION, memo, "", lines, st_, {"period_from": sf, "period_to": st_, "profit": M(profit),
-                                                        "statement": statement}, notes=notes)
+    on = st_
+    lock = (db.setting("lock_date") or "").strip()
+    if lock and on <= lock:     # a closed year is shared after it closes: the entry goes on the first open day
+        on = (_dt.date.fromisoformat(lock) + _dt.timedelta(days=1)).isoformat()
+        notes.append(f"The books are closed up to {lock}: the sharing is recorded on {on}, for the period {sf} to {st_}.")
+    return _plan(APPROPRIATION, memo, "", lines, on, {"period_from": sf, "period_to": st_, "profit": M(profit - late),
+                                                      "late": M(late), "statement": statement}, notes=notes)
 
 
 PLANS["appropriate"] = plan_appropriate

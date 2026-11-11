@@ -45,10 +45,23 @@ def default_data_dir() -> Path:
     return base / "BeyondERP"
 
 
+def half_up(x) -> int:
+    """A whole minor unit, halves away from zero (as on a calculator), computed in decimal so 66.5 is never 66.4999."""
+    from decimal import ROUND_HALF_UP, Decimal
+    return int(Decimal(str(x)).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def tax_of(base_minor, rate) -> int:
+    """Tax on an amount in minor units at a rate (0.14), rounded half up in decimal."""
+    from decimal import ROUND_HALF_UP, Decimal
+    return int((Decimal(int(base_minor)) * Decimal(str(rate))).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
 def to_minor(amount) -> int:
     if amount in (None, ""):
         return 0
-    return int(round(float(amount) * 100))
+    from decimal import ROUND_HALF_UP, Decimal
+    return int((Decimal(str(float(amount))) * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def to_major(minor) -> float:

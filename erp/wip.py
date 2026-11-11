@@ -2,7 +2,7 @@
 
 Work done but not invoiced yet is revenue earned (accrual basis, IFRS 15 / EAS 48 over-time recognition) held in the
 unbilled-revenue account (1180) until the invoice goes out. The workbook recalculated it in a formula; here one
-system-managed entry per business unit (ref "WIP:<code>") is rewritten whenever the project's costs, invoices or draft
+system-managed entry per business unit and month (ref "WIP:<code>"; earlier months keep theirs) is rewritten whenever the project's costs, invoices or draft
 invoices change, so the books always carry the right amount:
 
   * wip_mode "cost_plus": work done = direct costs × (1 + fee %); less what is already invoiced.
@@ -68,16 +68,24 @@ def sync(db, bu_id):
     _BUSY["on"] = True
     try:
         tgt = target(db, bu)
-        old = db.one("SELECT id, date FROM journal_entries WHERE ref=? AND status='posted' ORDER BY id DESC LIMIT 1", (ref(bu["code"]),))
-        amt = 0 if tgt is None else tgt - _sum(db, bu["id"], bu["code"], "l.account=?", (unb,))
         dates = [r["d"] for r in db.q(f"""SELECT MAX(e.date) AS d FROM journal_entries e WHERE {acc.LIVE} AND e.bu_id=?
                                           AND COALESCE(e.ref,'')<>? UNION ALL
                                           SELECT MAX(date) FROM extracts WHERE bu_id=? AND status='draft'""",
                                        (bu["id"], ref(bu["code"]), bu["id"])) if r["d"]]
-        date = max(dates) if dates else acc.today()
+        wips = db.q("SELECT id, date FROM journal_entries WHERE ref=? AND status='posted' ORDER BY date, id", (ref(bu["code"]),))
+        # the latest activity, or the month already carrying work in progress (a voided cost corrects its own month)
+        date = max(dates + [w["date"] for w in wips[-1:]]) if (dates or wips) else acc.today()
         lock = (db.setting("lock_date") or "").strip()
-        if lock and (date <= lock or (old and old["date"] <= lock)):
-            return                                  # a closed period is not rewritten
+        if lock and date <= lock:                   # a closed period is never rewritten: the change goes in the next open day
+            import datetime as _dt
+            date = (_dt.date.fromisoformat(lock) + _dt.timedelta(days=1)).isoformat()
+        # one entry per month: earlier months keep their entries (their revenue stays in their period); only this
+        # month's entry is rewritten, to the change since then
+        old = next((w for w in reversed(wips) if w["date"][:7] == date[:7] and not (lock and w["date"] <= lock)), None)
+        earlier = sum((db.one("SELECT COALESCE(SUM(debit-credit),0) n FROM journal_lines WHERE entry_id=? AND account=?",
+                              (w["id"], unb))["n"] or 0) for w in wips if not old or w["id"] != old["id"])
+        held = _sum(db, bu["id"], bu["code"], "l.account=?", (unb,)) + earlier
+        amt = 0 if tgt is None else tgt - held
         if not amt:
             if old:
                 db.conn.execute("DELETE FROM journal_lines WHERE entry_id=?", (old["id"],))

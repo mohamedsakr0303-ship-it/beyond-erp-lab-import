@@ -14,7 +14,7 @@ import json
 import re
 import weakref
 
-from .db import SUBTYPES, normal_for, to_major, to_minor
+from .db import SUBTYPES, normal_for, tax_of, to_major, to_minor
 
 BILLING_BASES = ["Cost-Plus %", "Fixed Price", "Flexible / Settled", "Live Fee (Paid vs Costs)"]
 # "Live Fee": nothing is billed ahead — the fee is whatever the client has actually paid so far over what the project has
@@ -170,6 +170,8 @@ def _validate_lines(db, lines):
             raise ValidationError("A line has no account. Enter the account code.")
         if acc not in accounts:
             raise ValidationError(f"Unknown account {acc!r}")
+        if not accounts[acc]["active"]:
+            raise ValidationError(f"Account {acc} is deactivated. Reactivate it in the chart of accounts to post to it.")
         d = to_minor(num(ln.get("debit"), "debit"))
         c = to_minor(num(ln.get("credit"), "credit"))
         if d and c:
@@ -340,8 +342,8 @@ def _purchase_taxes(db, d, net_minor):
     """Input VAT we can recover and withholding tax we deduct from the supplier."""
     vat_code, vat_rate = tax_code(db, d.get("vat_code"), "vat")
     wht_code, wht_rate = tax_code(db, d.get("wht_code"), "wht")
-    vat = int(round(net_minor * vat_rate))
-    wht = int(round(net_minor * wht_rate))
+    vat = tax_of(net_minor, vat_rate)
+    wht = tax_of(net_minor, wht_rate)
     return vat_code, vat, wht_code, wht
 
 
@@ -686,6 +688,18 @@ def _unlink_documents(db, eid, user=""):
     from . import equity, stockcost
     equity.undo_change(db, entry_id=eid)  # an ownership change booked by this entry goes with it
     db.conn.execute("UPDATE extracts SET status='draft', entry_id=NULL WHERE entry_id=?", (eid,))
+    # the other documents an entry books: back to where they were before posting, so they can be posted again
+    db.conn.execute("UPDATE sub_certificates SET status='approved', entry_id=NULL WHERE entry_id=?", (eid,))
+    db.conn.execute("UPDATE crew_sheets SET paid=0, entry_id=NULL WHERE entry_id=?", (eid,))
+    db.conn.execute("UPDATE equipment_usage SET entry_id=NULL WHERE entry_id=?", (eid,))
+    db.conn.execute("UPDATE maintenance_logs SET entry_id=NULL WHERE entry_id=?", (eid,))
+    db.conn.execute("DELETE FROM sub_recognitions WHERE entry_id=?", (eid,))
+    pos = [r["po_id"] for r in db.q("SELECT DISTINCT po_id FROM po_receipts WHERE entry_id=?", (eid,))]
+    if pos:
+        from . import purchasing
+        db.conn.execute("DELETE FROM po_receipts WHERE entry_id=?", (eid,))
+        for po in pos:
+            purchasing._refresh_status(db, po)
     gone = db.q("SELECT * FROM stock_moves WHERE entry_id=?", (eid,))
     db.conn.execute("DELETE FROM stock_moves WHERE entry_id=?", (eid,))
     db.conn.execute("DELETE FROM material_lines WHERE entry_id=?", (eid,))
@@ -733,6 +747,10 @@ def reverse_entry(db, eid, date=None, user=""):
             raise ValidationError("Only a live, un-reversed entry can be reversed")
         if date and clean_date(date) < e["date"]:
             raise ValidationError(f"The reversal cannot be dated before the entry it reverses ({e['date']})")
+        lock = (db.setting("lock_date") or "").strip()
+        if lock and e["date"] <= lock and db.one("SELECT 1 FROM extracts WHERE entry_id=?", (eid,)):
+            # the invoice belongs to a closed period: it stays issued there; correct it with a credit note now
+            raise ValidationError(f"This invoice is in the closed books (up to {lock}). Issue a credit note in the open period instead.")
         _stock_undo_guard(db, eid)
         lines = [{"account": ln["account"], "debit": ln["credit"], "credit": ln["debit"], "party": ln.get("party", "")}
                  for ln in e["lines"]]
@@ -773,6 +791,10 @@ def edit_entry(db, eid, d, user=""):
         db.conn.execute("DELETE FROM journal_lines WHERE entry_id=?", (eid,))
         db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party) VALUES (?,?,?,?,?)",
                             [(eid, a, dd, c, p) for a, dd, c, p in vlines])
+        # work in progress follows the corrected entry (both the old and the new business unit)
+        new_bu = bu_id_or_none(db, d.get("bu_id", e["bu_id"]))
+        for bu in {e["bu_id"], new_bu}:
+            _wip_after(db, e["kind"], bu)
 
 
 def delete_entry(db, eid):
@@ -1402,7 +1424,7 @@ def invoice_taxes(db, x):
     _, vr = tax_code(db, x.get("vat_code"), "vat")
     _, wr = tax_code(db, x.get("wht_code"), "wht")
     net = to_minor(x["total"])
-    vat, wht = int(round(net * vr)), int(round(net * wr))
+    vat, wht = tax_of(net, vr), tax_of(net, wr)
     party = x.get("customer") or ""
     return {"vat": to_major(vat), "wht": to_major(wht), "gross": to_major(net + vat),
             "receivable": to_major(net + vat - wht), "customer_name": party}
@@ -1571,6 +1593,19 @@ def trial_balance(db, date_from=None, date_to=None, bu_id=None):
     opening = {r["code"]: r["net"] for r in account_totals(db, date_to=_day_before(date_from), bu_id=bu_id)} \
         if date_from else {}
     rows = []
+    # closed financial years (yearend.py): their revenue and costs are retained earnings, so the income-statement
+    # accounts open with this year's movements only, as on the balance sheet
+    closed_to = db.one("SELECT MAX(year_end) e FROM year_closes WHERE year_end<?", (clean_date(date_from),))["e"] if date_from else None
+    if closed_to:
+        pl = {r["code"]: r["net"] for r in account_totals(db, date_to=closed_to, bu_id=bu_id) if r["type"] in ("Revenue", "COGS", "Expense")}
+        for code, n in pl.items():
+            opening[code] = opening.get(code, 0) - n
+        prior = sum(pl.values())
+        if prior:
+            rows.append({"code": "", "name": "Retained earnings — closed years", "type": "Equity", "subtype": "earnings_closed",
+                         "opening_debit": to_major(max(prior, 0)), "opening_credit": to_major(max(-prior, 0)),
+                         "period_debit": 0.0, "period_credit": 0.0,
+                         "debit": to_major(max(prior, 0)), "credit": to_major(max(-prior, 0))})
     for r in account_totals(db, date_from=date_from, date_to=date_to, bu_id=bu_id):
         o = opening.get(r["code"], 0)
         c = o + r["net"]
@@ -2488,9 +2523,16 @@ def tax_summary(db, date_from=None, date_to=None):
     w, p = _where(date_from=date_from, date_to=date_to)
     roles = {r: db.acct(r) for r in ("vat_output", "vat_input", "wht_payable", "wht_receivable")}
 
+    # a settlement (VAT offset against input VAT, tax paid to the authority) moves the balances but is not part of
+    # the period's return: an entry whose every line is on a tax account or on cash / bank
+    tax_accts = [c for c in roles.values() if c]
+    marks = ",".join("?" * len(tax_accts)) or "''"
+    settle = (f"EXISTS (SELECT 1 FROM journal_lines x WHERE x.entry_id=e.id AND x.account NOT IN ({marks}) "
+              f"AND x.account NOT IN (SELECT code FROM accounts WHERE subtype='cash'))")
+
     def mv(code):
         r = db.one(f"SELECT COALESCE(SUM(l.debit),0) dr, COALESCE(SUM(l.credit),0) cr FROM journal_lines l "
-                   f"JOIN journal_entries e ON e.id=l.entry_id WHERE {w} AND l.account=?", p + [code])
+                   f"JOIN journal_entries e ON e.id=l.entry_id WHERE {w} AND l.account=? AND {settle}", p + [code] + tax_accts)
         return r["dr"], r["cr"]
 
     o_dr, o_cr = mv(roles["vat_output"])
@@ -2502,7 +2544,7 @@ def tax_summary(db, date_from=None, date_to=None):
         rows = db.q(f"""SELECT {PARTY} AS party, SUM(l.credit-l.debit) AS n, COUNT(DISTINCT e.id) AS docs,
                         SUM(CASE WHEN e.kind IN ('Journal Voucher','Payment Voucher') AND l.debit>0 THEN l.debit ELSE 0 END) AS settled
                         FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                        WHERE {w} AND l.account=? GROUP BY 1 ORDER BY 1""", p + [code])
+                        WHERE {w} AND l.account=? AND {settle} GROUP BY 1 ORDER BY 1""", p + [code] + tax_accts)
         return [{"party": r["party"], "tax_id": (tax_ids.get(r["party"]) or {}).get("tax_id", ""),
                  "amount": to_major(sign * r["n"]), "documents": r["docs"]} for r in rows if r["n"]]
 
