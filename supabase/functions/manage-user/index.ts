@@ -200,6 +200,7 @@ Deno.serve(async (req) => {
   const shared = id ? await otherCompanies(target) : 0;
 
   let created = false;
+  let untouched = false;
   if (!id) {
     if (!password) return fail(400, "Set a password for this person (they have no sign-in account yet)");
     const r = await call("POST", "/auth/v1/admin/users", {
@@ -213,6 +214,12 @@ Deno.serve(async (req) => {
     if (password) {
       return fail(400, "This person already has a sign-in account (used by another company too). They keep their own password — leave the password empty to add them.");
     }
+  } else if (target !== caller && !(await inThis(target))) {
+    // an account that is not in this company (nor any other): add it, never change its password, email or ban
+    untouched = true;
+    if (password) {
+      return fail(400, "This person already has a sign-in account. They keep their own password — leave the password empty to add them.");
+    }
   } else {
     if (!isSuper && target !== caller && (await inThis(target))) return fail(403, "Only a super administrator can change someone's sign-in account — administrators may add people");
     const upd: any = { ban_duration: active ? "none" : "876000h", user_metadata: { username, full_name: b.full_name || "" } };
@@ -223,12 +230,13 @@ Deno.serve(async (req) => {
   }
 
   // 3. person (username) + membership of this company
-  const finalEmail = shared ? target : wanted;
-  if (!shared && oldEmail && oldEmail !== wanted) {
+  const keep = shared || untouched;        // someone else's account: only the membership is added
+  const finalEmail = keep ? target : wanted;
+  if (!keep && oldEmail && oldEmail !== wanted) {
     await call("PATCH", `/rest/v1/people?email=eq.${enc(oldEmail)}`, { email: wanted });
     await call("PATCH", `/rest/v1/members?email=eq.${enc(oldEmail)}`, { email: wanted });
   }
-  const pr = await call("POST", "/rest/v1/people?on_conflict=email", { email: finalEmail, username: shared ? undefined : username },
+  const pr = await call("POST", "/rest/v1/people?on_conflict=email", { email: finalEmail, username: keep ? undefined : username },
     { ...svc, Prefer: "resolution=merge-duplicates,return=minimal" });
   if (!pr.ok) return fail(400, /duplicate|unique/i.test(msgOf(pr.data)) ? `The username ${username} is already used by another account — choose another` : msgOf(pr.data));
   const m = await call("POST", "/rest/v1/members?on_conflict=company_id,email",

@@ -831,6 +831,8 @@ def delete_entry(db, eid):
 # ------------------------------------------------------------- chart of accounts
 def save_account(db, d, old_code=None):
     code = text(d.get("code"), "code", required=True, maxlen=20)
+    if not re.fullmatch(r"[\w.\-]+", code):          # letters, digits, dot, dash: a code is never markup
+        raise ValidationError("An account code uses letters, digits, dots and dashes only")
     name = text(d.get("name"), "name", required=True)
     name_ar = text(d.get("name_ar"))
     typ = d.get("type")

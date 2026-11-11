@@ -264,7 +264,11 @@ def _throttle(key):
     _fails[key] = recent
     if len(recent) >= MAX_FAILS:
         wait = int((LOCK_MINUTES * 60 - (now - recent[0])) // 60) + 1
-        raise ValidationError(f"Too many incorrect passwords. Try again in {wait} minute{'s' if wait != 1 else ''}.")
+        raise LockedOut(f"Too many incorrect passwords. Try again in {wait} minute{'s' if wait != 1 else ''}.")
+
+
+class LockedOut(ValidationError):
+    """Too many wrong passwords: no other way of signing in is tried either."""
 
 
 # ------------------------------------------------------------------ two-step sign-in (authenticator app, RFC 6238)

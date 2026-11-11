@@ -39,6 +39,7 @@ from . import db as _db
 # Calls that only concern this device (sessions, previews, maintenance) or talk to outside systems — replaying them
 # on every device would be wrong (e.g. submitting an e-invoice to the tax authority once per device).
 LOCAL_ONLY = [r"POST /api/login", r"POST /api/logout", r"POST /api/setup", r"PUT /api/me/password",
+              r"POST /api/me/two-step(?:/off)?", r"POST /api/api-keys", r"DELETE /api/api-keys/\d+",   # secrets of this device
               r"POST /api/maintenance", r"POST /api/offers-preview", r"POST /api/einvoice/test",
               r"POST /api/einvoice/submit", r"POST /api/ereceipts-submit", r"POST /api/einvoice/\d+/refresh", r"POST /api/einvoice/\d+/cancel",
               r"POST /api/[\w-]+-preview(?:/[\w-]+)?", r"\w+ /api/cloud/.*",
@@ -143,7 +144,15 @@ def decode_body(text):
 
 def _strip_password(method, path, body_text):
     """Passwords never go to the workspace: people sign in there with their own account. Returns (logged body,
-    password to set on this device only)."""
+    password to set on this device only). The e-invoice keys stay on the device they are typed on too."""
+    if urlparse(path).path == "/api/einvoice/settings" and body_text:
+        try:
+            body = json.loads(body_text)
+        except ValueError:
+            return body_text, None
+        for k in _db.ETA_SECRETS:
+            body.pop(k, None)
+        return json.dumps(body, ensure_ascii=False), None
     if not re.match(r"^/api/users(/\d+)?$", urlparse(path).path) or not body_text:
         return body_text, None
     try:
@@ -255,9 +264,22 @@ def ensure_app_user(db, email, admin=False):
 LOCAL_TABLES = ("cloud_local", "sessions", "ai_threads", "ai_usage")   # left out of workspace copies (device-only)
 
 
+# what a workspace copy never carries (any member can read the copies): sign-in secrets, tool keys, e-invoice keys
+SCRUB = ("UPDATE users SET pw_hash='!', totp_secret=''", "DELETE FROM api_keys",
+         "UPDATE settings SET value='' WHERE key IN (" + ",".join(f"'{k}'" for k in _db.ETA_SECRETS) + ")")
+
+
+def device_secrets(db):
+    """This device's own secrets, put back after a workspace copy is restored (matched by username, as ids change)."""
+    return {"_user_secrets": db.q("SELECT username, pw_hash, totp_secret FROM users WHERE pw_hash<>'!' OR COALESCE(totp_secret,'')<>''"),
+            "_eta_secrets": db.q("SELECT key, value FROM settings WHERE key IN (" + ",".join("?" * len(_db.ETA_SECRETS)) + ") AND value<>''",
+                                 _db.ETA_SECRETS),
+            "_api_keys": db.q("SELECT k.*, u.username FROM api_keys k JOIN users u ON u.id=k.user_id")}
+
+
 def _keep_on_restore(db):
     # sessions are dropped: user ids change with the restored books, so everyone signs in again
-    return {"cloud_local": db.q("SELECT * FROM cloud_local"), "sessions": []}
+    return {"cloud_local": db.q("SELECT * FROM cloud_local"), "sessions": [], **device_secrets(db)}
 
 
 def snapshot_native(db):
@@ -267,6 +289,11 @@ def snapshot_native(db):
         c = _db.sqlite3.connect(str(path))
         for t in LOCAL_TABLES:
             c.execute(f"DELETE FROM {t}")
+        for q in SCRUB:
+            try:
+                c.execute(q)
+            except _db.sqlite3.OperationalError:      # older books without that table / column
+                pass
         c.commit()
         c.execute("VACUUM")
         c.close()
@@ -288,6 +315,17 @@ def restore_native(db, data_b64):
 def restore_local_rows(db, keep):
     with db.lock:
         db._init()  # schema upgrades if the copy came from an older version
+        keep = dict(keep)
+        for r in keep.pop("_user_secrets", None) or []:
+            db.conn.execute("UPDATE users SET pw_hash=?, totp_secret=? WHERE username=?", (r["pw_hash"], r["totp_secret"] or "", r["username"]))
+        for r in keep.pop("_eta_secrets", None) or []:
+            db.conn.execute("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                            (r["key"], r["value"]))
+        for r in keep.pop("_api_keys", None) or []:
+            u = db.conn.execute("SELECT id FROM users WHERE username=?", (r["username"],)).fetchone()
+            if u:
+                db.conn.execute("INSERT OR IGNORE INTO api_keys(user_id,name,key_hash,prefix,read_only,created_by,created_at) VALUES (?,?,?,?,?,?,?)",
+                                (u[0], r["name"], r["key_hash"], r["prefix"], r["read_only"], r["created_by"], r["created_at"]))
         for t, rows in keep.items():
             db.conn.execute(f"DELETE FROM {t}")
             for r in rows:

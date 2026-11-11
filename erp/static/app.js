@@ -2081,7 +2081,7 @@ function filterBar(q, fields, extra = "") {
     else if (f === "attach") parts.push(`<label class="f">${esc(L2("Attachment", "المرفقات"))}<select name="has_attachment"><option value="">${t("all")}</option><option value="1" ${q.has_attachment === "1" ? "selected" : ""}>${esc(L2("With attachment", "بمرفق"))}</option></select></label>`);
     else if (Array.isArray(f) && f[0] === "kind") parts.push(`<label class="f">${t("kind")}<select name="kind"><option value="">${t("all")}</option>${f[1].map(k => `<option value="${esc(k)}" ${q.kind === k ? "selected" : ""}>${esc(tl(k))}</option>`).join("")}</select></label>`);
     else if (Array.isArray(f) && f[0] === "select") parts.push(`<label class="f">${esc(f[2])}<select name="${f[1]}"><option value="">${t("all")}</option>${f[3].map(([v, l]) => `<option value="${esc(v)}" ${String(q[f[1]]) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`);
-    else if (f === "account") parts.push(`<label class="f">${t("account")}<select name="account"><option value="">${t("all")}</option>${["1", "2", "3", "4", "5", "6", "7"].map(x => `<option value="${x}" ${q.account === x ? "selected" : ""}>${x}000s</option>`).join("")}${S.boot.accounts.map(a => `<option value="${a.code}" ${q.account === a.code ? "selected" : ""}>${esc(a.code)} ${esc(aname(a))}</option>`).join("")}</select></label>`);
+    else if (f === "account") parts.push(`<label class="f">${t("account")}<select name="account"><option value="">${t("all")}</option>${["1", "2", "3", "4", "5", "6", "7"].map(x => `<option value="${x}" ${q.account === x ? "selected" : ""}>${x}000s</option>`).join("")}${S.boot.accounts.map(a => `<option value="${esc(a.code)}" ${q.account === a.code ? "selected" : ""}>${esc(a.code)} ${esc(aname(a))}</option>`).join("")}</select></label>`);
     else if (f === "party") parts.push(`<label class="f">${t("party")}<input name="party" value="${esc(q.party || "")}" list="fbparty" autocomplete="off"></label>`);
     else if (f === "warehouse") parts.push(`<label class="f">${t("warehouse")}<select name="warehouse_id"><option value="">${t("all")}</option>${whOpts().map(([v, l]) => `<option value="${v}" ${String(q.warehouse_id) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`);
     else if (f === "compare") parts.push(`<label class="f">${t("compare")}<select name="compare">${["none", "month", "quarter", "year"].map(c => `<option value="${c}" ${(q.compare || "none") === c ? "selected" : ""}>${t("c_" + c)}</option>`).join("")}</select></label>`);
@@ -2591,7 +2591,7 @@ function fillForm(f, vals) {
     else el.value = v; });
 }
 function journalLinesEditor(lines) {
-  const opts = S.boot.accounts.filter(a => a.active).map(a => `<option value="${a.code}">${esc(a.code)} ${esc(aname(a))}</option>`).join("");
+  const opts = S.boot.accounts.filter(a => a.active).map(a => `<option value="${esc(a.code)}">${esc(a.code)} ${esc(aname(a))}</option>`).join("");
   const row = l => `<tr><td><select data-skip="1" class="ja"><option value="">—</option>${l.account ? opts.replace(`value="${l.account}"`, `value="${l.account}" selected`) : opts}</select></td>
       <td><input data-skip="1" class="jd num" type="number" step="any" value="${l.debit || ""}" data-input="jbal"></td><td><input data-skip="1" class="jc num" type="number" step="any" value="${l.credit || ""}" data-input="jbal"></td>
       <td><input data-skip="1" class="jp" value="${esc(l.party || "")}" list="jparties" style="min-width:90px"></td>

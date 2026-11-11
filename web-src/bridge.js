@@ -194,6 +194,12 @@ def cloud_local(key, value=None, write=False):
 def cloud_device():
     return C.device_id(APP.db)
 
+def cloud_device_secrets():
+    return json.dumps(C.device_secrets(APP.db), default=str)
+
+def cloud_scrub_sql():
+    return json.dumps(list(C.SCRUB))
+
 def cloud_after_restore(keep_json):
     keep = json.loads(keep_json)
     C.restore_local_rows(APP.db, keep if isinstance(keep, dict) else {"cloud_local": keep, "sessions": []})
@@ -296,7 +302,9 @@ def cloud_new_books(name, email):
       const gz = async (bytes, dir) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(dir ? new CompressionStream("gzip") : new DecompressionStream("gzip"))).arrayBuffer());
       const toB64 = bytes => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); };
       async function makeSnapshot() {
-        const copy = new SQL.Database(exportDb()); ["cloud_local", "sessions", "ai_threads", "ai_usage"].forEach(t => { try { copy.run("DELETE FROM " + t); } catch { /* older books */ } }); copy.run("VACUUM");
+        const copy = new SQL.Database(exportDb()); ["cloud_local", "sessions", "ai_threads", "ai_usage"].forEach(t => { try { copy.run("DELETE FROM " + t); } catch { /* older books */ } });
+        // sign-in secrets, tool keys and e-invoice keys never go into a copy any member can read
+        JSON.parse(P("cloud_scrub_sql")()).forEach(q => { try { copy.run(q); } catch { /* older books */ } }); copy.run("VACUUM");
         const bytes = copy.export(); copy.close(); return toB64(await gz(bytes, true));
       }
       // keepAll: catching up from a newer copy keeps this device's own rows (sign-ins, assistant chats) — joining keeps only its settings
@@ -307,6 +315,7 @@ def cloud_new_books(name, email):
           catch { /* older books */ }
         }
         if (!keepAll) keep.sessions = [];
+        try { Object.assign(keep, JSON.parse(P("cloud_device_secrets")())); } catch { /* older books */ }   // this device's own secrets stay
         const bytes = await gz(await b64bytes(b64), false);
         const old = db; db = new SQL.Database(bytes); db.run("PRAGMA foreign_keys = ON"); old.close();
         P("cloud_after_restore")(JSON.stringify(keep));

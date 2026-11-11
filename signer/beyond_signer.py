@@ -734,7 +734,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if u.path == "/v1/hello":                     # no key: lets the ERP tell "not running" from "not paired"
             return self._send(200, {"signer": "BeyondERP Signer", "version": VERSION})
         key = self.headers.get("X-Signer-Key") or ""
-        if not secrets.compare_digest(key, self.app.cfg.get("pairing_key") or ""):
+        if not secrets.compare_digest(str(key or "").encode("utf-8"), (self.app.cfg.get("pairing_key") or "").encode("utf-8")):
             return self._send(401, {"error": "Pair the ERP with this Signer: paste the Signer's pairing key in the ERP.", "code": "not_paired"})
         try:
             body = json.loads(raw.decode("utf-8")) if raw else {}

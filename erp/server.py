@@ -281,9 +281,14 @@ def login(ctx):
         token, user = auth.login(ctx.db, ctx.body.get("username"), ctx.body.get("password"), ctx.body.get("code"))
     except auth.SecondStepNeeded as e:          # right password: now the code from the authenticator app
         return ok({"error": str(e), "two_step": True}, 400)
+    except auth.LockedOut:
+        raise
     except acc.ValidationError:
         # a device joined to the shared workspace also takes the workspace password (the one used on the website)
-        found = _workspace_login(ctx, acc.text(ctx.body.get("username")), ctx.body.get("password") or "")
+        try:
+            found = _workspace_login(ctx, acc.text(ctx.body.get("username")), ctx.body.get("password") or "")
+        except auth.SecondStepNeeded as e:
+            return ok({"error": str(e), "two_step": True}, 400)
         if not found:
             raise
         token, user = found
@@ -308,6 +313,9 @@ def _workspace_login(ctx, name, password):
                    "ORDER BY lower(email)=? DESC LIMIT 1", (email, key, name.lower(), email))
     if not u:
         return None
+    if u["totp_secret"] and not auth.totp_ok(u["totp_secret"], ctx.body.get("code"), u["id"]):
+        # two-step sign-in is on for this person: the workspace password alone is not enough
+        raise auth.SecondStepNeeded("Enter the 6-digit code from your authenticator app")
     import secrets
     token = secrets.token_urlsafe(32)
     ctx.db.x("INSERT INTO sessions(token,user_id,expires) VALUES (?,?,datetime('now',?))",
@@ -1144,7 +1152,11 @@ def api_keys_list(ctx):
 
 @route("POST", "/api/api-keys", "settings.api", "edit")
 def api_keys_add(ctx):
-    u = ctx.db.one("SELECT id FROM users WHERE username=? AND active=1", (ctx.body.get("username") or ctx.user["username"],))
+    who = ctx.body.get("username") or ctx.user["username"]
+    if who != ctx.user["username"] and not ctx.user.get("is_super"):
+        # a key acts as its person: only a super administrator may make one for someone else
+        raise PermissionError("Only a super administrator can create an API key for another person. Create one for yourself.")
+    u = ctx.db.one("SELECT id FROM users WHERE username=? AND active=1", (who,))
     if not u:
         raise acc.ValidationError("Choose a person")
     kid, key = auth.create_api_key(ctx.db, u["id"], ctx.body.get("name"), ctx.body.get("read_only", True) is not False, ctx.user["username"])
@@ -2843,6 +2855,19 @@ def _att_access(ctx, owner, oid, edit=False):
         ok_ = any(ctx.can(p, "add") if edit else ctx.can(p) for p in perms)
     if not ok_:
         raise PermissionError()
+    from . import scope
+    sc = scope.of(ctx.db, ctx.user)
+    if sc and owner != "approval":     # someone limited to some projects: the files of their projects only
+        table = attachments.OWNERS[owner][0]
+        rid = attachments._owner(ctx.db, owner, oid)
+        if owner == "bu":
+            bu = rid
+        elif any(c[1] == "bu_id" for c in ctx.db.conn.execute(f"PRAGMA table_info({table})")):
+            bu = ctx.db.one(f"SELECT bu_id FROM {table} WHERE id=?", (rid,))["bu_id"]
+        else:
+            return
+        if not sc.ok(bu):
+            raise PermissionError()
 
 
 @route("GET", "/api/attachments")
@@ -5089,7 +5114,8 @@ def industries_apply(ctx):
 
 def _with_secrets(ctx):
     """A super administrator's full backup carries the keys of connected tools too (unless they untick it)."""
-    return bool(ctx.user.get("is_super")) and ctx.q.get("secrets") != "0"
+    # never through an API key: a key is for tools, and a leaked key must not carry the company's other secrets
+    return bool(ctx.user.get("is_super")) and ctx.q.get("secrets") != "0" and not getattr(ctx, "api_key", None)
 
 
 @route("GET", "/api/export/json", "import_export.export")
@@ -5350,12 +5376,34 @@ def _need_super(ctx, what):
 def user_add(ctx):
     if not ctx.user.get("is_super"):
         ctx.body.pop("grants", None)          # special rights: given by a super administrator only
+        _no_more_than_me(ctx)
     if ctx.body.get("is_admin") or ctx.body.get("is_super"):
         _need_super(ctx, "create administrators")
     _licence_seat(ctx)
     uid = auth.create_user(ctx.db, ctx.body)
     ctx.log("user.add", ctx.body.get("username"))
     return ok({"id": uid})
+
+
+def _no_more_than_me(ctx):
+    """Someone who is not a super administrator cannot make an account that can do more than they can: each
+    screen is capped at their own level, the new person sees only their projects, and needs approval if they do."""
+    b = ctx.body
+    mine = json.loads((ctx.db.one("SELECT perms FROM users WHERE id=?", (ctx.user["id"],)) or {}).get("perms") or "{}")
+    if isinstance(b.get("perms"), dict):
+        cap = {}
+        for k, v in b["perms"].items():
+            if k.startswith("_"):
+                continue
+            have = auth.level_of(ctx.user, k)
+            cap[k] = v if v in auth.LEVELS and auth.LEVELS.index(v) <= auth.LEVELS.index(have) else have
+        b["perms"] = cap
+    my_bus = mine.get("_bus") if isinstance(mine.get("_bus"), list) else []
+    if my_bus:
+        asked = [str(x) for x in (b.get("projects") or []) if str(x) in set(map(str, my_bus))]
+        b["projects"] = asked or list(my_bus)
+    if ctx.user.get("needs_approval"):
+        b["needs_approval"] = True
 
 
 @route("PUT", "/api/users/<uid>", "users.users", "edit")
@@ -5673,6 +5721,11 @@ def two_step_get(ctx):
 
 @route("POST", "/api/me/two-step")
 def two_step_on(ctx):
+    from .db import CLOCK
+    u = ctx.db.one("SELECT totp_secret FROM users WHERE id=?", (ctx.user["id"],))
+    if u and u["totp_secret"] and CLOCK["at"] is None:
+        # replacing an active secret with only a session would let a stolen session lock the owner out
+        raise acc.ValidationError("Two-step sign-in is already on. Turn it off first (with a code or your password), then set it up again.")
     codes = auth.totp_enable(ctx.db, ctx.user["id"], acc.text(ctx.body.get("secret")), ctx.body.get("code"))
     ctx.log("two-step.on", ctx.user["username"])
     return ok({"on": True, "recovery_codes": codes})
@@ -6605,6 +6658,7 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             if sc:                                    # a person limited to some projects
                 scope.guard(db, sc, method, url.path, q, body)
             ctx = Ctx(app, db, user, token, q, body, raw, headers)
+            ctx.api_key = api_key
             ctx.action = action
             ctx.cloud_hook = getattr(app, "cloud", None)
             ctx.scope = sc
@@ -6679,7 +6733,7 @@ class Handler(BaseHTTPRequestHandler):
     def static(self, path):
         rel = path.lstrip("/") or "index.html"
         target = (STATIC / rel).resolve()
-        if not str(target).startswith(str(STATIC)) or not target.is_file():
+        if not target.is_relative_to(STATIC.resolve()) or not target.is_file():
             target = STATIC / "index.html"
         ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/javascript",):
