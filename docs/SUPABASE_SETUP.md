@@ -155,6 +155,11 @@ saves a full copy (`snapshots`) every 300 changes so new devices start fast.
 
 * Only members can read or write; writes go only through the database functions in the migration file, which keep
   the log gap-free and stamp who wrote each change. Each user's permission matrix is re-checked on every device.
+* **Every member's device holds the whole books.** Each device keeps a full copy and rebuilds it from the log, so
+  screen permissions and project limits decide what the app shows and lets a person do, not what their device
+  stores: someone with the technical know-how could read the full copy on their own device. Give a workspace seat
+  only to people who may hold the company's whole books; for others, use the desktop edition on a company computer.
+  Secrets never go into the log or the copies (passwords, two-step secrets, tool keys, e-invoice keys).
 * Passwords never go to Supabase's tables: people sign in with Supabase accounts; local desktop passwords stay on the
   device where they were set.
 * After an app update, reload the page; a device with an older version stops writing until updated.
