@@ -77,6 +77,44 @@ class Local(unittest.TestCase):
         auth._fails.clear()
 
 
+class Exports(unittest.TestCase):
+    """A whole-book file carries everything: only for someone who can see every section and every project."""
+
+    @classmethod
+    def setUpClass(cls):
+        from erp import demo
+        cls.db = db = Database(":memory:")
+        demo.load(db, "admin")
+        auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
+        auth.create_user(db, {"username": "exp", "password": "pw123456", "perms": {"import_export": "edit", "sales": "view"}})
+        code = db.one("SELECT code FROM business_units ORDER BY id")["code"]
+        auth.create_user(db, {"username": "site", "password": "pw123456", "projects": [code],
+                              "perms": {m: "edit" for m in {r[2] for r in server.ROUTES if r[2]}}})
+        cls.app = App()
+        cls.app.db, cls.app.backup, cls.app.backups = db, (lambda *a, **k: None), (lambda: [])
+        cls.tok = {u: auth.login(db, u, "pw123456")[0] for u in ("boss", "exp", "site")}
+
+    def st(self, who, method, path, body=b""):
+        return server.handle(self.app, method, path, {"x-session": self.tok[who], "x-requested-with": "BeyondERP"}, body).status
+
+    def test_whole_books_only_with_full_access(self):
+        for p in ("/api/export/workbook", "/api/export/json"):
+            self.assertEqual(self.st("exp", "GET", p), 403, p)
+            self.assertEqual(self.st("site", "GET", p), 403, p)        # every screen, but one project
+            self.assertEqual(self.st("boss", "GET", p), 200, p)
+        self.assertEqual(self.st("exp", "POST", "/api/import?format=json&dry_run=1", b'{"sheets": {}}'), 403)
+
+    def test_one_sheet_needs_its_screen(self):
+        self.assertEqual(self.st("exp", "GET", "/api/export/csv?sheet=Sales%20Invoices"), 200)
+        for sheet in ("Payroll", "Journal%20Vouchers", "Partners"):
+            self.assertEqual(self.st("exp", "GET", f"/api/export/csv?sheet={sheet}"), 403, sheet)
+        self.assertEqual(self.st("exp", "GET", "/api/export/csv?sheet=Payroll&template=1"), 200)   # an empty template is fine
+        self.assertEqual(self.st("site", "GET", "/api/export/csv?sheet=Sales%20Invoices"), 403)   # all projects' rows
+
+    def test_importing_a_sheet_follows_its_screen(self):
+        self.assertEqual(self.st("exp", "POST", "/api/import-preview/analyze?sheet=Payroll&filename=x.csv", b"a,b\n1,2\n"), 403)
+
+
 class WorkspaceCopies(unittest.TestCase):
     def test_copies_carry_no_secrets_and_a_device_keeps_its_own(self):
         db = Database(":memory:")

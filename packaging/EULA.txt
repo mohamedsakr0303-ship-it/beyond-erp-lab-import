@@ -17,6 +17,13 @@ you may not, in whole or in part:
 Customers who subscribe to the hosted service receive only a limited, non-exclusive, non-transferable right to use the
 service for their own internal business purposes during their subscription. Customer data belongs to the customer.
 
+Shared workspace and devices. The customer decides who receives a seat and what rights each person has. Rights and
+project limits govern what each person may see and do in the Software. The customer is responsible for the people it
+gives seats to and for the devices they use, and must not give a seat to anyone who is not authorised to work with
+the customer's books. Any attempt by a user to obtain data beyond the rights the customer gave them, including by
+reverse-engineering, tampering with the Software or its stored data, or calling its services directly, is a breach
+of this licence.
+
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. To the maximum extent permitted by law, BEYONDERP is
 not liable for any indirect, incidental or consequential damages arising from the use of the Software.
 

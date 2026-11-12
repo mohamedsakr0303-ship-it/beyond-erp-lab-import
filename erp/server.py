@@ -5114,6 +5114,7 @@ def report(ctx, name):
 @route("GET", "/api/export/workbook", "import_export.export")
 def export_workbook(ctx):
     from . import workbook
+    _need_full_books(ctx)
     lang = "ar" if ctx.q.get("lang") == "ar" else "en"
     if ctx.q.get("files") == "1":     # the workbook plus every attached file, in month folders, as one .zip
         return download(interchange.workbook_zip(ctx.db, lang, secrets=_with_secrets(ctx)), f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}_with_files.zip",
@@ -5167,6 +5168,27 @@ def industries_apply(ctx):
     return ok(r)
 
 
+FULL_BOOKS_ONLY = "Exporting or importing the whole books needs access to every section and every project"
+
+
+def _full_books(ctx):
+    """Whether this person may take the whole books out (or put them in): a super administrator, or someone who can see
+    every section and is not limited to some projects. A whole-book file carries everything, so anything less would
+    hand over what the screens keep from them."""
+    u = ctx.user or {}
+    if u.get("is_super"):
+        return True
+    if getattr(ctx, "scope", None) is not None or (u.get("perms") or {}).get("_bus"):
+        return False
+    sections = {r[2].split(".")[0] for r in ROUTES if r[2]}
+    return all(auth.can(u, m) for m in sections)
+
+
+def _need_full_books(ctx):
+    if not _full_books(ctx):
+        raise PermissionError(FULL_BOOKS_ONLY)
+
+
 def _with_secrets(ctx):
     """A super administrator's full backup carries the keys of connected tools too (unless they untick it)."""
     # never through an API key: a key is for tools, and a leaked key must not carry the company's other secrets
@@ -5175,6 +5197,7 @@ def _with_secrets(ctx):
 
 @route("GET", "/api/export/json", "import_export.export")
 def export_json(ctx):
+    _need_full_books(ctx)
     return download(interchange.to_json(ctx.db, secrets=_with_secrets(ctx)).encode("utf-8"), f"BEYOND_ERP_{acc.today()}.json",
                     "application/json; charset=utf-8")
 
@@ -5189,6 +5212,9 @@ def export_csv(ctx):
         raise PermissionError()
     ar = ctx.q.get("lang") == "ar"
     s = interchange.SHEET_BY_NAME[sheet]
+    # one sheet's data: only for someone who may open that sheet's screens (and the whole sheet: every project)
+    if not tpl and not _full_books(ctx) and not (s.get("module") and ctx.can(s["module"]) and getattr(ctx, "scope", None) is None):
+        raise PermissionError("You do not have access to this data")
     name = (s.get("ar") or sheet) if ar else sheet
     return download(interchange.to_csv(ctx.db, sheet, template=tpl, lang="ar" if ar else "en"),
                     re.sub(r"\W+", "_", name).strip("_") + (("_قالب" if ar else "_template") if tpl else "") + ".csv", "text/csv; charset=utf-8")
@@ -5199,7 +5225,9 @@ def _sheet_can(ctx, name, level="add"):
     from . import importkit
     importkit.sheet(name)
     perm = importkit.SHEET_PERM.get(name)
-    if not (ctx.can("import_export.import", "edit") or (perm and ctx.can(perm, level))):
+    # the import right alone opens every sheet only to someone who can see every section and project; otherwise the
+    # sheet's own screen decides (an import shows and changes that sheet's records)
+    if not ((ctx.can("import_export.import", "edit") and _full_books(ctx)) or (perm and ctx.can(perm, level))):
         raise PermissionError()
     if perm and not auth.action_ok(ctx.user, perm, "import"):
         raise PermissionError(ACTION_DENIED["import"])
@@ -5352,6 +5380,7 @@ def _future_dated(data):
 
 @route("POST", "/api/import", "import_export.import", "edit")
 def do_import(ctx):
+    _need_full_books(ctx)
     fmt = ctx.q.get("format") or "xlsx"
     raw = ctx.raw
     if not raw:
