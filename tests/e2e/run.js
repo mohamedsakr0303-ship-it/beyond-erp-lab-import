@@ -266,8 +266,11 @@ async function budget(page) {
   await page.dispatchEvent('tr[data-acc="5010"] .bt', "change");
   expect(await page.inputValue('tr[data-acc="5010"] .bm[data-m="0"]') === "2000", "annual total not spread over the months");
   await page.click("[data-a=bsave]");
-  await page.waitForTimeout(1200);
-  const saved = db("sql", "SELECT months FROM budgets WHERE year=? AND bu_id=? AND account='5010'", year, bu);
+  let saved = [];
+  for (let i = 0; i < 16 && !saved.length; i++) {          // the save reaches the books within a few seconds on a busy machine
+    await page.waitForTimeout(500);
+    saved = db("sql", "SELECT months FROM budgets WHERE year=? AND bu_id=? AND account='5010'", year, bu);
+  }
   expect(saved.length === 1 && JSON.parse(saved[0].months).reduce((a, b) => a + b, 0) === 2400000, "budget not saved: " + JSON.stringify(saved));
 
   const before = actual();

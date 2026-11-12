@@ -230,7 +230,15 @@ def _set_local_password(db, op, reply, pw):
 
 
 def followups(db, method, target, body):
-    """After a device talks to the tax authority, share the resulting e-invoice status with everyone."""
+    """After a device talks to the tax authority, share the resulting e-invoice / e-receipt status with everyone."""
+    if f"{method} {urlparse(target).path}" == "POST /api/ereceipts-submit":
+        ids = [int(i) for i in (body or {}).get("ids") or []]
+        if not ids:          # "send all": the receipts of the latest submission
+            last = db.one("SELECT submission_id FROM ereceipts WHERE submission_id<>'' ORDER BY id DESC LIMIT 1")
+            ids = [r["id"] for r in db.q("SELECT id FROM ereceipts WHERE submission_id=?", (last["submission_id"],))] if last else []
+        return [("PUT", f"/api/ereceipts/{r['id']}/eta-state", json.dumps({k: r[k] for k in ("status", "submission_id", "error")},
+                                                                          ensure_ascii=False).encode())
+                for r in (db.one("SELECT id, status, submission_id, error FROM ereceipts WHERE id=?", (i,)) for i in ids) if r]
     m = ETA_CALLS.match(f"{method} {urlparse(target).path}")
     if not m:
         return []
@@ -677,12 +685,21 @@ class CloudSync:
         seq, snap = last_seq(self.db), int(local_get(self.db, "snap_seq", "0") or 0)
         if seq - snap < (1 if force else SNAPSHOT_EVERY):
             return
+        if not force and time.time() < float(local_get(self.db, "snap_retry_at", "0") or 0):
+            return                                   # the last copy failed: wait before trying again
         try:
             self.client().rpc("put_snapshot", {"p_company": self._co(), "p_seq": seq, "p_version": __version__,
                                                "p_data": snapshot_native(self.db)}, self.token())
             local_set(self.db, "snap_seq", seq)
-        except (PermissionError, RuntimeError, Offline):
-            local_set(self.db, "snap_seq", seq)  # not allowed or offline: try again after the next batch
+            local_set(self.db, "snap_wait", "0")
+            local_set(self.db, "snap_retry_at", "0")
+        except PermissionError:
+            local_set(self.db, "snap_seq", seq)      # not allowed for this member: the next batch, not a loop
+        except (RuntimeError, Offline):
+            # failed (offline, too large, a server error): the copy is still owed — retry after 5 min, doubling up to 1 h
+            wait = min(3600, max(300, 2 * float(local_get(self.db, "snap_wait", "0") or 0)))
+            local_set(self.db, "snap_wait", str(wait))
+            local_set(self.db, "snap_retry_at", str(time.time() + wait))
 
     def touch(self):
         """Someone is using the app (called on every API request) — keep syncing at the quick pace."""

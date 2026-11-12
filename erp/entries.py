@@ -124,9 +124,12 @@ def touch(db, tid):
     """A model was just used to post an entry."""
     if not tid or not any(t["id"] == tid for t in load(db)):
         return
-    import datetime as _dt
+    from .db import now
     u = used(db)
-    u[tid] = _dt.datetime.now().isoformat(timespec="microseconds")     # two uses in the same second still have an order
+    # the app's clock (the same on every device a change is replayed on), then a running count, so two uses in the same
+    # second still keep their order
+    n = max((int(v.rsplit("#", 1)[1]) for v in u.values() if isinstance(v, str) and "#" in v), default=0) + 1
+    u[tid] = f"{now().isoformat()}#{n:08d}"
     db.set_setting("entry_types_used", json.dumps(u))
 
 

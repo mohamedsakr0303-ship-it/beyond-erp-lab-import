@@ -443,6 +443,9 @@ SHEETS = [
               C("eta_uuid", "E-Invoice UUID", "معرّف الفاتورة الإلكترونية", width=16, note="filled in by the app"),
               C("eta_status", "E-Invoice Status", "حالة الفاتورة الإلكترونية", width=12, note="filled in by the app"),
               C("eta_long_id", "E-Invoice Long ID", "المعرّف الطويل", width=12, note="filled in by the app"),
+              C("eta_submission", "E-Invoice Submission", "رقم الإرسال", width=12, note="filled in by the app"),
+              C("eta_submitted_at", "E-Invoice Sent At", "تاريخ الإرسال", width=12, note="filled in by the app"),
+              C("eta_checked_at", "E-Invoice Checked At", "تاريخ آخر تحقق", width=12, note="filled in by the app"),
               C("eta_signed", "Signed E-Invoice", "الفاتورة الموقّعة", width=10, note="filled in by the app (the signed document)"),
               C("x_sign", "credit note: −1", "إشعار دائن: −1", kind="calc", width=6, calc='=IF(LEFT({doc_type}&"",1)="C",-1,1)'),
               C("amount", "Net Amount", "صافي المبلغ", kind="calc",
@@ -770,6 +773,7 @@ def export_data(db):
                                       "original": (db.one("SELECT number FROM extracts WHERE id=?", (x["ref_id"],)) or {}).get("number", "") if x.get("ref_id") else "",
                                       "reason": x.get("eta_reason") or "", "einv_template": x.get("einv_template") or "",
                                       "eta_uuid": x.get("eta_uuid") or "", "eta_status": x.get("eta_status") or "", "eta_long_id": x.get("eta_long_id") or "",
+                                      **{k: x.get(k) or "" for k in ("eta_submission", "eta_submitted_at", "eta_checked_at")},
                                       "eta_signed": x.get("eta_signed") if len(x.get("eta_signed") or "") < 30000 else ""})
         for ln in db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (x["id"],)):
             pct = ln.get("pct")
@@ -2605,7 +2609,8 @@ def _imp_invoices(db, data, errors, counts, user, stats):
                     continue
                 if old["status"] == "posted":
                     st = str(old.get("eta_status") or "").lower()
-                    if old.get("eta_uuid") and st and not any(w in st for w in ("cancel", "reject", "invalid")):
+                    from . import einvoice
+                    if einvoice.at_eta(old):
                         raise acc.ValidationError(f"Invoice {number} was submitted to the tax authority. Cancel the e-invoice first, then import the change.")
                     if old["entry_id"]:
                         acc.void_entry(db, old["entry_id"], "Updated from an imported file", user)
@@ -2617,7 +2622,7 @@ def _imp_invoices(db, data, errors, counts, user, stats):
             if want_posted:
                 acc.post_extract(db, xid, user=user, ar_account=r.get("ar_account") or None,
                                  revenue_account=r.get("revenue_account") or None)
-            eta = {k: acc.text(r.get(k), maxlen=60 if k != "eta_long_id" else 120) for k in ("eta_uuid", "eta_status", "eta_long_id") if r.get(k)}
+            eta = {k: acc.text(r.get(k), maxlen=60 if k != "eta_long_id" else 120) for k in ("eta_uuid", "eta_status", "eta_long_id", "eta_submission", "eta_submitted_at", "eta_checked_at") if r.get(k)}
             if r.get("eta_signed"):
                 eta["eta_signed"] = str(r["eta_signed"])[:30000]
             if eta:                       # the e-invoice as the tax authority has it (a backup brought back)

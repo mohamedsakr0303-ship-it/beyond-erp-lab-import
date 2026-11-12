@@ -147,7 +147,7 @@ def build_document(db, extract_id, version=None):
                                  "floor": "", "room": "", "landmark": "", "additionalInformation": ""},
                      "type": rtype, "id": receiver_id, "name": cust_name},
         "documentType": doc_type, "documentTypeVersion": version,
-        "dateTimeIssued": f"{x['date']}T{_dt.datetime.utcnow():%H:%M:%S}Z",
+        "dateTimeIssued": issued_at(x["date"]),
         "taxpayerActivityCode": s.get("eta_activity_code", ""), "internalID": x["number"],
         "purchaseOrderReference": (tpl or {}).get("po_ref") or "", "purchaseOrderDescription": (tpl or {}).get("po_desc") or "",
         "salesOrderReference": x.get("boq_title") or "", "salesOrderDescription": (tpl or {}).get("so_desc") or "", "proformaInvoiceNumber": "",
@@ -158,9 +158,26 @@ def build_document(db, extract_id, version=None):
     }
     if refs:
         doc["references"] = refs                            # a credit / debit note names the invoice it corrects
+    # the document must say what the books say: rounding of fractional quantities can make them part
+    book = {"net": x["total"], "T1": x.get("vat") or 0, "T4": x.get("wht") or 0}
+    sent = {"net": net_amount, "T1": tax_totals.get((vat or {}).get("eta_type") or "T1", 0), "T4": tax_totals.get((wht or {}).get("eta_type") or "T4", 0)}
+    for k, label in (("net", "net"), ("T1", "VAT"), ("T4", "withholding tax")):
+        if abs(round(book[k] - sent[k], 5)) > 0.01:
+            problems.append(f"The e-invoice {label} ({sent[k]:,.5f}) differs from the invoice ({book[k]:,.2f}) by rounding of "
+                            "fractional quantities. Round the quantities or prices so the lines come out in whole piasters.")
     if x["date"] > acc.today():
         problems.append("The issue date cannot be in the future")
     return doc, sorted(set(problems))
+
+
+def issued_at(day):
+    """The issue time the tax authority expects, in UTC. Today: now (never ahead of the clock). An earlier date: 09:00 UTC,
+    which is 11:00 or 12:00 in Egypt, so the document stays on its own local date (and is the same each time it is built)."""
+    from .db import now as _now
+    n = _now()
+    if day >= n.date().isoformat():
+        return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f"{day}T09:00:00Z"
 
 
 def serialize(obj, name=None):
@@ -244,9 +261,19 @@ def test_connection(db):
     return {"ok": True, "environment": settings(db).get("eta_env")}
 
 
+def at_eta(x):
+    """Is the invoice with the tax authority (it has a UUID and was not rejected, found invalid or cancelled)? A
+    cancellation the receiver may still decline ("Cancel requested") is still with them."""
+    st = str((x or {}).get("eta_status") or "").strip().lower()
+    return bool((x or {}).get("eta_uuid")) and not (st.startswith(("reject", "invalid")) or st in ("cancelled", "canceled"))
+
+
 def submit(db, extract_ids, user=""):
     docs, results = [], []
     for xid in extract_ids:
+        x = db.one("SELECT number, eta_uuid, eta_status FROM extracts WHERE id=?", (int(xid),))
+        if at_eta(x):      # sending again would make a second document at the tax authority
+            raise acc.ValidationError(f"Invoice {x['number']} is already with the tax authority ({x['eta_status']}).")
         doc, problems = build_document(db, xid)
         if problems:
             raise acc.ValidationError(f"Invoice #{xid}: " + "; ".join(problems))
@@ -367,7 +394,7 @@ def prepare(db, extract_ids):
             raise acc.ValidationError(f"Invoice #{xid} not found")
         doc, problems = build_document(db, int(xid))
         st = (x["eta_status"] or "").lower()
-        if x["eta_uuid"] and st and not any(w in st for w in ("reject", "invalid", "cancel")):
+        if at_eta(x):
             problems = problems + [f"Already with the tax authority ({x['eta_status']})"]
         out.append({"id": x["id"], "number": x["number"], "document": doc, "problems": problems, "serialized": serialize(doc)})
     return out
@@ -405,12 +432,21 @@ def record_submission(db, submission, documents=None, user=""):
     sub = submission or {}
     for a in sub.get("acceptedDocuments") or []:
         x = _by_number(db, a.get("internalId"))
+        cur = db.one("SELECT eta_uuid, eta_status FROM extracts WHERE id=?", (x["id"],)) if x else None
+        if x and at_eta(cur) and cur["eta_uuid"] != a.get("uuid"):
+            # accepted twice: the first one stays the invoice's; the second must be cancelled on the portal
+            db.x("UPDATE extracts SET eta_error=? WHERE id=?",
+                 (f"Also accepted as {acc.text(a.get('uuid'), maxlen=60)} — cancel that duplicate on the portal", x["id"]))
+            res.append({"id": x["id"], "status": "Duplicate", "uuid": a.get("uuid"), "kept": cur["eta_uuid"]})
+            continue
         if x:
             db.x("UPDATE extracts SET eta_uuid=?, eta_long_id=?, eta_status='Submitted', eta_submission=?, eta_error='', eta_submitted_at=? WHERE id=?",
                  (acc.text(a.get("uuid"), maxlen=60), acc.text(a.get("longId"), maxlen=120), acc.text(sub.get("submissionId"), maxlen=60), now, x["id"]))
             res.append({"id": x["id"], "status": "Submitted", "uuid": a.get("uuid")})
     for r in sub.get("rejectedDocuments") or []:
         x = _by_number(db, r.get("internalId"))
+        if x and at_eta(db.one("SELECT eta_uuid, eta_status FROM extracts WHERE id=?", (x["id"],))):
+            continue          # a rejected repeat never undoes the accepted document
         if x:
             err = json.dumps(r.get("error", {}), ensure_ascii=False)[:1500]
             db.x("UPDATE extracts SET eta_status='Rejected', eta_error=? WHERE id=?", (err, x["id"]))

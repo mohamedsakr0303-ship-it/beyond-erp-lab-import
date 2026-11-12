@@ -2145,8 +2145,8 @@ def extract_reopen(ctx, xid):
     x = ctx.db.one("SELECT * FROM extracts WHERE id=?", (int(xid),))
     if not x:
         raise acc.ValidationError("Invoice not found")
-    st = str(x.get("eta_status") or "").lower()
-    if x.get("eta_uuid") and st and not any(w in st for w in ("cancel", "reject", "invalid")):
+    from . import einvoice
+    if einvoice.at_eta(x):
         raise acc.ValidationError((f"This invoice was submitted to the tax authority (e-invoice status: {x['eta_status']}). Cancel the e-invoice first, then reopen it."))
     why = _invoice_owner(ctx, xid)
     if why:
@@ -4917,10 +4917,11 @@ def er_get(ctx, rid):
 @route("POST", "/api/ereceipts", "tax.ereceipt", "add")
 def er_add(ctx):
     from . import ereceipt
-    rid = ereceipt.save(ctx.db, ctx.body)
-    out = {"id": rid}
-    if ctx.body.get("issue"):
-        out.update(ereceipt.issue(ctx.db, rid, _u(ctx)))
+    with ctx.db.tx():           # saved and issued together: an issue that fails leaves no draft to retry into a second one
+        rid = ereceipt.save(ctx.db, ctx.body)
+        out = {"id": rid}
+        if ctx.body.get("issue"):
+            out.update(ereceipt.issue(ctx.db, rid, _u(ctx)))
     return ok(out)
 
 
@@ -6313,6 +6314,18 @@ def eta_state(ctx, xid):
     ctx.db.x("UPDATE extracts SET eta_uuid=?, eta_status=?, eta_submission=?, eta_error=? WHERE id=?",
              tuple(acc.text(b.get(k), maxlen=4000) for k in ("eta_uuid", "eta_status", "eta_submission", "eta_error"))
              + (int(xid),))
+    return ok()
+
+
+@route("PUT", "/api/ereceipts/<rid>/eta-state", "tax.ereceipt")
+def ereceipt_state(ctx, rid):
+    """E-receipt status shared by the device that sent it to the tax authority (see cloud.followups)."""
+    b = ctx.body
+    st = acc.text(b.get("status"), maxlen=20)
+    if st not in ("issued", "submitted", "valid", "invalid", "rejected"):
+        raise acc.ValidationError("Unknown receipt status")
+    ctx.db.x("UPDATE ereceipts SET status=?, submission_id=?, error=? WHERE id=? AND status<>'draft'",
+             (st, acc.text(b.get("submission_id"), maxlen=80), acc.text(b.get("error"), maxlen=4000), int(rid)))
     return ok()
 
 

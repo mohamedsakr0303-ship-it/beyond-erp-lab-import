@@ -313,3 +313,48 @@ class WithTheRealSigner(unittest.TestCase):
 if __name__ == "__main__":
     sys.path.insert(0, str(ROOT / "tests"))
     unittest.main()
+
+
+class SendOnce(unittest.TestCase):
+    """The cloud / e-invoicing review: one document per invoice at the tax authority, totals that match the books,
+    receipts that issue and are the same on every device."""
+
+    def test_an_invoice_with_the_tax_authority_is_never_sent_again(self):
+        db = books()
+        xid = invoice(db)
+        acc.post_extract(db, xid)
+        einvoice.record_submission(db, {"submissionId": "S1", "acceptedDocuments": [{"uuid": "U1", "internalId": "INV-1"}]})
+        with self.assertRaises(acc.ValidationError):
+            einvoice.submit(db, [xid])                                    # refused before any connection is made
+        r = einvoice.record_submission(db, {"submissionId": "S2", "acceptedDocuments": [{"uuid": "U2", "internalId": "INV-1"}]})
+        self.assertEqual(db.one("SELECT eta_uuid FROM extracts WHERE id=?", (xid,))["eta_uuid"], "U1")   # the first stays
+        self.assertEqual(r["results"][0]["status"], "Duplicate")
+        einvoice.record_submission(db, {"rejectedDocuments": [{"internalId": "INV-1", "error": {"message": "dup"}}]})
+        self.assertEqual(db.one("SELECT eta_status FROM extracts WHERE id=?", (xid,))["eta_status"], "Submitted")
+        db.x("UPDATE extracts SET eta_status='Cancel requested' WHERE id=?", (xid,))
+        self.assertTrue(einvoice.at_eta(db.one("SELECT * FROM extracts WHERE id=?", (xid,))))   # the receiver may still decline
+
+    def test_issue_time_stays_on_its_local_date(self):
+        self.assertEqual(einvoice.issued_at("2026-01-15"), "2026-01-15T09:00:00Z")
+        self.assertTrue(einvoice.issued_at("2999-01-01").endswith("Z"))
+
+    def test_a_receipt_with_fractions_issues_and_balances(self):
+        from erp import ereceipt
+        db = books()
+        db.set_setting("eta_receipt_account", db.acct("revenue"))
+        rid = ereceipt.save(db, {"date": "2026-11-01", "time": "10:00", "lines": [{"description": "Paint", "qty": 1, "price": 1.115, "code": "EG-1",
+                                                                                  "vat_code": "VAT14"}]})
+        ereceipt.issue(db, rid)
+        eid = db.one("SELECT entry_id FROM ereceipts WHERE id=?", (rid,))["entry_id"]
+        r = db.one("SELECT SUM(debit) d, SUM(credit) c FROM journal_lines WHERE entry_id=?", (eid,))
+        self.assertEqual(r["d"], r["c"])
+
+    def test_a_backup_keeps_when_it_was_sent_and_checked(self):
+        from erp import interchange
+        db = books()
+        xid = invoice(db)
+        acc.post_extract(db, xid)
+        einvoice.record_submission(db, {"submissionId": "S1", "acceptedDocuments": [{"uuid": "U1", "internalId": "INV-1"}]})
+        db.x("UPDATE extracts SET eta_checked_at='2026-11-02T10:00:00' WHERE id=?", (xid,))
+        row = next(r for r in interchange.export_data(db)["Sales Invoices"] if r["number"] == "INV-1")
+        self.assertTrue(row["eta_submitted_at"] and row["eta_checked_at"] and row["eta_submission"] == "S1")

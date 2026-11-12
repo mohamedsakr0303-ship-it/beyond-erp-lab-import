@@ -410,9 +410,15 @@ def cloud_new_books(name, email):
       async function maybeSnapshot(force) {
         const seq = lastSeq(), done = Number(local("snap_seq") || 0);
         if (snapBusy || (!force && seq - done < 300)) return;
+        if (!force && Date.now() < Number(local("snap_retry_at") || 0)) return;   // the last copy failed: wait before trying again
         snapBusy = true;
-        try { await rpc("put_snapshot", { p_company: co(), p_seq: seq, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() }); local("snap_seq", seq); }
-        catch (e) { local("snap_seq", seq); } finally { snapBusy = false; }
+        try { await rpc("put_snapshot", { p_company: co(), p_seq: seq, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() });
+              local("snap_seq", seq); local("snap_wait", "0"); local("snap_retry_at", "0"); }
+        catch (e) {
+          if (e.status === 401 || e.status === 403 || /permission|not allowed|42501/i.test(e.message || "")) local("snap_seq", seq);   // not allowed: next batch
+          else { const w = Math.min(3600, Math.max(300, 2 * Number(local("snap_wait") || 0)));   // still owed: retry after 5 min, doubling to 1 h
+                 local("snap_wait", String(w)); local("snap_retry_at", String(Date.now() + w * 1000)); }
+        } finally { snapBusy = false; }
       }
       // Check for other people's changes: every 20 s while someone is using the page, every 3 min when it has been left
       // open untouched for 10 min, never while it is hidden. Every check is a request Supabase logs, so fewer checks keep

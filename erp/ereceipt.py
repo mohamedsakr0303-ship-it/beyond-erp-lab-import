@@ -164,7 +164,7 @@ def save(db, d, rid=None):
     btype = d.get("buyer_type") if d.get("buyer_type") in BUYER_TYPES else "P"
     method = d.get("payment_method") if d.get("payment_method") in PAYMENT_METHODS else "C"
     date = acc.clean_date(d.get("date") or (d.get("issued_at") or "")[:10])
-    tm = text(d.get("time")) or _dt.datetime.utcnow().strftime("%H:%M:%S")
+    tm = text(d.get("time")) or _now_utc().strftime("%H:%M:%S")
     if not re.fullmatch(r"\d{2}:\d{2}(:\d{2})?", tm):
         raise ValidationError("Time as HH:MM")
     issued = f"{date}T{tm if len(tm) == 8 else tm + ':00'}Z"
@@ -203,6 +203,13 @@ def _last_uuid(db):
     return x["uuid"] if x else ""
 
 
+def _now_utc():
+    """The time now in UTC; while a change from the shared workspace is replayed, the time it was made (so every device
+    computes the same receipt, and the same UUID)."""
+    from .db import now
+    return now().astimezone(_dt.timezone.utc)      # the app's clock (the author's, in a replay), local time → UTC
+
+
 def issue(db, rid, user=""):
     """Fix the receipt: chain it to the previous one, compute its UUID and post the sale (or return)."""
     r = get(db, rid)
@@ -221,10 +228,12 @@ def issue(db, rid, user=""):
     revenue = r["account"] or db.acct("revenue")
     money = acc.money_account(db, "cash" if r["payment_method"] in ("C", "CC") else "bank")
     sign = -1 if r["kind"] == "return" else 1
-    lines = [{"account": money, ("debit" if sign > 0 else "credit"): t["total"]},
-             {"account": revenue, ("credit" if sign > 0 else "debit"): t["net"]}]
-    if t["vat"]:
-        lines.append({"account": db.acct("vat_output"), ("credit" if sign > 0 else "debit"): t["vat"]})
+    # the books in piasters: net and VAT rounded each, the total their sum (never a piaster out of balance)
+    net2, vat2 = to_minor(t["net"]), to_minor(t["vat"])
+    lines = [{"account": money, ("debit" if sign > 0 else "credit"): to_major(net2 + vat2)},
+             {"account": revenue, ("credit" if sign > 0 else "debit"): to_major(net2)}]
+    if vat2:
+        lines.append({"account": db.acct("vat_output"), ("credit" if sign > 0 else "debit"): to_major(vat2)})
     with db.tx():
         eid = acc._insert_entry(db, date=r["issued_at"][:10], kind="E-Receipt", bu_id=r["bu_id"], party=r["buyer_name"] or "Walk-in customer",
                                 ref=r["number"], user=user, memo=f"{'Return' if sign < 0 else 'Sale'} — e-receipt {r['number']}",

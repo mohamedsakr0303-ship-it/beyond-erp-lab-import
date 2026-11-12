@@ -15,8 +15,8 @@ MAX_PER_FORM = 50
 MAX_VALUES = 30000         # characters of saved values per fill-in: the same text the workbook cell holds (at most 32,767)
 KEY_RE = re.compile(r"^[a-z_]+:[a-z_]{1,40}$")
 def _now():
-    import datetime as _dt
-    return _dt.datetime.now().isoformat(timespec="microseconds")
+    from .db import now
+    return now().isoformat()        # the app's clock: the same on every device a change is replayed on
 
 
 SKIP = {"date", "_files", "files", "attachments", "allow_duplicate", "issued_on", "due"}
