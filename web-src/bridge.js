@@ -358,6 +358,7 @@ def cloud_new_books(name, email):
             if (Number(op.seq) !== lastSeq() + 1) throw new CloudError("The workspace log has a gap — try again in a moment");
             if (rows.length > 3) setStatus("syncing", `Syncing ${i + 1} of ${rows.length}…`);
             const r = unpackReply(P("cloud_apply")(JSON.stringify(op)));
+            if (unsure && unsure.op === opKey(op)) unsure.reply = r;   // the change whose answer was lost did reach the log
             if (r.status === 0) { blocked = new TextDecoder().decode(r.body); setStatus("update", `A newer app version (${blocked}) is in use — reload this page to update`); throw new CloudError(status.error, "update"); }
             n++;
             await breathe();   // let taps and scrolling through between changes
@@ -370,28 +371,44 @@ def cloud_new_books(name, email):
       }
       const fail = e => { setStatus(e.code === "offline" ? "offline" : e.code === "signed_out" || e.status === 401 ? "signed_out" : e.code === "update" ? "update" : "error", e.message); };
       const pull = () => exclusive(() => pullNow().catch(e => { fail(e); throw e; }));
+      // A change sent without an answer (the connection dropped) may still be in the log. It is remembered; if the
+      // log turns out to hold it, the same request made again within the hour gets that change's result instead of a
+      // second copy of the change.
+      let unsure = null;
+      const opKey = op => JSON.stringify([op.device, op.method, op.path, op.body]);
+      const askKey = (method, url, raw) => {      // the request: method, address and a checksum of its body (FNV-1a)
+        const b = raw ? new Uint8Array(raw.buffer || raw, raw.byteOffset || 0, raw.byteLength) : new Uint8Array(0);
+        let x = 0x811c9dc5; for (let i = 0; i < b.length; i++) { x ^= b[i]; x = Math.imul(x, 0x01000193) >>> 0; }
+        return `${method} ${url} ${b.length}:${x}`;
+      };
+      // one change; runs inside the lock
+      async function writeNow(method, url, h, raw) {
+        const ask = askKey(method, url, raw);
+        for (let attempt = 0; attempt < 8; attempt++) {
+          await pullNow();
+          if (unsure && unsure.reply && unsure.ask === ask && Date.now() - unsure.at < 3600000) { const r = unsure.reply; unsure = null; return r; }
+          const out = P("cloud_prepare")(method, url, JSON.stringify(h), raw); const pair = out.toJs(); out.destroy();
+          const dry = { status: pair[0][0], ctype: pair[0][1], filename: pair[0][2], body: pair[0][3], headers: JSON.parse(pair[0][4]) };
+          if (!pair[1]) return dry;
+          const op = JSON.parse(pair[1]); op.seq = lastSeq() + 1;
+          unsure = { ask, op: opKey(op), at: Date.now(), reply: null };
+          let stored;
+          try {
+            stored = await rpc("append_op", { p_company: co(), p_seq: op.seq, p_version: op.version, p_app_user: op.app_user, p_device: op.device, p_method: op.method,
+              p_path: op.path, p_body: op.body, p_content_type: op.content_type, p_clock: op.clock });
+          } catch (e) { if (e.code === "40001") { unsure = null; continue; } throw e; }
+          unsure = null;
+          op.app_user = (stored && stored.app_user) || op.app_user;
+          const r = unpackReply(P("cloud_apply")(JSON.stringify(op)));
+          schedule(); setStatus("ok"); maybeSnapshot(heavy(op));   // after an import / demo / erase: a fresh copy at once, so other devices load it instead of replaying
+          return r;
+        }
+        return jsonReply(409, { error: "The workspace is very busy — please try again" });
+      }
       async function write(method, url, h, raw) {
         return exclusive(async () => {
           try {
-            for (let attempt = 0; attempt < 8; attempt++) {
-              await pullNow();
-              const out = P("cloud_prepare")(method, url, JSON.stringify(h), raw); const pair = out.toJs(); out.destroy();
-              const dry = { status: pair[0][0], ctype: pair[0][1], filename: pair[0][2], body: pair[0][3], headers: JSON.parse(pair[0][4]) };
-              if (!pair[1]) return dry;
-              const op = JSON.parse(pair[1]); op.seq = lastSeq() + 1;
-              let stored;
-              try {
-                stored = await rpc("append_op", { p_company: co(), p_seq: op.seq, p_version: op.version, p_app_user: op.app_user, p_device: op.device, p_method: op.method,
-                  p_path: op.path, p_body: op.body, p_content_type: op.content_type, p_clock: op.clock });
-              } catch (e) { if (e.code === "40001") continue; throw e; }
-              op.app_user = (stored && stored.app_user) || op.app_user;
-              const r = unpackReply(P("cloud_apply")(JSON.stringify(op)));
-              schedule(); setStatus("ok"); maybeSnapshot(heavy(op));   // after an import / demo / erase: a fresh copy at once, so other devices load it instead of replaying
-              for (const [m, p, d] of JSON.parse(P("cloud_followups")(method, url, h["content-type"] && raw ? new TextDecoder().decode(raw) : "{}")))
-                await write(m, p, { ...h, "content-type": "application/json" }, new TextEncoder().encode(d)).catch(() => {});
-              return r;
-            }
-            return jsonReply(409, { error: "The workspace is very busy — please try again" });
+            return await writeNow(method, url, h, raw);
           } catch (e) {
             if (/subscription_ended/.test(e.message)) {   // the trial / paid period is over: nothing was saved (see append_op)
               window.dispatchEvent(new CustomEvent("beyond-billing", { detail: { status: "expired" } }));
@@ -791,6 +808,12 @@ def worker_call(method, url, headers_json):
       if (method !== "GET" && Cloud.replicated(method, url)) return Cloud.write(method, url, h, raw);
       const r = localRun(method, url, h, raw);
       if (method !== "GET") schedule();
+      // a call to the tax authority runs on this device only; what it changed (e-invoice / e-receipt status) is then
+      // shared with everyone, as the desktop edition does (erp/cloud.py followups)
+      if (method !== "GET" && r.status < 400 && Cloud.joined()) {
+        for (const [m, p, d] of JSON.parse(P("cloud_followups")(method, url, raw ? new TextDecoder().decode(raw) : "{}")))
+          await Cloud.write(m, p, { ...h, "content-type": "application/json" }, new TextEncoder().encode(d)).catch(() => {});
+      }
       return r;
     };
     if (Cloud.joined()) { Cloud.startPolling(); Cloud.pull().catch(() => {}); }

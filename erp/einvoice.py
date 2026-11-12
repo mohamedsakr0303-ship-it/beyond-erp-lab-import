@@ -192,7 +192,9 @@ def serialize(obj, name=None):
         return "".join(out)
     if isinstance(obj, list):
         return "".join(serialize(e) for e in obj)
-    return '"' + (json.dumps(obj, ensure_ascii=False) if not isinstance(obj, str) else obj.replace('"', '\\"')) + '"'
+    # a value exactly as the document's JSON text spells it (sent with ensure_ascii=False): a quote as \", a backslash as \\,
+    # a line break as \n — the tax authority hashes the values as they appear in the document it receives
+    return '"' + json.dumps(obj, ensure_ascii=False)[1:-1] + '"' if isinstance(obj, str) else '"' + json.dumps(obj, ensure_ascii=False) + '"'
 
 
 def sign(db, doc):
@@ -438,6 +440,10 @@ def record_submission(db, submission, documents=None, user=""):
             db.x("UPDATE extracts SET eta_error=? WHERE id=?",
                  (f"Also accepted as {acc.text(a.get('uuid'), maxlen=60)} — cancel that duplicate on the portal", x["id"]))
             res.append({"id": x["id"], "status": "Duplicate", "uuid": a.get("uuid"), "kept": cur["eta_uuid"]})
+            continue
+        if x and at_eta(cur) and cur["eta_uuid"] == a.get("uuid"):
+            # the same answer recorded again (kept on the device until the books had it): nothing changes
+            res.append({"id": x["id"], "status": cur["eta_status"], "uuid": a.get("uuid")})
             continue
         if x:
             db.x("UPDATE extracts SET eta_uuid=?, eta_long_id=?, eta_status='Submitted', eta_submission=?, eta_error='', eta_submitted_at=? WHERE id=?",

@@ -57,6 +57,13 @@ def username_for(email):
     e = (email or "").strip().lower()
     return e.rsplit("@", 1)[0] if e.endswith("@" + PLACEHOLDER_DOMAIN) else None
 PULL_PAGE = 500
+# a change sent without an answer (the connection dropped): if the log turns out to hold it, the same request made
+# again within this many seconds gets that change's result instead of a second copy of the change
+UNSURE_FOR = 3600
+
+
+def _op_key(op):
+    return (op.get("device"), op.get("method"), op.get("path"), op.get("body"))
 
 
 class Conflict(Exception):
@@ -641,7 +648,10 @@ class CloudSync:
                 for op in rows:
                     if int(op["seq"]) != last_seq(self.db) + 1:
                         raise RuntimeError("The workspace log is incomplete. Try again shortly.")
-                    apply(self.app, op)
+                    r = apply(self.app, op)
+                    u = getattr(self, "_unsure", None)
+                    if u and u["op"] == _op_key(op):
+                        u["reply"] = r            # the change whose answer was lost did reach the log
                     n += 1
                 if len(rows) < PULL_PAGE:
                     break
@@ -653,12 +663,18 @@ class CloudSync:
         from .server import ok
         with self.lock:
             try:
+                ask = (method, target, bytes(raw or b""))
                 for _ in range(8):
                     self.pull()
+                    u = getattr(self, "_unsure", None)
+                    if u and u.get("reply") is not None and u["ask"] == ask and time.time() - u["at"] < UNSURE_FOR:
+                        self._unsure = None       # the same request again: it was saved the first time
+                        return u["reply"]
                     reply, op = prepare(self.app, method, target, headers, raw, user)
                     if op is None:
                         return reply
                     op["seq"] = last_seq(self.db) + 1
+                    self._unsure = {"ask": ask, "op": _op_key(op), "at": time.time(), "reply": None}
                     try:
                         stored = self.client().rpc("append_op", {
                             "p_company": self._co(), "p_seq": op["seq"], "p_version": op["version"], "p_app_user": op["app_user"],
@@ -666,7 +682,9 @@ class CloudSync:
                             "p_body": op["body"], "p_content_type": op["content_type"], "p_clock": op["clock"]},
                             self.token())
                     except Conflict:
+                        self._unsure = None       # refused: nothing was stored
                         continue
+                    self._unsure = None
                     op["app_user"] = (stored or {}).get("app_user") or op["app_user"]  # exactly as the log has it
                     reply = apply(self.app, op)
                     self._maybe_snapshot(force=is_heavy(op["method"], op["path"]))

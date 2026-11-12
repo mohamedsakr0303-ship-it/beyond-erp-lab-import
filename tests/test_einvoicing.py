@@ -334,6 +334,19 @@ class SendOnce(unittest.TestCase):
         db.x("UPDATE extracts SET eta_status='Cancel requested' WHERE id=?", (xid,))
         self.assertTrue(einvoice.at_eta(db.one("SELECT * FROM extracts WHERE id=?", (xid,))))   # the receiver may still decline
 
+    def test_the_same_answer_recorded_again_changes_nothing(self):
+        # the browser keeps the answer until the books have it, so it may arrive twice
+        db = books()
+        xid = invoice(db)
+        acc.post_extract(db, xid)
+        ans = {"submissionId": "S1", "acceptedDocuments": [{"uuid": "U1", "internalId": "INV-1"}]}
+        einvoice.record_submission(db, ans)
+        db.x("UPDATE extracts SET eta_status='Valid' WHERE id=?", (xid,))
+        r = einvoice.record_submission(db, ans)
+        row = db.one("SELECT eta_uuid, eta_status, eta_error FROM extracts WHERE id=?", (xid,))
+        self.assertEqual((row["eta_uuid"], row["eta_status"], row["eta_error"]), ("U1", "Valid", ""))
+        self.assertEqual(r["results"][0]["status"], "Valid")
+
     def test_issue_time_stays_on_its_local_date(self):
         self.assertEqual(einvoice.issued_at("2026-01-15"), "2026-01-15T09:00:00Z")
         self.assertTrue(einvoice.issued_at("2999-01-01").endswith("Z"))

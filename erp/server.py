@@ -4308,9 +4308,13 @@ def eta_document(ctx, xid):
 
 def _batch_ids(ctx):
     if ctx.q.get("ids"):
-        return [int(i) for i in ctx.q["ids"].split(",") if i.strip().isdigit()]
-    return [x["id"] for x in acc.list_extracts(ctx.db, bu_id=ctx.q.get("bu_id"), status="posted",
-                                                date_from=ctx.q.get("date_from"), date_to=ctx.q.get("date_to"))]
+        ids = [int(i) for i in ctx.q["ids"].split(",") if i.strip().isdigit()]
+    else:
+        ids = [x["id"] for x in acc.list_extracts(ctx.db, bu_id=ctx.q.get("bu_id"), status="posted",
+                                                   date_from=ctx.q.get("date_from"), date_to=ctx.q.get("date_to"))]
+    # a file is not narrowed on its way out: someone limited to some projects gets only their invoices
+    from . import scope
+    return scope.extracts(getattr(ctx, "scope", None), ctx.db, ids)
 
 
 @route("GET", "/api/einvoice-batch", "sales.invoices")
@@ -4329,6 +4333,9 @@ def eta_submit(ctx):
     ids = [int(i) for i in ctx.body.get("ids") or []]
     if not ids:
         raise acc.ValidationError("Choose invoices to submit")
+    from . import scope
+    if scope.extracts(getattr(ctx, "scope", None), ctx.db, ids) != ids:
+        raise PermissionError("This is not on one of your projects")
     return ok(einvoice.submit(ctx.db, ids, ctx.user["username"]))
 
 

@@ -90,6 +90,18 @@ class CertificateFile(unittest.TestCase):
         self.assertIn('"INTERNALID""INV-1"', bs.serialize(DOC))
         self.assertIn('"INVOICELINES""INVOICELINES""DESCRIPTION""Fit-out \\"phase 1\\""', bs.serialize(DOC))
 
+    def test_values_are_hashed_as_the_sent_json_spells_them(self):
+        # the tax authority takes each value as it appears in the document it receives (sent with ensure_ascii=False)
+        from erp import einvoice
+        doc = {"description": 'Pipe 36" C:\\temp\nsecond line', "name": "شركة", "total": 1.0}
+        sent = json.dumps(doc, ensure_ascii=False)
+        ser = einvoice.serialize(doc)
+        self.assertEqual(ser, bs.serialize(doc))
+        for k, v in doc.items():
+            spelled = json.dumps(v, ensure_ascii=False)
+            self.assertIn(spelled.strip('"'), sent)
+            self.assertIn(f'"{k.upper()}""{spelled.strip(chr(34)) if isinstance(v, str) else spelled}"', ser)
+
     def test_signs_and_verifies_and_openssl_agrees(self):
         with self.assertRaises(bs.SignerError):
             self.app.keys.unlock("wrong")

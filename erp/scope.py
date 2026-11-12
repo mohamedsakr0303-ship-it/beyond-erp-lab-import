@@ -35,8 +35,15 @@ TABLE = {"boqs": "boqs", "extracts": "extracts", "offers": "offers", "sales": "s
          "purchase-orders": "purchase_orders", "contracts": "contracts", "purchase-requests": "purchase_requests", "custody": "custodies"}
 
 
+# a row that links to one record ("href": "#/rental/3") belongs to that record's project
+LINK = re.compile(r"^#/(bu|project|rental|sale|sales|offer|po|invoice|contract|custody)/(\d+)\b")
+LINK_TABLE = {"rental": "rentals", "sale": "sales_orders", "sales": "sales_orders", "offer": "offers", "po": "purchase_orders",
+              "invoice": "extracts", "contract": "contracts", "custody": "custodies"}
+
+
 class Scope:
     def __init__(self, db, codes):
+        self.db, self._links = db, {}
         rows = db.q("SELECT id, code FROM business_units")
         want = {str(c).strip().lower() for c in codes}
         self.codes = {r["code"] for r in rows if r["code"].lower() in want}
@@ -54,6 +61,20 @@ class Scope:
 
     def first(self):
         return min(self.ids) if self.ids else None
+
+    def link_ok(self, href):
+        """Does a link to one record stay inside their projects? Links to other kinds of pages are left alone."""
+        m = LINK.match(href) if isinstance(href, str) else None
+        if not m:
+            return True
+        kind, rid = m.group(1), int(m.group(2))
+        if kind in ("bu", "project"):
+            return rid in self.ids
+        key = (kind, rid)
+        if key not in self._links:
+            r = self.db.one(f"SELECT bu_id FROM {LINK_TABLE[kind]} WHERE id=?", (rid,))
+            self._links[key] = bool(r) and self.ok(r["bu_id"])
+        return self._links[key]
 
 
 def of(db, user):
@@ -139,6 +160,8 @@ def guard(db, sc, method, path, q, body):
 
 
 def _keep(sc, row):
+    if "href" in row and not sc.link_ok(row["href"]):
+        return False
     for k in ("bu_code", "bu_id"):
         if k in row:
             return sc.ok(row[k])
@@ -166,6 +189,8 @@ def narrow(sc, path, data):
             data = {**data, "rows": rows} if isinstance(data, dict) else rows
         if isinstance(data, dict):
             data.pop("shared_overhead", None)
+    if isinstance(data, dict):
+        _company_figures(sc, path, data)
     if path == "/api/accounts" and isinstance(data, list):     # balances are company-wide
         data = [{**r, "balance": None} if isinstance(r, dict) else r for r in data]
     if isinstance(data, dict) and re.match(r"^/api/[\w-]+/[^/]+$", path):
@@ -173,6 +198,53 @@ def narrow(sc, path, data):
             if k in data and data[k] not in (None, "") and not sc.ok(data[k]):
                 _deny("This is not on one of your projects")
     return _walk(sc, data)
+
+
+def _no_totals(checks):
+    """Books checks (trial balance, balance sheet …): whether they pass, without the company's totals."""
+    for c in checks or []:
+        if isinstance(c, dict):
+            for k in ("a", "b", "diff"):
+                if k in c:
+                    c[k] = None
+
+
+def _company_figures(sc, path, data):
+    """Parts of a reply that cover the whole company: the other projects' rows and the company's own totals."""
+    if path == "/api/dashboard":
+        if isinstance(data.get("units"), list):        # one row per project, with its figures
+            data["units"] = [u for u in data["units"] if isinstance(u, dict) and sc.ok(u.get("code"))]
+        rn = data.get("rentals")
+        if isinstance(rn, dict) and isinstance(rn.get("rows"), list):
+            rn["rows"] = [r for r in rn["rows"] if isinstance(r, dict) and sc.link_ok(f"#/rental/{r.get('id')}")]
+            for k in list(rn):
+                if k != "rows" and isinstance(rn[k], (int, float)):
+                    rn[k] = None                       # totals across every rental
+        data["cash_position"] = None                   # the company's cash and how long it lasts
+        _no_totals(data.get("audit"))
+    if path == "/api/model-audit":
+        _no_totals(data.get("checks"))
+    if path == "/api/alloc-rules":
+        # overhead shared out to every project: each rule shows only their projects' share
+        pv = data.get("preview")
+        if isinstance(pv, dict):
+            for k in ("pool", "company"):
+                pv[k] = None
+            for r in pv.get("rules") or []:
+                if isinstance(r, dict) and isinstance(r.get("split"), dict):
+                    r["split"] = {c: v for c, v in r["split"].items() if sc.ok(c)}
+                    r["pooled"] = None
+                    r["allocated"] = round(sum(v for v in r["split"].values() if isinstance(v, (int, float))), 2)
+    if path == "/api/alerts" or path == "/api/dashboard/view":
+        pass                                           # rows that link to another project's record are left out (_keep)
+
+
+def extracts(sc, db, ids):
+    """Invoices (by id) that are on one of their projects."""
+    if sc is None or not ids:
+        return list(ids)
+    keep = {r["id"] for r in db.q(f"SELECT id, bu_id FROM extracts WHERE id IN ({','.join('?' * len(ids))})", tuple(ids)) if sc.ok(r["bu_id"])}
+    return [i for i in ids if i in keep]
 
 
 def clean(db, codes):

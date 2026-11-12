@@ -3861,8 +3861,27 @@ async function etaSign(ids, send = true) {
   if (bad.length && !await uiConfirm(`${L2("These cannot be sent yet:", "لا يمكن إرسال هذه بعد:")}\n${bad.map(p => `• ${p.number}: ${p.problems.join("; ")}`).join("\n")}${good.length ? `\n\n${L2(`Continue with the other ${good.length}?`, `المتابعة بالباقي (${good.length})؟`)}` : ""}`, { ok: good.length ? L2("Continue", "متابعة") : L2("OK", "موافق") }) || !good.length) return null;
   const docs = good.map(p => p.document);
   if (!send) { const r = await signerCall("POST", "/v1/sign", { documents: docs }); return api("POST", "/api/einvoice/record-signed", { documents: r.documents }); }
+  // an invoice whose answer from the tax authority is still waiting on this device is never sent again
+  await etaFlush().catch(() => {});
+  const waiting = new Set(etaOutbox().flatMap(o => o.numbers || []));
+  const again = good.filter(p => waiting.has(p.number));
+  if (again.length) throw new Error(L2(`Already sent; the answer is not in the books yet (${again.map(p => p.number).join(", ")}). Check the connection and try again — it will not be sent twice.`,
+    `أُرسلت بالفعل ولم تُسجَّل الإجابة في الدفاتر بعد (${again.map(p => p.number).join("، ")}). تحقّق من الاتصال وأعد المحاولة — لن تُرسل مرتين.`));
   const r = await signerCall("POST", "/v1/eta/submit", { documents: docs });
-  return api("POST", "/api/einvoice/record-submission", { submission: r.submission, documents: r.documents });
+  // keep the answer on this device first: if the books cannot take it now, it is recorded on the next try
+  const item = { at: new Date().toISOString(), numbers: good.map(p => p.number), submission: r.submission, documents: r.documents };
+  store.set("etaOutbox", [...etaOutbox(), item]);
+  const out = await api("POST", "/api/einvoice/record-submission", { submission: r.submission, documents: r.documents });
+  store.set("etaOutbox", etaOutbox().filter(o => o.at !== item.at));
+  return out;
+}
+const etaOutbox = () => { const v = store.get("etaOutbox", []); return Array.isArray(v) ? v : []; };
+// answers kept on this device and not yet in the books: record them now (oldest first)
+async function etaFlush() {
+  for (const o of etaOutbox()) {
+    await api("POST", "/api/einvoice/record-submission", { submission: o.submission, documents: o.documents });
+    store.set("etaOutbox", etaOutbox().filter(x => x.at !== o.at));
+  }
 }
 async function etaRefresh(x) {
   if (etaConn(await etaSettings()) === "direct") return api("POST", `/api/einvoice/${x.id}/refresh`, {});
@@ -6042,8 +6061,11 @@ PAGES.einvoice = async (view, parts, q) => {
   const tab = q.tab || "issued", ar = S.lang === "ar";
   const st = await etaSettings(true), viaSigner = etaConn(st) === "signer";
   const add = can("tax.einvoice", "add"), ed = can("tax.einvoice", "edit");
+  if (add && etaOutbox().length) await etaFlush().catch(() => {});    // answers kept on this device go into the books first
+  const held = etaOutbox().flatMap(o => o.numbers || []);
   const tabs = [["issued", L2("Issued", "الصادرة")], ["received", L2("Received", "الواردة")], ["templates", L2("Templates", "القوالب")], ["settings", L2("Settings", "الإعدادات")]];
   const top = `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/einvoice?${qs({ ...q, tab: k })}" class="${k === tab ? "on" : ""}">${esc(l)}</a>`).join("")}</div>
+    ${held.length ? `<div class="banner warn">${esc(L2(`Sent to the tax authority, answer not yet in the books: ${held.join(", ")}. It is recorded automatically once the connection is back.`, `أُرسلت إلى مصلحة الضرائب ولم تُسجَّل الإجابة في الدفاتر بعد: ${held.join("، ")}. تُسجَّل تلقائياً عند عودة الاتصال.`))}</div>` : ""}
     ${viaSigner && !signerCfg().key && tab !== "settings" ? `<div class="banner warn">${esc(L2("Sign and send from here: install the BeyondERP Signer on the computer with the USB token and pair it (Settings).", "للتوقيع والإرسال من هنا: ثبّت برنامج التوقيع BeyondERP Signer على الجهاز المتصل به التوكن واربطه (الإعدادات)."))} <a class="btn sm" href="#/einvoice?tab=settings">${esc(L2("Set up", "إعداد"))}</a></div>` : ""}`;
   const done = msg => { S.cache.etaSettings = null; toast(msg); route(); };
 

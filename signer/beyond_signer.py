@@ -153,7 +153,9 @@ def serialize(obj):
         return "".join(out)
     if isinstance(obj, list):
         return "".join(serialize(e) for e in obj)
-    return '"' + (json.dumps(obj, ensure_ascii=False) if not isinstance(obj, str) else obj.replace('"', '\\"')) + '"'
+    # a value exactly as the document's JSON text spells it (sent with ensure_ascii=False): a quote as \", a backslash as \\,
+    # a line break as \n — the tax authority hashes the values as they appear in the document it receives
+    return '"' + json.dumps(obj, ensure_ascii=False)[1:-1] + '"' if isinstance(obj, str) else '"' + json.dumps(obj, ensure_ascii=False) + '"'
 
 
 def unsigned(doc):
