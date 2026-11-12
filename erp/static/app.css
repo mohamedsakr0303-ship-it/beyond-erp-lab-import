@@ -2261,3 +2261,21 @@ html.dock-liquid .bottombar>.on svg.i,html.dock-liquid .bottombar .bb-new.on>.bt
 .auth-bg{position:fixed;inset:0;z-index:-1;background-size:cover;background-position:center;pointer-events:none}
 .auth-bg::after{content:"";position:absolute;inset:0;background:color-mix(in srgb,var(--bg) 62%,transparent)}
 @media (max-width:640px){.site-ann.at-home{top:68px;inset-inline:10px;font-size:.82rem}.lp-logo{height:24px}}
+
+/* Phones: figures scroll right under the bottom bar — its glass is kept but made nearly opaque so labels stay readable
+   (a bar colour chosen in the theme keeps its own setting) */
+@media (max-width:900px){
+  html:not([data-dockbar="custom"]) .bb-bg{background:color-mix(in srgb,var(--dock-bg,var(--panel)) 88%,transparent);
+    backdrop-filter:blur(28px) saturate(1.6);-webkit-backdrop-filter:blur(28px) saturate(1.6)}
+  html.dock-all.dock-classic .bottombar{background:color-mix(in srgb,var(--dock-bg,var(--panel)) 96%,transparent)}
+  /* the "set up this device" card: a sheet above the bar, never over the list behind it */
+  .nnudge{bottom:calc(86px + env(safe-area-inset-bottom));inset-inline:12px;width:auto;max-height:calc(100vh - 140px);overflow:auto}
+}
+/* the card always has a solid backing (a glass sheet colour alone let the rows behind show through) */
+.nnudge{background:linear-gradient(var(--sheet,var(--panel)),var(--sheet,var(--panel))),linear-gradient(var(--panel),var(--panel)),var(--bg);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+:root[data-theme="dark"]:not([data-surf]) .nnudge{background:rgba(12,13,46,.985)}
+/* the tour card: a solid sheet as well (the page behind showed through) */
+.tourbar{background:linear-gradient(var(--sheet,var(--panel)),var(--sheet,var(--panel))),linear-gradient(var(--panel),var(--panel)),var(--bg)}
+:root[data-theme="dark"] .tourbar{background:rgba(12,13,46,.985)}
+@media (max-width:900px){.tourbar{bottom:calc(86px + env(safe-area-inset-bottom))}}

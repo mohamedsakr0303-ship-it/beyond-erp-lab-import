@@ -110,6 +110,7 @@ VALUES = {
 }
 # fixed wording the app shows from its own lists
 PHRASES = {
+    "first administrator created": "تم إنشاء أول مسؤول",
     "most capable": "الأقوى", "faster, lower cost": "أسرع وأقل تكلفة", "quickest, lowest cost": "الأسرع والأقل تكلفة",
     "OpenRouter (hundreds of models)": "OpenRouter (مئات النماذج)", "Ollama (local, on this computer)": "Ollama (محلي، على هذا الجهاز)",
     "LM Studio (local)": "LM Studio (محلي)", "Other — any OpenAI-compatible address": "أخرى — أي عنوان متوافق مع OpenAI",

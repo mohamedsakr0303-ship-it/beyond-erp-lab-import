@@ -6071,8 +6071,13 @@ def audit_log(ctx):
     if ctx.q.get("q"):
         w.append("(action LIKE ? OR detail LIKE ?)")
         p += [f"%{ctx.q['q']}%"] * 2
-    return ok(ctx.db.q(f"SELECT * FROM audit_log WHERE {' AND '.join(w)} ORDER BY id DESC LIMIT ? OFFSET ?",
-                       p + [limit, offset]))
+    from . import auditlabels
+    rows = ctx.db.q(f"SELECT * FROM audit_log WHERE {' AND '.join(w)} ORDER BY id DESC LIMIT ? OFFSET ?", p + [limit, offset])
+    for r in rows:      # the action as words and the detail in the reader's language (the stored record stays as it was)
+        r["action_label"] = auditlabels.label(r["action"], ctx.lang)
+        if ctx.lang == "ar" and r.get("detail"):
+            r["detail_text"] = textl10n.error(str(r["detail"]), "ar")
+    return ok(rows)
 
 
 # ======================================================= branding & documents

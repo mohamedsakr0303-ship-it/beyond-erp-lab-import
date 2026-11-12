@@ -32,10 +32,11 @@ const money = n => {
   return digits(n < 0 ? (reg().negative === "minus" ? `-${s}` : `(${s})`) : s);
 };
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MON_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
 const fd = iso => {
   const v = String(iso || ""); const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v); if (!m) return esc(v);
   const f = reg().date_format || "YYYY-MM-DD";
-  const out = f === "DD/MM/YYYY" ? `${m[3]}/${m[2]}/${m[1]}` : f === "DD MMM YYYY" ? `${+m[3]} ${MON[+m[2] - 1]} ${m[1]}` : v.slice(0, 10);
+  const out = f === "DD/MM/YYYY" ? `${m[3]}/${m[2]}/${m[1]}` : f === "DD MMM YYYY" ? `${+m[3]} ${(typeof S !== "undefined" && S.lang === "ar" ? MON_AR : MON)[+m[2] - 1]} ${m[1]}` : v.slice(0, 10);
   return esc(digits(out));
 };
 const pct = n => ((Number(n) || 0) * 100).toFixed(1) + "%";
@@ -92,8 +93,9 @@ async function apiSend(method, path, body, raw) {
   const r = await fetch(path, opt);
   let data = null;
   try { data = await r.json(); } catch { data = null; }
-  if (r.status === 401) { S.boot.user = null; renderAuth(); throw new Error(data && data.error || "Please sign in"); }
-  if (!r.ok) { const e = new Error((data && data.error) || `HTTP ${r.status}`); e.data = data; e.status = r.status; throw e; }
+  if (r.status === 401) { S.boot.user = null; renderAuth(); throw new Error(data && data.error || L2("Please sign in", "يرجى تسجيل الدخول")); }
+  if (!r.ok) { const e = new Error((data && data.error) || (r.status >= 500 ? L2(`The server could not finish this (error ${r.status}). Try again in a moment.`, `تعذر على الخادم إتمام العملية (خطأ ${r.status}). حاول مرة أخرى بعد قليل.`)
+                                                         : L2(`The request was refused (error ${r.status}).`, `تم رفض الطلب (خطأ ${r.status}).`))); e.data = data; e.status = r.status; throw e; }
   return data;
 }
 function staticHeaders() { return { "x-requested-with": "BeyondERP", "x-session": store.get("token", "") || "", "x-lang": S.lang || "en" }; }
@@ -717,7 +719,15 @@ new MutationObserver(ms => { for (const m of ms) { const el = m.target;
   .observe(document.body, { attributes: true, attributeFilter: ["class"], subtree: true });
 const STAY_OPEN = new Set(["grp", "menu", "bellign", "bellignall"]);
 document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); closeMenus(); } });   // dropdowns (alerts, account) and the side menu
-window.addEventListener("hashchange", () => { S.navCount = (S.navCount || 0) + 1; S.navAnim = true; route(); });
+window.addEventListener("hashchange", () => {
+  S.navCount = (S.navCount || 0) + 1; S.navAnim = true;
+  // a side panel left open belongs to the screen being left: keep its draft, then close it (its buttons would no longer work)
+  if (typeof drawerEntry !== "undefined" && drawerEntry !== null && location.hash !== drawerEntry) {
+    $$(".drawer-bg #df").forEach(f => { try { Drafts.flush(f); } catch { /* no draft */ } });
+    $$(".drawer-bg").forEach(d => d.remove()); drawerEntry = null;
+  }
+  route();
+});
 
 // ---------------------------------------------------------------- routing
 function parseHash() {
@@ -852,6 +862,11 @@ const Drafts = {
       if (!d.fields.some(x => x.v !== "" && x.v !== false)) return;
       Drafts.put([...Drafts.all().filter(x => x.id !== d.id), d]); }, 500); };
     if (!box._draftWired) { box._draftWired = true; box.addEventListener("input", save); box.addEventListener("change", save); }
+  },
+  flush(box) {      // keep what is typed now (leaving the screen before the half-second timer)
+    if (!box || !box._draft || box._draftDone) return;
+    const d = { ...box._draft, fields: Drafts.fields(box), at: new Date().toISOString() };
+    if (d.fields.some(x => x.v !== "" && x.v !== false)) Drafts.put([...Drafts.all().filter(x => x.id !== d.id), d]);
   },
   done(box) { if (!box) return; box._draftDone = true; if (box._draft) Drafts.put(Drafts.all().filter(x => x.id !== box._draft.id)); },
   discard(id) { Drafts.put(Drafts.all().filter(x => x.id !== id)); },
@@ -1302,7 +1317,9 @@ S.GLOBAL_H = {
     if (hoverNav()) return;                                    // hover mode: groups open while the pointer is on them
     const open = new Set(store.get("navOpen", "").split(",").filter(Boolean)); w.classList.toggle("open");
     if (w.classList.contains("open")) open.add(el.dataset.g); else open.delete(el.dataset.g); store.set("navOpen", [...open].join(",")); },
-  lang: () => { setMyLook({ lang: S.lang === "ar" ? "en" : "ar" }, { quiet: true }); applyLook(); renderShell(); route(); },
+  lang: () => { setMyLook({ lang: S.lang === "ar" ? "en" : "ar" }, { quiet: true }); applyLook(); renderShell(); route();
+    if ($("#tourbar")) tourBar();          // cards already on screen follow the new language
+    if ($("#nnudge")) { $("#nnudge").remove(); permNudge(); } },
   // one tap switches between light and dark from what is showing now (device setting by default); the choice is kept
   theme: () => { setMyLook({ mode: isDark() ? "light" : "dark" }, { quiet: true }); applyLook(); renderShell(); route(); },
   updcheck: el => window.BeyondUpdate && window.BeyondUpdate.ask(el),
@@ -5409,7 +5426,7 @@ PAGES.coa = async (view, parts, q) => {
     <input type="search" class="coa-q" placeholder="${L2("Search by account code or name", "البحث برقم الحساب أو اسمه")}" data-input="coaq" style="min-width:220px;flex:1;max-width:360px">
     ${inactive ? `<label class="f chk"><input type="checkbox" data-change="coainact" ${q.inactive ? "checked" : ""}>${S.lang === "ar" ? "إظهار الحسابات غير النشطة" : "Show inactive accounts"} (${inactive})</label>` : ""}<span class="spacer"></span>${exportMenu("trial_balance", {})}</div>` +
     filterBar(q, ["asof"]) + types.map(ty => `<div class="card coa-card"><div class="row" style="justify-content:space-between;align-items:center"><h2>${esc(tl(ty))}</h2>${add ? `<button class="btn sm" data-a="anew" data-type="${ty}">+ ${L2("Add", "إضافة")} ${esc(tl(ty))}</button>` : ""}</div><div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th>${t("normal")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
-    ${rows.filter(a => a.type === ty && (a.active || q.inactive)).map(a => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))} ${a.role ? `<span class="chip" title="${esc(a.role)}">${esc(L2("System account", "حساب نظامي"))}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
+    ${rows.filter(a => a.type === ty && (a.active || q.inactive)).map(a => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))} ${a.role ? `<span class="chip" title="${esc(L2("System account: the app posts to it by itself", "حساب نظام: يرحّل عليه البرنامج تلقائياً"))}">${esc(L2("System account", "حساب نظامي"))}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
 };
 
 // ------------------------------------------------------------------ offers
@@ -5811,6 +5828,8 @@ PAGES["funding-schedule"] = async (view, parts, q) => {
 
 // ------------------------------------------------------------ import/export
 PAGES.data = async (view) => {
+  // everything this page needs is fetched before it is drawn, so its buttons work from the first moment
+  const [, dm0] = await Promise.all([impSheets().catch(() => null), api("GET", "/api/demo").catch(() => null)]);
   const sheets = S.boot.enums.sheets;
   const ed = can("import_export.import", "edit");
   view.innerHTML = (STATIC ? `<div class="banner info">${S.lang === "ar" ? "نسخة المتصفح: تُحفظ البيانات في هذا المتصفح فقط. نزّل نسخة JSON أو Excel بانتظام كنسخة احتياطية، وتُستخدم أيضاً لنقل البيانات إلى جهاز آخر." : "Browser edition: data is stored in this browser only. Download a JSON or Excel copy regularly as a backup; it is also used to transfer data to another device."}</div>` : "") +
@@ -5847,13 +5866,12 @@ PAGES.data = async (view) => {
     const u = new URL(a.getAttribute("href"), location.href); if (sec && !sec.checked) u.searchParams.set("secrets", "0"); else u.searchParams.delete("secrets");
     a.setAttribute("href", u.pathname + u.search); });
   if (sec) { sec.addEventListener("change", secLinks); secLinks(); }
-  await impSheets();
   const tplCard = document.createElement("div"); tplCard.className = "card";
   tplCard.innerHTML = `<h2>${L2("Screen templates", "قوالب الشاشات")}</h2><p class="muted" style="margin-top:0">${L2("Each screen also has an ⇅ Import button. Download the standard layout, or import your own file and match its columns.", "تحتوي كل شاشة أيضاً على زر ⇅ استيراد. نزّل التنسيق القياسي، أو استورد ملفك وطابق أعمدته.")}</p>
     <div class="tbl stack"><table><tbody>${(S.cache.impSheets || []).filter(x => x.name !== "Settings").map(x => `<tr><td><b>${esc(sheetLabel(x.name))}</b><div class="lines">${x.columns.filter(c => c.required).map(c => esc(S.lang === "ar" ? c.ar : c.en)).join(" · ")}</div></td>
       <td><a class="btn sm" href="${tplUrl(x.name, "xlsx")}">⬇ Excel</a> <a class="btn sm" href="${tplUrl(x.name, "csv")}">⬇ CSV</a> <a class="btn sm" href="${tplUrl(x.name, "csv", 1)}" title="${esc(L2("With demo data", "ببيانات تجريبية"))}">⬇ ${L2("Demo", "تجريبي")}</a>${canImportSheet(x.name) ? ` <button class="btn sm" data-a="impopen" data-sheet="${esc(x.name)}">⇪ ${L2("Import", "استيراد")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
   view.appendChild(tplCard);
-  let dm = { empty: false, loaded: "" }; try { dm = await api("GET", "/api/demo"); } catch { /* no permission */ }
+  const dm = dm0 || { empty: false, loaded: "" };      // (no permission: no demo card actions)
   const demoCard = document.createElement("div"); demoCard.className = "card";
   demoCard.innerHTML = `<h2>${L2("Demo company", "الشركة التجريبية")}</h2>
     <p class="muted" style="margin-top:0">${L2("A sample company with about six months of activity on every screen: projects with costs and negotiated discounts, payroll, VAT and withholding tax, BOQs and invoices, stock, fixed assets, loans, cash custody, equipment rentals, instalment sales, recurring entries and bank statements. For testing and training.", "شركة نموذجية بنحو ستة أشهر من النشاط على جميع الشاشات: مشروعات بتكاليفها وخصومات التفاوض، والرواتب، وضريبة القيمة المضافة والخصم والتحصيل، والمقايسات والفواتير، والمخزون، والأصول الثابتة، والقروض، والعهد النقدية، وتأجير المعدات، والبيع بالتقسيط، والقيود المتكررة، وكشوف البنوك. للتجربة والتدريب.")}</p>
@@ -6700,7 +6718,7 @@ PAGES.audit = async (view, parts, q) => {
   const rows = await api("GET", "/api/audit?" + qs(lq));
   view.innerHTML = filterBar(q, ["q", ["select", "username", t("username"), [...new Set(rows.map(r => r.username))].map(u => [u, u])]]) +
     `<div class="card"><div class="tbl"><table><thead><tr><th>${L2("Time", "الوقت")}</th><th>${t("username")}</th><th>${L2("Action", "الإجراء")}</th><th>${L2("Detail", "التفاصيل")}</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${esc(r.ts)}</td><td>${esc(r.username)}</td><td>${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join("")}</tbody></table></div>${pager(rows.length < lq.limit ? (Number(lq.offset || 0) + rows.length) : 99999, lq).replace("99999", "…")}</div>`;
+    ${rows.map(r => `<tr><td>${esc(r.ts)}</td><td>${esc(r.username)}</td><td title="${esc(r.action)}">${esc(r.action_label || r.action)}</td><td>${esc(r.detail_text || r.detail)}</td></tr>`).join("")}</tbody></table></div>${pager(rows.length < lq.limit ? (Number(lq.offset || 0) + rows.length) : 99999, lq).replace("99999", "…")}</div>`;
 };
 
 // ------------------------------------------------------------ workspace
