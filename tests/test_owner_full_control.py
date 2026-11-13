@@ -270,7 +270,7 @@ class WebsiteTextsCatalogue(unittest.TestCase):
             self.assertTrue(t["en"].strip() and t["ar"].strip(), t["key"])
         for k in ("home.hero.tag", "home.hero.sub", "home.books.title", "home.band.title", "home.chips", "home.btn.start", "home.showcase.title",
                   "auth.welcome", "auth.signup", "auth.trial", "auth.google", "auth.slogan", "start.create", "start.join_help",
-                  "downloads.desktop.title", "public.powered", "foot.email", "foot.rights"):
+                  "downloads.signer.title", "public.powered", "foot.email", "foot.rights"):
             self.assertIn(k, keys)
         chips = next(t for t in self.cat["texts"] if t["key"] == "home.chips")
         self.assertEqual(len(chips["en"].split("\n")), len(chips["ar"].split("\n")))        # the list of systems, line for line

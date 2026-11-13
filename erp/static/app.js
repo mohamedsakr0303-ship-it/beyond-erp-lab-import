@@ -1113,7 +1113,7 @@ function userMenu() {
   return `<button data-a="theme">${esc(themeTitle())}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a><a href="support.html" target="_blank" rel="opener" class="conlink">🎧 ${S.lang === "ar" ? "مكتب الدعم" : "Support desk"} ↗</a>` : ""}
-    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة تعريفية" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "تعرّف على BeyondERP" : "Discover BeyondERP"}</a>${appName() === "BeyondERP" ? `<button data-a="shareapp">↗ ${S.lang === "ar" ? "شارك BeyondERP" : "Share BeyondERP"}</button>` : ""}${platformOn() && appName() === "BeyondERP" ? `<a href="#/referrals">🎁 ${S.lang === "ar" ? "برنامج الإحالة" : "Referral program"}</a>` : ""}${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}${platformOn() ? `<a href="#/help">📖 ${S.lang === "ar" ? "المساعدة والأسئلة الشائعة" : "Help & FAQ"}</a>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help and support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تنزيل التطبيق" : "Download the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
+    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة تعريفية" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "تعرّف على BeyondERP" : "Discover BeyondERP"}</a>${appName() === "BeyondERP" ? `<button data-a="shareapp">↗ ${S.lang === "ar" ? "شارك BeyondERP" : "Share BeyondERP"}</button>` : ""}${platformOn() && appName() === "BeyondERP" ? `<a href="#/referrals">🎁 ${S.lang === "ar" ? "برنامج الإحالة" : "Referral program"}</a>` : ""}${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}${platformOn() ? `<a href="#/help">📖 ${S.lang === "ar" ? "المساعدة والأسئلة الشائعة" : "Help & FAQ"}</a><a href="#/whatsnew">✨ ${S.lang === "ar" ? "ما الجديد" : "What's new"}</a>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help and support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تنزيل التطبيق" : "Download the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
 async function loadAlerts(force) {
@@ -6183,6 +6183,7 @@ PAGES.einvoice = async (view, parts, q) => {
     if (!el) return;
     el.innerHTML = (x ? `<a class="btn" href="downloads/${encodeURIComponent(x.file)}" download>⬇ ${esc(L2("Download the installer for Windows", "تنزيل برنامج التثبيت لنظام Windows"))}</a>`
       : `<span class="muted">${esc(L2("The Windows installer is available after the next update is published.", "برنامج التثبيت لنظام Windows متاح بعد نشر التحديث القادم."))}</span>`)
+      + `<span class="muted" style="display:block;margin-top:6px;font-size:.85em">${esc(L2("If Windows says it protected your PC: More info → Run anyway (once, when installing).", "إذا ظهرت رسالة «Windows حمى جهاز الكمبيوتر»: مزيد من المعلومات ← تشغيل على أي حال (مرة واحدة عند التثبيت)."))}</span>`
       + `<span class="muted" style="display:block;margin-top:6px;font-size:.85em">${esc(L2("Mac / Linux: run signer/beyond_signer.py with Python 3.", "Mac / Linux: شغّل signer/beyond_signer.py باستخدام Python 3."))}</span>`;
   });
   if (!ed) $$("#etaset input, #etaset select").forEach(e => { e.disabled = true; });
@@ -10148,21 +10149,19 @@ PAGES.download = async view => {
   S.H.copycfg = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(L2("Copied.", "تم النسخ.")); } catch { await uiPrompt("", el.dataset.v); } };
   const installed = inAppWindow();
   view.innerHTML =
-    card(esc(ST("downloads.phone.title", "Phone or tablet (Android / iOS)", "الهاتف أو الجهاز اللوحي (Android / iOS)")), installed ? `<div class="banner ok">${L2("You are using the installed app.", "أنت تستخدم التطبيق المثبت.")}</div>` :
+    card(esc(ST("downloads.phone.title", "Install BeyondERP (computer, phone or tablet)", "تثبيت BeyondERP (كمبيوتر أو هاتف أو جهاز لوحي)")), installed ? `<div class="banner ok">${L2("You are using the installed app.", "أنت تستخدم التطبيق المثبت.")}</div>` :
       `${installPrompt ? `<p><button class="btn pri" data-a="pwainstall">${L2("Install BeyondERP", "تثبيت BeyondERP")}</button></p>` : ""}
+      <p><b>Windows / Mac (Chrome or Edge):</b> ${L2("Open this site → the install icon ⊕ at the end of the address bar (or menu ⋮ → Install BeyondERP).", "افتح الموقع ← أيقونة التثبيت ⊕ في نهاية شريط العنوان (أو القائمة ⋮ ← تثبيت BeyondERP).")}</p>
       <p><b>Android (Chrome):</b> ${L2("Open this site → menu ⋮ → Install app (or Add to Home screen).", "افتح الموقع ← القائمة ⋮ ← تثبيت التطبيق (أو الإضافة إلى الشاشة الرئيسية).")}</p>
       <p><b>iPhone / iPad (Safari):</b> ${L2("Open this site → Share □↑ → Add to Home Screen.", "افتح الموقع ← مشاركة □↑ ← الإضافة إلى الشاشة الرئيسية.")}</p>
-      <p class="muted">${esc(ST("downloads.phone.text", "Opens full screen, uses the same workspace and remains viewable offline; saving requires a connection.", "يُفتح بملء الشاشة ويستخدم مساحة العمل نفسها، ويمكن العرض دون اتصال؛ ويتطلب الحفظ اتصالاً."))}</p>`) +
-    card(esc(ST("downloads.desktop.title", "Desktop application, online (recommended)", "تطبيق سطح المكتب، متصل (مستحسن)")), `<p>${esc(ST("downloads.desktop.text", "Opens this site in a dedicated window. Same sign-in and books; changes appear immediately on all devices. Requires an internet connection.", "يفتح هذا الموقع في نافذة مستقلة، بنفس تسجيل الدخول والدفاتر، وتظهر التغييرات فوراً على جميع الأجهزة. يتطلب اتصالاً بالإنترنت."))}</p>
-      <p><b>Windows</b> — ${dl(f("windows"), L2("Download installer (.exe)", "تنزيل برنامج التثبيت (.exe)"))}</p>
-      <p><b>Mac</b> — ${dl(f("mac"), L2("Download for Mac (.zip)", "تنزيل لنظام Mac (.zip)"))}</p>`) +
+      <p class="muted">${esc(ST("downloads.phone.text", "Opens in its own window with its own icon, uses the same workspace and updates by itself; saving requires a connection.", "يُفتح في نافذة مستقلة بأيقونته الخاصة، ويستخدم مساحة العمل نفسها ويتحدّث تلقائياً؛ ويتطلب الحفظ اتصالاً."))}</p>`) +
     card(esc(ST("downloads.signer.title", "BeyondERP Signer (e-invoices)", "برنامج التوقيع BeyondERP Signer (الفواتير الإلكترونية)")), `<p>${esc(ST("downloads.signer.text", "For the computer the e-invoicing USB token is plugged into: signs invoices with the token and sends them to the tax authority, from the invoice itself. Installs like any program and runs in the background, with its icon by the clock; paste its pairing key in E-invoicing → Settings.", "للجهاز المتصل به توكن الفاتورة الإلكترونية: يوقّع الفواتير بالتوكن ويرسلها إلى مصلحة الضرائب من داخل الفاتورة نفسها. يُثبَّت مثل أي برنامج ويعمل في الخلفية وتظهر أيقونته بجوار الساعة؛ الصق مفتاح الربط في الفاتورة الإلكترونية ← الإعدادات."))}</p>
       <p><b>Windows</b> — ${dl(f("signer-windows"), L2("Download the Signer installer (.exe)", "تنزيل برنامج تثبيت التوقيع (.exe)"))}</p>`) +
     // the offline editions carry the whole app, so they are not public: the platform owner gets them from the private
     // GitHub release that every deploy refreshes (only people with access to the private repository can open it)
     (S.billing && S.billing.is_owner ? card(L2("Offline desktop application (owner only)", "تطبيق سطح المكتب دون اتصال (للمالك فقط)"), `<p>${L2("Offline editions contain the complete application and are available to the owner only. Each release publishes the Windows and Mac installers to your private GitHub release; sign in with the repository owner's account to download.", "تحتوي النسخ دون اتصال على التطبيق كاملاً وتتاح للمالك فقط. يُنشر كل إصدار برامج التثبيت لنظامي Windows وMac على الإصدار الخاص في GitHub؛ سجّل الدخول بحساب مالك المستودع للتنزيل.")}</p>
       ${window.BEYOND_RELEASES ? `<p><a class="btn pri" href="${esc(window.BEYOND_RELEASES)}" target="_blank" rel="noopener">⬇ ${L2("Open private release", "فتح الإصدار الخاص")}</a></p>` : `<p class="muted">${L2("GitHub → your repository → Releases → “Desktop apps (latest build)”.", "GitHub ← المستودع ← Releases ← «Desktop apps (latest build)».")}</p>`}`) : "") +
-    (cfg.url ? card(L2("Connect the desktop application to this workspace", "ربط تطبيق سطح المكتب بمساحة العمل"), `<p>${L2("In the desktop application, open Settings → Workspace, paste these two values and sign in with your usual credentials.", "في تطبيق سطح المكتب، افتح الإعدادات ← مساحة العمل، والصق القيمتين، وسجّل الدخول ببياناتك المعتادة.")}</p>
+    (cfg.url && S.billing && S.billing.is_owner ? card(L2("Connect the desktop application to this workspace", "ربط تطبيق سطح المكتب بمساحة العمل"), `<p>${L2("In the desktop application, open Settings → Workspace, paste these two values and sign in with your usual credentials.", "في تطبيق سطح المكتب، افتح الإعدادات ← مساحة العمل، والصق القيمتين، وسجّل الدخول ببياناتك المعتادة.")}</p>
       <div class="grid g2"><label class="f">${L2("Workspace URL", "رابط مساحة العمل")}<input value="${esc(cfg.url)}" readonly></label><div class="row" style="align-items:end"><button class="btn" data-a="copycfg" data-v="${esc(cfg.url)}">${L2("Copy", "نسخ")}</button></div>
       <label class="f">${L2("Public key", "المفتاح العام")}<input value="${esc(cfg.key)}" readonly></label><div class="row" style="align-items:end"><button class="btn" data-a="copycfg" data-v="${esc(cfg.key)}">${L2("Copy", "نسخ")}</button></div></div>`) : "");
   $("#ttl").textContent = (ST("downloads.page_title", "Download the app", "تنزيل التطبيق"));
@@ -14943,6 +14942,18 @@ function helpSuggest(input, box) {
         <a class="muted" style="font-size:.85em" href="#/help?q=${encodeURIComponent(q)}">${esc(L2("Search all of Help & FAQ", "البحث في كل المساعدة والأسئلة الشائعة"))} →</a></div>` : "";
     } catch { box.innerHTML = ""; } }, 350); });
 }
+// What's new: the patch notes the team published (drafts never reach customers), newest first, in the reader's language
+PAGES.whatsnew = async view => {
+  $("#ttl").textContent = L2("What's new", "ما الجديد"); $("#crumb").textContent = "BeyondERP";
+  if (!platformOn()) { view.innerHTML = `<div class="card"><div class="empty">${esc(L2("What's new is part of the online workspace.", "«ما الجديد» جزء من مساحة العمل الإلكترونية."))}</div></div>`; return; }
+  const notes = await PLAT("patch_notes_published"), ar = S.lang === "ar";
+  view.innerHTML = notes.length ? notes.map(n => `<div class="card"><div class="row" style="gap:8px;align-items:baseline;margin-bottom:6px">
+      <h3 style="margin:0" dir="auto">${esc(ar && n.title_ar ? n.title_ar : n.title)}</h3><span class="sp"></span>
+      ${n.version ? `<span class="chip">${esc(n.version)}</span>` : ""}<span class="muted small">${esc(fd(n.date))}</span></div>
+      <div class="help-a" dir="auto">${helpMd(ar && n.body_ar ? n.body_ar : n.body)}</div></div>`).join("")
+    : `<div class="card"><div class="empty">${esc(L2("Nothing published yet.", "لم يُنشر شيء بعد."))}</div></div>`;
+};
+
 PAGES.help = async (view, parts, q) => {
   $("#ttl").textContent = L2("Help & FAQ", "المساعدة والأسئلة الشائعة"); $("#crumb").textContent = "BeyondERP";
   if (!platformOn()) { view.innerHTML = `<div class="card"><div class="empty">${esc(L2("Help & FAQ is part of the online workspace.", "المساعدة والأسئلة الشائعة جزء من مساحة العمل الإلكترونية."))}</div></div>`; return; }

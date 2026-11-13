@@ -157,7 +157,7 @@ const NAV0 = () => [
   [L("Money", "المال"), [["payments", "⧗", L("Payments to verify", "مدفوعات للتحقق"), "billing"], ["ledger", "≣", L("All payments", "كل المدفوعات"), "billing"],
     ["methods", "💳", L("Payment methods", "طرق الدفع"), "settings"]]],
   [L("Support", "الدعم"), [["queue", "☰", L("Support queue", "قائمة الدعم"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "desk:replies"],
-    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"],
+    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"], ["patchnotes", "📝", L("Patch notes", "ملاحظات الإصدار"), "desk:help"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]]],
   [L("Product", "المنتج"), [["plans", "◎", L("Plans", "الباقات"), "settings"], ["addons", "＋", L("Modules, AI & support", "الأقسام والذكاء الاصطناعي والدعم"), "settings"],
     ["menus", "☰", L("Menus by industry", "القوائم حسب النشاط"), "settings"], ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"],
@@ -172,7 +172,7 @@ const DESK_NAV = () => [[L("Support", "الدعم"), [["queue", "☰", L("Queue"
     ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "desk:replies"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]], "support"],
   [L("Help center", "مركز المساعدة"), [["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"],
-    ["texts", "✎", L("Website", "الموقع"), "site"]], "product"],
+    ["patchnotes", "📝", L("Patch notes", "ملاحظات الإصدار"), "desk:help"], ["texts", "✎", L("Website", "الموقع"), "site"]], "product"],
   [L("Customers", "العملاء"), [["customers", "▦", L("Customers", "العملاء"), "customers"], ["people", "☺", L("People", "الأشخاص"), "customers"]], "business"],
   [L("Me", "أنا"), [["alerts", "🔔", L("Notifications", "الإشعارات"), "*"]], "console"]];
 
@@ -1416,6 +1416,45 @@ PAGES.help = async view => {
     <div class="card"><div class="row" style="margin-bottom:10px"><h3 style="margin:0">${esc(L("Categories", "التصنيفات"))}</h3><span class="sp"></span><button class="btn sm" data-a="catnew">＋</button></div>
       ${cats.map(c => `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(c.icon || "•")} ${esc((S.lang === "ar" && c.name_ar) || c.name)}</span><span class="sp"></span>
         <span class="muted small">${d.faq.filter(f => f.category === c.key).length}</span><button class="btn sm" data-a="catedit" data-k="${esc(c.key)}">${esc(L("Edit", "تعديل"))}</button></div>`).join("")}</div></div>`;
+};
+
+// Patch notes: every release adds a draft written from what changed; the team reviews it, writes it for customers in
+// both languages and publishes it. Customers see only what was published (the app's What's new).
+PAGES.patchnotes = async view => {
+  let notes = await rpc("console_patch_notes");
+  const save = async p => { notes = await rpc("console_patch_note", { p }); };
+  const edit = n => panel(n ? (n.title || L("Patch notes", "ملاحظات الإصدار")) : L("New patch notes", "ملاحظات إصدار جديدة"), form([
+      { k: "version", l: L("Version", "الإصدار"), v: n ? n.version : "", dir: "ltr" },
+      { k: "title", l: L("Title", "العنوان"), v: n ? n.title : "", req: 1 }, { k: "title_ar", l: L("Title (Arabic)", "العنوان (عربي)"), v: n ? n.title_ar : "", dir: "rtl" },
+      { k: "body", l: L("What changed, for customers", "ما الذي تغيّر، للعملاء"), type: "area", rows: 12, v: n ? n.body : "", help: HELP_FORMAT() },
+      { k: "body_ar", l: L("What changed (Arabic)", "ما الذي تغيّر (عربي)"), type: "area", rows: 12, v: n ? n.body_ar : "", dir: "rtl" }]),
+    async v => { await save({ ...v, id: n ? n.id : null }); toast(L("Saved. Customers see it once it is published.", "تم الحفظ. يراه العملاء بعد النشر.")); },
+    { wide: true, extra: n ? `${n.status === "published"
+        ? `<button type="button" class="btn" data-a="pnunpub" data-id="${n.id}">${esc(L("Unpublish", "إلغاء النشر"))}</button>`
+        : `<button type="button" class="btn pri" data-a="pnpub" data-id="${n.id}">${esc(L("Publish", "نشر"))}</button>`}
+      <button type="button" class="btn danger" data-a="pndel" data-id="${n.id}">${esc(L("Delete", "حذف"))}</button>` : "" });
+  const act = async (el, action, ask, done) => {
+    if (ask && !await confirmIt(ask, { danger: action === "delete" })) return;
+    closePanel(); await save({ id: +el.dataset.id, action }); toast(done); route();
+  };
+  Object.assign(S.H, { pnnew: () => edit(null), pnedit: el => edit(notes.find(n => n.id === +el.dataset.id)),
+    pnpub: el => act(el, "publish", L("Publish these notes? Every customer sees them in What's new.", "نشر هذه الملاحظات؟ يراها كل العملاء في ما الجديد."), L("Published.", "تم النشر.")),
+    pnunpub: el => act(el, "unpublish", null, L("Hidden from customers; kept as a draft.", "أُخفيت عن العملاء وبقيت مسودة.")),
+    pndel: el => act(el, "delete", L("Delete these notes?", "حذف هذه الملاحظات؟"), L("Deleted.", "تم الحذف.")) });
+  const drafts = notes.filter(n => n.status !== "published").length;
+  view.innerHTML = `<div class="card"><div class="row" style="margin-bottom:10px"><h3 style="margin:0">${esc(L("Patch notes", "ملاحظات الإصدار"))}
+        ${drafts ? chip(L(`${drafts} to review`, `${drafts} للمراجعة`), "warn") : ""}</h3><span class="sp"></span>
+      <button class="btn pri" data-a="pnnew">＋ ${esc(L("New patch notes", "ملاحظات إصدار جديدة"))}</button></div>
+    <p class="muted small" style="margin-top:0">${esc(L("Every release adds a draft written from what changed. Rewrite it for customers in both languages, then publish it: customers only see published notes, in the app's What's new.",
+      "كل إصدار يضيف مسودة مكتوبة مما تغيّر. أعد صياغتها للعملاء باللغتين ثم انشرها: لا يرى العملاء إلا الملاحظات المنشورة، في «ما الجديد» داخل البرنامج."))}</p>
+    ${notes.length ? `<div class="tbl"><table><thead><tr><th>${esc(L("Title", "العنوان"))}</th><th>${esc(L("Version", "الإصدار"))}</th><th>${esc(L("Arabic", "العربية"))}</th>
+        <th>${esc(L("Status", "الحالة"))}</th><th>${esc(L("Date", "التاريخ"))}</th><th></th></tr></thead><tbody>${notes.map(n => `<tr>
+        <td><b dir="auto">${esc(n.title)}</b>${n.release_sha ? `<span class="sub">${esc(L("From release", "من الإصدار"))} ${esc(n.release_sha.slice(0, 7))}</span>` : ""}</td>
+        <td>${esc(n.version || "—")}</td><td>${n.title_ar && n.body_ar ? chip("✓", "ok") : chip(L("Missing", "ناقصة"), "warn")}</td>
+        <td>${n.status === "published" ? chip(L("Published", "منشور"), "ok") : chip(L("Draft", "مسودة"), "warn")}</td>
+        <td>${esc(String(n.published_at || n.created_at || "").slice(0, 10))}</td>
+        <td class="r"><button class="btn sm" data-a="pnedit" data-id="${n.id}">${esc(L("Review", "مراجعة"))}</button></td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${esc(L("No patch notes yet. The next release adds a draft here.", "لا ملاحظات إصدار بعد. سيضيف الإصدار القادم مسودة هنا."))}</div>`}</div>`;
 };
 
 // solutions shared from closed tickets (only a title and a resolution; never anything about the customer)

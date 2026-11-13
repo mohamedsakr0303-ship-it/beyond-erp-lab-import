@@ -1,4 +1,4 @@
-"""Put the public desktop builds (the connected app) into web/downloads/ with a small index the app reads
+"""Put the public download (the e-invoice Signer) into web/downloads/ with a small index the app reads
 (downloads/beyond-downloads.json). Files over Cloudflare Pages' 25 MB limit are left out with a warning.
 
   python packaging/collect_downloads.py <artifacts folder> [site url]
@@ -35,12 +35,10 @@ if site:
         print("::notice::No downloads on the live site yet")
 live_files = {f["file"]: f for f in live.get("files", [])}
 reused = False
-# Only the connected desktop app (a small launcher that opens the website) is public. The offline editions carry the whole
-# app, so they are never put on the website (nor built by Actions while the repository is public).
-wanted = [("windows", ["BeyondERP-Setup.exe"]), ("mac", ["BeyondERP-mac.zip"]),
-          # the e-invoice signer for the computer with the USB token: its installer; the older single program only
-          # until a desktop build has made the installer
-          ("signer-windows", ["BeyondERP-Signer-Setup.exe", "BeyondERP-Signer.exe"])]
+# The ERP is the browser app (installed from the browser): no desktop app is offered. The one download is the e-invoice
+# Signer, for the computer the USB token is plugged into (a browser cannot reach the token). The offline editions carry
+# the whole app, so they are never put on the website.
+wanted = [("signer-windows", ["BeyondERP-Signer-Setup.exe", "BeyondERP-Signer.exe"])]
 files = []
 
 

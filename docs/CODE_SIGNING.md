@@ -1,5 +1,10 @@
 # Signing the Windows apps
 
+> **Not in use.** A certificate costs too much for now, so nothing is signed: the ERP is the browser app (installed from
+> the browser), and the only Windows download, the e-invoice Signer, ships unsigned (Windows shows its "protected your
+> PC" notice once: More info → Run anyway). The build no longer runs the signing steps; `packaging/sign.ps1` is kept
+> for the day a certificate is bought. The notes below say how it would be set up.
+
 Windows (SmartScreen) and browsers warn about programs that are not signed with a code-signing certificate: "Windows
 protected your PC", "not commonly downloaded". Copyright and publisher details in a program do not change that; only a
 certificate issued to BEYONDERP by a certificate authority does, and the warnings then fade as the signed downloads build

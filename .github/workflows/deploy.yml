@@ -37,7 +37,7 @@ jobs:
           fetch-depth: 0
       # The desktop installers (Windows + Mac) take most of the build minutes — Mac minutes count 10×, Windows 2× — so they
       # are built only on demand: Actions → deploy → "Run workflow". A push deploys the tests, database and website only;
-      # the website keeps offering the installers last published on the "desktop-app" release.
+      # the website keeps offering the Signer installer last published on the "desktop-app" release.
       - name: Build the desktop installers this time?
         id: changed
         run: |
@@ -45,7 +45,7 @@ jobs:
             echo "desktop=true" >> "$GITHUB_OUTPUT"
           else
             echo "desktop=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Desktop installers not rebuilt (run the workflow by hand to build them) — the website keeps the current ones"
+            echo "::notice::Signer installer not rebuilt (run the workflow by hand to build it) — the app keeps offering the current one"
           fi
       - uses: actions/setup-python@v7
         with:
@@ -102,6 +102,7 @@ jobs:
           before=$(gh api "repos/${{ github.repository }}/actions/workflows/deploy.yml/runs?branch=main&event=push&status=success&per_page=1" \
                    --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null || true)
           [ -n "$before" ] || before="${{ github.event.before }}"
+          echo "before=$before" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" != "push" ] || [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ] \
              || ! git cat-file -e "$before" 2>/dev/null || git diff --name-only "$before" "${{ github.sha }}" | grep -q '^supabase/'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -125,6 +126,20 @@ jobs:
               echo "::error title=Database migrations::$(tail -c 1500 out.txt | tr '\n' ' ')"
             fi
             exit 1; }
+      # Every release adds a draft of its patch notes (from the commit messages since the previous release) for the owner
+      # console and the support desk to review, edit and publish; customers only ever see what was published.
+      - name: Patch notes draft for this release
+        if: github.event_name == 'push' && env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
+        run: |
+          before="${{ steps.changed.outputs.before }}"
+          git cat-file -e "$before" 2>/dev/null || before=""
+          python3 packaging/patch_note_draft.py "$before" "${{ github.sha }}" > note.sql
+          python3 -c 'import json,sys; print(json.dumps({"query": open("note.sql").read()}))' > note.json
+          code=$(curl -sS -o out.txt -w '%{http_code}' -X POST "https://api.supabase.com/v1/projects/$PROJECT_ID/database/query" \
+                 -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" --data @note.json || echo 000)
+          if [ "${code:0:1}" != "2" ]; then
+            echo "::warning title=Patch notes draft not added::HTTP $code $(head -c 300 out.txt) — write it by hand in the owner console (Patch notes)."
+          fi
       - name: Deploy the functions (login, manage-user, billing, ai, push, mail)
         if: steps.changed.outputs.run == 'true' && env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
         run: |
@@ -141,147 +156,47 @@ jobs:
   # connected app only — a small launcher that opens the website in its own window, like the phone apps. The offline
   # editions (the whole app inside) are not built here: this repository is public, so anything it publishes is too.
   # Build them on your own computer (pyinstaller packaging/beyond_erp.spec) and keep them private.
+  # Only the BeyondERP Signer is built: the e-invoice helper for the computer the USB token is plugged into (a browser
+  # cannot reach the token). The ERP itself is the browser app, installed from the browser; no desktop app is built.
+  # Unsigned on purpose: Windows shows its "unknown publisher" notice once when it is installed.
   desktop:
     needs: test
     if: needs.test.outputs.desktop == 'true'
     continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     permissions:
-      contents: write   # publishes the installers on the "desktop-app" release
+      contents: write   # publishes the Signer installer on the "desktop-app" release
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt pyinstaller pillow
-      # the installers belong to this workspace and this website
-      - name: Workspace and website for the apps
-        shell: bash
-        env:
-          URL: ${{ vars.SUPABASE_URL }}
-          KEY: ${{ vars.SUPABASE_ANON_KEY }}
-          SITE: ${{ vars.SITE_URL || 'https://mybeyonderp.com/' }}
-        run: |
-          echo "$SITE" > packaging/site_url.txt
-          if [ -n "$URL" ] && [ -n "$KEY" ]; then printf '{"url": "%s", "key": "%s"}' "$URL" "$KEY" > erp/workspace_preset.json; fi
-      - run: pyinstaller packaging/online.spec --noconfirm --distpath dist-online --workpath build-online
-      - name: Inno Setup (Windows)
-        if: runner.os == 'Windows'
+      - name: Inno Setup
         shell: pwsh
         run: |
           if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
-      # the signing steps on Windows itself, with no certificate: packaging/sign.ps1 parses, says "not signed", stops on a
-      # half-set-up eSigner, and Inno Setup hands it the file to sign as the installers do (a throwaway setup, not published)
-      - name: Signing steps check (Windows)
-        if: runner.os == 'Windows'
-        continue-on-error: true
+      - name: BeyondERP Signer
         shell: pwsh
         run: |
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          $signer = "$pwd\packaging\sign.ps1"
-          $e = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile($signer, [ref]$null, [ref]$e)
-          if ($e) { $e | ForEach-Object { Write-Host "::error::sign.ps1: $($_.Message)" }; exit 1 }
-          & powershell -NoProfile -ExecutionPolicy Bypass -File $signer dist-online\BeyondERP.exe
-          if ($LASTEXITCODE -ne 0) { Write-Host "::error::sign.ps1 failed without a certificate"; exit 1 }
-          $env:ES_USERNAME = "check"
-          & powershell -NoProfile -ExecutionPolicy Bypass -File $signer dist-online\BeyondERP.exe
-          $partial = $LASTEXITCODE
-          $env:ES_USERNAME = ""
-          if ($partial -eq 0) { Write-Host "::error::sign.ps1 did not stop on a half-set-up eSigner"; exit 1 }
-          # with no certificate Inno Setup then stops on the unsigned file ("does not have a digital signature"): expected
-          # here; what counts is that it ran sign.ps1 on the quoted file and sign.ps1 answered
-          $log = & $iscc "/O$env:RUNNER_TEMP\signcheck" ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f') packaging\signcheck.iss 2>&1 | Out-String
-          Write-Host $log
-          if ($log -notmatch 'Running Sign Tool beyond: powershell .*-File "[^"]+\\sign\.ps1" "[^"]+"' -or $log -notmatch 'Not signed \(no code-signing certificate set up\)') {
-            Write-Host "::error::Inno Setup did not hand the file to sign.ps1"; exit 1 }
-          Write-Host "Signing steps check passed"
-          exit 0   # GitHub ends a pwsh step with the last tool's exit code: here ISCC's expected refusal
-      - name: Windows installers
-        if: runner.os == 'Windows'
-        shell: pwsh
-        # BEYONDERP's code-signing certificate (packaging/sign.ps1): a .pfx file, or SSL.com eSigner in the cloud. Only
-        # the steps that sign see it (no package installs or builds run here). With none set: built unsigned, as before.
-        env:
-          SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
-          SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
-          ES_USERNAME: ${{ secrets.ES_USERNAME }}
-          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
-          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
-          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
-        run: |
-          $v = (Select-String -Path erp/__init__.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          # signed when a certificate is set up: the program first, then the installer and its uninstaller (by Inno Setup)
-          $signer = "$pwd\packaging\sign.ps1"
-          $sign = @()
-          if ("$env:SIGN_PFX_BASE64$env:SIGN_PFX_PASSWORD$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $signer dist-online\BeyondERP.exe
-            if ($LASTEXITCODE -ne 0) { exit 1 }
-            $sign = @("/DSign", ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f'))
-          }
-          & $iscc "/DAppVersion=$v" /DOnline @sign packaging\installer.iss
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-      # BeyondERP Signer: signs e-invoices with the company's USB token on the computer it is plugged into. A windowed
-      # program (no console) with BEYONDERP's name, copyright and version in its properties, in a normal installer
-      # (BeyondERP-Signer-Setup.exe: Start menu, start with Windows, uninstaller). A problem here never holds back the
-      # ERP's own installers, which are published either way.
-      - name: BeyondERP Signer (Windows)
-        id: signer_app
-        if: runner.os == 'Windows'
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          pip install -r signer/requirements.txt
+          pip install -r signer/requirements.txt pyinstaller pillow
           if ($LASTEXITCODE -ne 0) { exit 1 }
           pyinstaller packaging/signer.spec --noconfirm --distpath dist-signer --workpath build-signer
           if ($LASTEXITCODE -ne 0) { exit 1 }
-      - name: BeyondERP Signer installer (Windows)
-        if: runner.os == 'Windows' && steps.signer_app.outcome == 'success'
-        continue-on-error: true
+      - name: BeyondERP Signer installer
         shell: pwsh
-        # BEYONDERP's code-signing certificate (packaging/sign.ps1): a .pfx file, or SSL.com eSigner in the cloud. Only
-        # the steps that sign see it (no package installs or builds run here). With none set: built unsigned, as before.
-        env:
-          SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
-          SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
-          ES_USERNAME: ${{ secrets.ES_USERNAME }}
-          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
-          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
-          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
         run: |
           $v = (Select-String -Path signer/beyond_signer.py -Pattern '^VERSION = "([^"]+)"').Matches[0].Groups[1].Value
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          $signer = "$pwd\packaging\sign.ps1"
-          $sign = @()
-          if ("$env:SIGN_PFX_BASE64$env:SIGN_PFX_PASSWORD$env:ES_USERNAME$env:ES_PASSWORD$env:ES_CREDENTIAL_ID$env:ES_TOTP_SECRET") {
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $signer "dist-signer\BeyondERP-Signer\BeyondERP-Signer.exe"
-            if ($LASTEXITCODE -ne 0) { exit 1 }
-            $sign = @("/DSign", ('/Sbeyond=powershell -NoProfile -ExecutionPolicy Bypass -File $q' + $signer + '$q $f'))
-          }
-          & $iscc "/DAppVersion=$v" @sign packaging\signer.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" packaging\signer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
-      - name: Mac apps
-        if: runner.os == 'macOS'
-        run: |
-          ditto -c -k --keepParent "dist-online/BeyondERP.app" BeyondERP-mac.zip
-      # The installers go on a GitHub release instead of the Actions artifact storage, which a private repository's
-      # free quota runs out of; release files have no such limit and stay until the next build replaces them.
-      - name: Publish the installers on the desktop-app release
+      # On a GitHub release instead of the Actions artifact storage, which a private repository's free quota runs out of.
+      - name: Publish the Signer installer on the desktop-app release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view desktop-app >/dev/null 2>&1 || gh release create desktop-app --prerelease \
-            --title "BeyondERP desktop app (latest build)" --notes "The connected desktop app: opens the BeyondERP website in its own window. Built from main; also offered on the website."
-          files=$(ls dist-installer/BeyondERP-Setup.exe BeyondERP-mac.zip dist-installer/BeyondERP-Signer-Setup.exe 2>/dev/null || true)
-          if [ -n "$files" ]; then gh release upload desktop-app $files --clobber; fi
-          # the Signer now comes as an installer: the older single program (with a console window) is no longer offered
-          if [ -f dist-installer/BeyondERP-Signer-Setup.exe ]; then gh release delete-asset desktop-app BeyondERP-Signer.exe -y 2>/dev/null || true; fi
+            --title "BeyondERP Signer (latest build)" --notes "The e-invoice Signer for the computer with the USB token. Built from main; also offered in the app."
+          gh release upload desktop-app dist-installer/BeyondERP-Signer-Setup.exe --clobber
 
   web:
     needs: [test, database, desktop]
