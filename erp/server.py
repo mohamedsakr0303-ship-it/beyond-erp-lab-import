@@ -135,6 +135,24 @@ def _presets(db):
     return presets.load(db)
 
 
+# sections whose forms take or pay money (a partner or a custody card can be the source or the destination)
+MONEY_SECTIONS = ("accounting", "purchasing", "sales", "payroll", "partners", "rentals", "shop", "assets")
+
+
+def _records_money(user):
+    return any(auth.can(user, m, "add") for m in MONEY_SECTIONS)
+
+
+def _boot_partners(db, user):
+    """Partners for the screens: every detail (shares, rates) for the partners and accounting sections, only the names
+    (for money pickers) for someone who records money, none for anyone else."""
+    if auth.can(user, "partners") or auth.can(user, "accounting"):
+        return db.q("SELECT * FROM partners ORDER BY id")
+    if _records_money(user):
+        return db.q("SELECT id, name, active FROM partners ORDER BY id")
+    return []
+
+
 def _open_custodies(db):
     """Open custody cards (code, holder): offered as a money source wherever a payment is made."""
     try:
@@ -230,9 +248,9 @@ def bootstrap(ctx):
         "alloc_rules": db.q("SELECT code, name FROM alloc_rules WHERE active=1 ORDER BY priority, id"),
         "stages": [r["name"] for r in db.q("SELECT DISTINCT name FROM project_phases ORDER BY name LIMIT 300")],
         "warehouses": db.q("SELECT * FROM warehouses ORDER BY id"),
-        "custodies": _open_custodies(db),
+        "custodies": _open_custodies(db) if _records_money(user) else [],
         "form_presets": _presets(db),
-        "partners": db.q("SELECT * FROM partners ORDER BY id"),
+        "partners": _boot_partners(db, user),
         "items": db.q("SELECT * FROM stock_items ORDER BY name"),
         "tax_codes": db.q("SELECT * FROM tax_codes ORDER BY kind, code"),
         "parties": db.q("SELECT id, name, type, category, phone, whatsapp, contact_person, specialty, default_vat, "
@@ -5168,24 +5186,24 @@ def industries_apply(ctx):
     return ok(r)
 
 
-FULL_BOOKS_ONLY = "Exporting or importing the whole books needs access to every section and every project"
+FULL_BOOKS_ONLY = "Exporting or importing the whole ERP needs that permission, for every project"
 
 
-def _full_books(ctx):
-    """Whether this person may take the whole books out (or put them in): a super administrator, or someone who can see
-    every section and is not limited to some projects. A whole-book file carries everything, so anything less would
-    hand over what the screens keep from them."""
+def _full_books(ctx, level="view"):
+    """Whether this person may take the whole ERP out (level "view": Import & export → Export) or put it in ("edit":
+    Import & export → Import). A super administrator gives that right on purpose; someone limited to some projects never
+    has it (a whole-ERP file carries every project). Section and screen imports / exports follow their own rights."""
     u = ctx.user or {}
     if u.get("is_super"):
         return True
     if getattr(ctx, "scope", None) is not None or (u.get("perms") or {}).get("_bus"):
         return False
-    sections = {r[2].split(".")[0] for r in ROUTES if r[2]}
-    return all(auth.can(u, m) for m in sections)
+    key = "import_export.export" if level == "view" else "import_export.import"
+    return auth.can(u, key, level) and auth.action_ok(u, key, "export" if level == "view" else "import")
 
 
-def _need_full_books(ctx):
-    if not _full_books(ctx):
+def _need_full_books(ctx, level="view"):
+    if not _full_books(ctx, level):
         raise PermissionError(FULL_BOOKS_ONLY)
 
 
@@ -5202,18 +5220,18 @@ def export_json(ctx):
                     "application/json; charset=utf-8")
 
 
-@route("GET", "/api/export/csv", "import_export")
+@route("GET", "/api/export/csv")
 def export_csv(ctx):
     sheet = ctx.q.get("sheet")
     if sheet not in interchange.SHEET_BY_NAME:
         raise acc.ValidationError("Unknown sheet")
     tpl = ctx.q.get("template") == "1"
-    if not tpl and not ctx.can("import_export.export", "view"):     # the data itself: the same right as the workbook export
-        raise PermissionError()
     ar = ctx.q.get("lang") == "ar"
     s = interchange.SHEET_BY_NAME[sheet]
-    # one sheet's data: only for someone who may open that sheet's screens (and the whole sheet: every project)
-    if not tpl and not _full_books(ctx) and not (s.get("module") and ctx.can(s["module"]) and getattr(ctx, "scope", None) is None):
+    # one sheet's data: the whole-ERP export right, or the right to that sheet's section (where exporting is not
+    # switched off) — and the whole sheet holds every project, so never with a project limit
+    if not tpl and not _full_books(ctx) and not (s.get("module") and ctx.can(s["module"]) and auth.action_ok(ctx.user, s["module"], "export")
+                                                 and getattr(ctx, "scope", None) is None):
         raise PermissionError("You do not have access to this data")
     name = (s.get("ar") or sheet) if ar else sheet
     return download(interchange.to_csv(ctx.db, sheet, template=tpl, lang="ar" if ar else "en"),
@@ -5225,9 +5243,9 @@ def _sheet_can(ctx, name, level="add"):
     from . import importkit
     importkit.sheet(name)
     perm = importkit.SHEET_PERM.get(name)
-    # the import right alone opens every sheet only to someone who can see every section and project; otherwise the
-    # sheet's own screen decides (an import shows and changes that sheet's records)
-    if not ((ctx.can("import_export.import", "edit") and _full_books(ctx)) or (perm and ctx.can(perm, level))):
+    # the whole-ERP import right opens every sheet; otherwise the sheet's own screen decides (an import shows and
+    # changes that sheet's records)
+    if not (_full_books(ctx, "edit") or (perm and ctx.can(perm, level))):
         raise PermissionError()
     if perm and not auth.action_ok(ctx.user, perm, "import"):
         raise PermissionError(ACTION_DENIED["import"])
@@ -5380,7 +5398,7 @@ def _future_dated(data):
 
 @route("POST", "/api/import", "import_export.import", "edit")
 def do_import(ctx):
-    _need_full_books(ctx)
+    _need_full_books(ctx, "edit")
     fmt = ctx.q.get("format") or "xlsx"
     raw = ctx.raw
     if not raw:

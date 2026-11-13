@@ -4,8 +4,8 @@ English stays the source; {} in a message is a value, {1}, {2}… place it in th
 generic message ("{} is required") have their own list."""
 
 MESSAGES = {
-    "Exporting or importing the whole books needs access to every section and every project":
-        "تصدير الدفاتر كاملة أو استيرادها يتطلب صلاحية على كل الأقسام وكل المشروعات",
+    "Exporting or importing the whole ERP needs that permission, for every project":
+        "تصدير البرنامج كاملاً أو استيراده يتطلب هذه الصلاحية، على كل المشروعات",
     "You do not have access to this data": "ليست لديك صلاحية على هذه البيانات",
     # importing: the headline and row problems
     '{} problem(s) found — nothing was imported': 'وُجدت {1} مشكلة — لم يُستورد شيء',

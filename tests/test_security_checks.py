@@ -78,7 +78,8 @@ class Local(unittest.TestCase):
 
 
 class Exports(unittest.TestCase):
-    """A whole-book file carries everything: only for someone who can see every section and every project."""
+    """Whole-ERP import / export follows its own permission (never with a project limit); a section's or a screen's
+    import / export follows that section's or screen's rights."""
 
     @classmethod
     def setUpClass(cls):
@@ -86,33 +87,61 @@ class Exports(unittest.TestCase):
         cls.db = db = Database(":memory:")
         demo.load(db, "admin")
         auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
-        auth.create_user(db, {"username": "exp", "password": "pw123456", "perms": {"import_export": "edit", "sales": "view"}})
+        auth.create_user(db, {"username": "whole", "password": "pw123456", "perms": {"import_export": "edit"}})
+        auth.create_user(db, {"username": "sales", "password": "pw123456", "perms": {"sales": "edit"}})
+        auth.create_user(db, {"username": "nowhole", "password": "pw123456", "perms": {"import_export.export": "none", "import_export.import": "none",
+                                                                                     "import_export": "view", "sales": "edit"}})
         code = db.one("SELECT code FROM business_units ORDER BY id")["code"]
         auth.create_user(db, {"username": "site", "password": "pw123456", "projects": [code],
                               "perms": {m: "edit" for m in {r[2] for r in server.ROUTES if r[2]}}})
         cls.app = App()
         cls.app.db, cls.app.backup, cls.app.backups = db, (lambda *a, **k: None), (lambda: [])
-        cls.tok = {u: auth.login(db, u, "pw123456")[0] for u in ("boss", "exp", "site")}
+        cls.tok = {u: auth.login(db, u, "pw123456")[0] for u in ("boss", "whole", "sales", "nowhole", "site")}
 
     def st(self, who, method, path, body=b""):
         return server.handle(self.app, method, path, {"x-session": self.tok[who], "x-requested-with": "BeyondERP"}, body).status
 
-    def test_whole_books_only_with_full_access(self):
+    def test_whole_erp_follows_its_permission(self):
         for p in ("/api/export/workbook", "/api/export/json"):
-            self.assertEqual(self.st("exp", "GET", p), 403, p)
-            self.assertEqual(self.st("site", "GET", p), 403, p)        # every screen, but one project
             self.assertEqual(self.st("boss", "GET", p), 200, p)
-        self.assertEqual(self.st("exp", "POST", "/api/import?format=json&dry_run=1", b'{"sheets": {}}'), 403)
+            self.assertEqual(self.st("whole", "GET", p), 200, p)        # given on purpose
+            self.assertEqual(self.st("sales", "GET", p), 403, p)
+            self.assertEqual(self.st("nowhole", "GET", p), 403, p)
+            self.assertEqual(self.st("site", "GET", p), 403, p)         # every right, but one project
+        self.assertEqual(self.st("sales", "POST", "/api/import?format=json&dry_run=1", b'{"sheets": {}}'), 403)
+        self.assertEqual(self.st("site", "POST", "/api/import?format=json&dry_run=1", b'{"sheets": {}}'), 403)
 
-    def test_one_sheet_needs_its_screen(self):
-        self.assertEqual(self.st("exp", "GET", "/api/export/csv?sheet=Sales%20Invoices"), 200)
+    def test_a_sheet_follows_its_screen(self):
+        self.assertEqual(self.st("nowhole", "GET", "/api/export/csv?sheet=Sales%20Invoices"), 200)
         for sheet in ("Payroll", "Journal%20Vouchers", "Partners"):
-            self.assertEqual(self.st("exp", "GET", f"/api/export/csv?sheet={sheet}"), 403, sheet)
-        self.assertEqual(self.st("exp", "GET", "/api/export/csv?sheet=Payroll&template=1"), 200)   # an empty template is fine
-        self.assertEqual(self.st("site", "GET", "/api/export/csv?sheet=Sales%20Invoices"), 403)   # all projects' rows
+            self.assertEqual(self.st("nowhole", "GET", f"/api/export/csv?sheet={sheet}"), 403, sheet)
+        self.assertEqual(self.st("nowhole", "GET", "/api/export/csv?sheet=Payroll&template=1"), 200)   # an empty template
+        self.assertEqual(self.st("site", "GET", "/api/export/csv?sheet=Sales%20Invoices"), 403)      # all projects' rows
+        self.assertEqual(self.st("sales", "POST", "/api/import-preview/analyze?sheet=Payroll&filename=x.csv", b"a,b\n1,2\n"), 403)
+        self.assertNotEqual(self.st("sales", "POST", "/api/import-preview/analyze?sheet=Sales%20Invoices&filename=x.csv",
+                                    b"a,b\n1,2\n"), 403)
 
-    def test_importing_a_sheet_follows_its_screen(self):
-        self.assertEqual(self.st("exp", "POST", "/api/import-preview/analyze?sheet=Payroll&filename=x.csv", b"a,b\n1,2\n"), 403)
+
+class StartupData(unittest.TestCase):
+    """What every screen loads at sign-in carries no more than the person's sections need."""
+
+    def test_partner_details_and_custody_holders_follow_rights(self):
+        from erp import demo
+        db = Database(":memory:")
+        demo.load(db, "admin")
+        auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
+        for u, p in (("viewer", {"dashboard": "view"}), ("sales", {"sales": "edit"}), ("acct", {"accounting": "edit"})):
+            auth.create_user(db, {"username": u, "password": "pw123456", "perms": p})
+        app = App()
+        app.db, app.backup = db, (lambda *a, **k: None)
+
+        def boot(u):
+            t = auth.login(db, u, "pw123456")[0]
+            return json.loads(server.handle(app, "GET", "/api/bootstrap", {"x-session": t, "x-requested-with": "BeyondERP"}, b"").body)
+        v, s, a = boot("viewer"), boot("sales"), boot("acct")
+        self.assertEqual((v["partners"], v["custodies"]), ([], []))
+        self.assertTrue(s["partners"] and all(set(p) == {"id", "name", "active"} for p in s["partners"]))   # names for money pickers
+        self.assertIn("profit_share", a["partners"][0])
 
 
 class WorkspaceCopies(unittest.TestCase):
