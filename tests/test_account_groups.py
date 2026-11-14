@@ -224,6 +224,29 @@ class Screens(unittest.TestCase):
         st, r = self.call("boss", "GET", "/api/reports/general_ledger?group=12")
         self.assertEqual(st, 200, r)
 
+    def test_the_chart_screen_exports_the_chart(self):
+        t = reports.build(self.db, "chart_of_accounts", {"lang": "en"})
+        tb = reports.build(self.db, "trial_balance", {})
+        self.assertEqual(t["rows"][-1]["cells"][3:], tb["rows"][-2]["cells"][1:])          # same totals as the trial balance
+        groups = [r["cells"][0] for r in t["rows"] if r["style"] in ("section", "subtotal") and r["cells"][0]]
+        self.assertEqual(sorted(groups), sorted(g["code"] for g in self.db.q("SELECT code FROM account_groups")))
+        listed = [r["cells"][0] for r in t["rows"] if r["style"] == "item"]
+        self.assertEqual(sorted(listed), sorted(a["code"] for a in self.db.q("SELECT code FROM accounts WHERE active=1")))
+        self.assertIn(f"{len(groups)} groups", t["subtitle"])
+        # each account sits under its own group: the nearest group row above it is its parent
+        parent = {a["code"]: a["parent"] for a in self.db.q("SELECT code, parent FROM accounts")}
+        stack = []
+        for r in t["rows"]:
+            if r["style"] in ("section", "subtotal"):
+                stack = stack[:r["indent"]] + [r["cells"][0]]
+            elif r["style"] == "item" and parent.get(r["cells"][0]):
+                self.assertEqual(stack[r["indent"] - 1], parent[r["cells"][0]], r["cells"])
+        for fmt in ("xlsx", "pdf", "csv", "docx"):
+            st, body = self.call("viewer", "GET", f"/api/reports/chart_of_accounts?format={fmt}&lang=ar")
+            self.assertEqual(st, 200, (fmt, body[:200] if isinstance(body, bytes) else body))
+        self.assertEqual(self.call("sales", "GET", "/api/reports/chart_of_accounts")[0], 403)
+        self.assertEqual(self.call("site", "GET", "/api/reports/chart_of_accounts")[0], 403)    # company-wide balances
+
     def test_one_sheet_import_follows_the_chart_screen(self):
         csv = "Group Code,Group Name\n7,Seven\n".encode()
         st, r = self.call("sales", "POST", "/api/import-sheet?sheet=Account%20Groups&filename=g.csv", raw=csv)

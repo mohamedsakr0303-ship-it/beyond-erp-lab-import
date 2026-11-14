@@ -19,6 +19,7 @@ T = {
     "balance_sheet": ("Balance Sheet (Statement of Financial Position)", "الميزانية العمومية (قائمة المركز المالي)"),
     "cash_flow": ("Cash Flow Statement", "قائمة التدفقات النقدية"),
     "trial_balance": ("Trial Balance", "ميزان المراجعة"),
+    "chart_of_accounts": ("Chart of Accounts", "دليل الحسابات"),
     "general_ledger": ("General Ledger", "دفتر الأستاذ العام"),
     "bu_pnl": ("Profitability by Business Unit", "ربحية وحدات الأعمال"),
     "project_cash": ("Cash In & Out by Project", "النقدية الواردة والمنصرفة حسب المشروع"),
@@ -372,6 +373,58 @@ def trial_balance_table(db, date_from=None, date_to=None, bu_id=None, lang="en",
     pers = [("", date_from or "…", acc.clean_date(date_to))]
     return {"title": L("trial_balance", lang), "subtitle": _subtitle(db, lang, pers, bu_id, as_of=not date_from),
             "columns": cols, "rows": rows, "lang": lang, "ok": tb["balanced"]}
+
+
+def chart_of_accounts_table(db, date_to=None, lang="en", inactive=False):
+    """The chart as the screen shows it: each group (with the total of everything under it) followed by its accounts and
+    then its subgroups, indented by depth; accounts outside every group at the end. Balances as of a date, on the debit
+    or credit side; the totals balance like the trial balance's."""
+    from .choices import SUBTYPE_INFO
+    ar = lang == "ar"
+    date_to = acc.clean_date(date_to) if date_to else None
+    net = {r["code"]: r["net"] for r in acc.account_totals(db, date_to=date_to)}
+    groups = {g["code"]: g for g in acc.chart_tree(db, net)}
+    accounts = [a for a in db.q("SELECT * FROM accounts ORDER BY code") if inactive or a["active"]]
+    name = lambda r: (r.get("name_ar") or r["name"]) if ar else r["name"]
+    side = lambda minor: [acc.to_major(minor) if minor > 0 else "", acc.to_major(-minor) if minor < 0 else ""]
+    line = lambda a: (SUBTYPE_INFO.get(a["subtype"], (a["subtype"], a["subtype"]))[1 if ar else 0]) if a.get("subtype") else ""
+    cols = [{"label": "الكود" if ar else "Code", "align": "left"}, {"label": "الحساب" if ar else "Account", "align": "left"},
+            {"label": "بند القوائم" if ar else "Statement line", "align": "left"},
+            {"label": "رصيد مدين" if ar else "Debit balance", "align": "right", "fmt": "money"},
+            {"label": "رصيد دائن" if ar else "Credit balance", "align": "right", "fmt": "money"}]
+    rows, done = [], set()
+
+    def branch(code, depth):
+        if code in done:                       # never loops, even on a damaged tree
+            return
+        done.add(code)
+        g = groups[code]
+        n = g["accounts"]
+        label = f"{name(g)}  ({n} {'حساب' if ar else 'accounts' if n != 1 else 'account'})"
+        rows.append({"cells": [code, label, "", *side(g["total"])], "style": "section" if depth == 0 else "subtotal",
+                     "indent": depth, "code": ""})
+        for a in accounts:
+            if a["parent"] == code:
+                rows.append({"cells": [a["code"], name(a), line(a), *side(net.get(a["code"], 0))], "style": "item",
+                             "indent": depth + 1, "code": a["code"]})
+        for c in sorted(x for x, h in groups.items() if h["parent"] == code):
+            branch(c, depth + 1)
+
+    for c in sorted(x for x, h in groups.items() if not h["parent"] or h["parent"] not in groups):
+        branch(c, 0)
+    loose = [a for a in accounts if not a["parent"] or a["parent"] not in groups]
+    if loose and groups:
+        rows.append({"cells": ["", "خارج المجموعات" if ar else "Not in a group", "", "", ""], "style": "section", "indent": 0, "code": ""})
+    for a in loose:
+        rows.append({"cells": [a["code"], name(a), line(a), *side(net.get(a["code"], 0))], "style": "item",
+                     "indent": 1 if groups else 0, "code": a["code"]})
+    dr = sum(v for c, v in net.items() if v > 0)
+    cr = -sum(v for c, v in net.items() if v < 0)
+    rows.append({"cells": ["", L("total", lang), "", acc.to_major(dr), acc.to_major(cr)], "style": "grand", "indent": 0, "code": ""})
+    count = (f"{len(groups)} مجموعة · {len(accounts)} حساب" if ar else f"{len(groups)} groups · {len(accounts)} accounts")
+    when = f"{L('as_of', lang)} {date_to or acc.today()}"
+    return {"title": L("chart_of_accounts", lang), "subtitle": f"{count} · {when} · {db.setting('currency', 'EGP')}",
+            "columns": cols, "rows": rows, "lang": lang, "ok": dr == cr}
 
 
 def general_ledger_table(db, account=None, date_from=None, date_to=None, bu_id=None, party=None, lang="en", group=None):
@@ -1074,6 +1127,8 @@ def build(db, name, p):
         return balance_sheet_table(db, p.get("date_to"), p.get("date_from"), p.get("compare"), bu, lang)
     if name == "cash_flow":
         return cash_flow_table(db, p.get("date_from"), p.get("date_to"), p.get("compare"), bu, lang)
+    if name == "chart_of_accounts":
+        return chart_of_accounts_table(db, p.get("date_to"), lang, p.get("inactive") in ("1", "true", 1, True))
     if name == "trial_balance":
         return trial_balance_table(db, p.get("date_from"), p.get("date_to"), bu, lang, p.get("level"))
     if name == "general_ledger":
@@ -1134,7 +1189,7 @@ def build(db, name, p):
 
 
 REPORT_PERMS = {"payroll_register": "payroll.runs", "partner_pack": ("reports.partner_pack", "partners.equity"), "funding_schedule": ("partners.equity", "reports.partner_pack"), "income_statement": "reports.income_statement", "profit_categories": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
-                "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance",
+                "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance", "chart_of_accounts": "accounting.coa",
                 "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability", "project_cash": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
                 "tax": "tax.report", "fixed_assets": "assets.register",
