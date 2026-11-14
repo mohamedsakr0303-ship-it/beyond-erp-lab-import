@@ -85,12 +85,25 @@ async function apiCall(method, path, body, raw) {
   try { const r = await apiSend(method, path, body, raw); actNote("api", { m: method, p, s: "ok", ms: ms() }); return r; }
   catch (e) { actNote("api", { m: method, p, s: e.status || "err", ms: ms(), e: String(e.message || e).slice(0, 160) }); throw e; }
 }
+// a file sent while a bar is showing: through XMLHttpRequest, which reports how much has gone up
+function xhrSend(method, path, raw, bar) {
+  return new Promise((ok, bad) => {
+    const x = new XMLHttpRequest();
+    x.open(method, path);
+    x.setRequestHeader("X-Requested-With", "BeyondERP"); x.setRequestHeader("X-Lang", S.lang); x.setRequestHeader("Content-Type", "application/octet-stream");
+    x.upload.onprogress = e => bar.set("send", e.loaded, e.total || raw.byteLength);
+    x.upload.onload = () => bar.set("check");
+    x.onload = () => ok({ status: x.status, ok: x.status >= 200 && x.status < 300, json: async () => JSON.parse(x.responseText) });
+    x.onerror = () => bad(new Error(L2("The connection to the app was lost while sending the file. Try again.", "انقطع الاتصال بالتطبيق أثناء إرسال الملف. حاول مرة أخرى.")));
+    x.send(raw);
+  });
+}
 async function apiSend(method, path, body, raw) {
   if (STATIC) return staticApi(method, path, body, raw);
   const opt = { method, headers: { "X-Requested-With": "BeyondERP", "X-Lang": S.lang }, credentials: "same-origin" };
   if (raw) { opt.body = raw; opt.headers["Content-Type"] = "application/octet-stream"; }
   else if (body !== undefined) { opt.body = JSON.stringify(body); opt.headers["Content-Type"] = "application/json"; }
-  const r = await fetch(path, opt);
+  const r = raw && S.xfer ? await xhrSend(method, path, raw, S.xfer) : await fetch(path, opt);
   let data = null;
   try { data = await r.json(); } catch { data = null; }
   if (r.status === 401) { S.boot.user = null; renderAuth(); throw new Error(data && data.error || L2("Please sign in", "يرجى تسجيل الدخول")); }
@@ -121,13 +134,18 @@ function withPlatformOff(url) {
   const u = new URL(url, location.href); u.searchParams.set("off", off.join(",")); return u.pathname + u.search;
 }
 // Open an /api/ download or printable page. Server mode: normal navigation. Static mode: via the bridge.
+const BAR_DOWNLOADS = /^\/api\/(export\/|backup(\?|$)|demo\/workbook)/;     // files that can take a while: shown with a bar
 async function openApi(url, newTab) {
   url = withPlatformOff(url);
+  if (!STATIC && !newTab && BAR_DOWNLOADS.test(url)) {
+    const bar = Xfer();
+    try { const f = await fetchWithBar(url, bar); saveBlob(f.blob, f.filename || url.split("?")[0].split("/").pop()); }
+    catch (e) { fail(e); } finally { bar.end(); }
+    return;
+  }
   if (!STATIC) { if (newTab) window.open(url, "_blank", "noopener"); else location.href = url; return; }
   const w = newTab ? window.open("", "_blank") : null;
-  const busy = document.createElement("div"); busy.className = "toast busy";
-  busy.innerHTML = `<i class="spin"></i>${esc(L2("Preparing the file…", "جارٍ تجهيز الملف…"))}`;
-  document.body.appendChild(busy);
+  const busy = Xfer(); busy.set("build");
   try {
     const r = window.__beyondDownload ? await window.__beyondDownload(url, staticHeaders()) : await window.__beyondFetch("GET", url, staticHeaders(), null);
     if (r.status >= 400) { let m = ""; try { m = JSON.parse(new TextDecoder().decode(r.body)).error; } catch { /* binary */ } throw new Error(m || `HTTP ${r.status}`); }
@@ -136,11 +154,11 @@ async function openApi(url, newTab) {
     if (r.filename) { const a = document.createElement("a"); a.href = href; a.download = r.filename; document.body.appendChild(a); a.click(); a.remove(); if (w) w.close(); }
     else if (w) w.location = href; else window.open(href, "_blank");
     setTimeout(() => URL.revokeObjectURL(href), 60000);
-  } catch (e) { if (w) w.close(); fail(e); } finally { busy.remove(); }
+  } catch (e) { if (w) w.close(); fail(e); } finally { busy.end(); }
 }
 document.addEventListener("click", e => {
   const a = e.target.closest('a[href^="/api/"]');
-  if (a && STATIC) { e.preventDefault(); openApi(a.getAttribute("href"), a.target === "_blank"); }
+  if (a && (STATIC || (a.target !== "_blank" && BAR_DOWNLOADS.test(a.getAttribute("href"))))) { e.preventDefault(); openApi(a.getAttribute("href"), a.target === "_blank"); }
 }, true);
 
 function toast(msg, err) {
@@ -149,6 +167,81 @@ function toast(msg, err) {
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), err ? 6000 : 2600);
+}
+// ------------------------------------------------------------------- transfers
+// A bar for anything that takes a while: uploading a file, the shared workspace receiving it in pieces, importing,
+// building a download. With a size it shows MB done, the speed and the time left; without one (the app is working on
+// it), how long it has been. Steps arrive as {phase, done, total} from the page itself and from bridge.js ("beyond-progress").
+const XFER_STEPS = {
+  read: ["Reading the file", "قراءة الملف"], send: ["Uploading the file", "رفع الملف"],
+  check: ["Checking the file", "فحص الملف"], upload: ["Uploading to the shared workspace", "الرفع إلى مساحة العمل المشتركة"],
+  apply: ["Importing into the books", "الاستيراد إلى الدفاتر"], copy: ["Saving a copy of the books for your other devices", "حفظ نسخة من الدفاتر لأجهزتك الأخرى"],
+  download: ["Downloading from the shared workspace", "التنزيل من مساحة العمل المشتركة"], build: ["Preparing the file", "تجهيز الملف"],
+  fetch: ["Downloading the file", "تنزيل الملف"], wait: ["Working…", "جارٍ العمل…"] };
+const durTxt = s => { s = Math.max(0, Math.round(s));
+  if (s < 60) return L2(`${s} s`, `${s} ث`);
+  const m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return r && m < 10 ? L2(`${m} min ${r} s`, `${m} د ${r} ث`) : L2(`${m} min`, `${m} د`);
+  return L2(`${Math.floor(m / 60)} h ${m % 60} min`, `${Math.floor(m / 60)} س ${m % 60} د`); };
+function Xfer(box) {
+  const el = box || Object.assign(document.createElement("div"), { className: "float" });
+  el.classList.add("xfer"); el.setAttribute("role", "status"); el.setAttribute("aria-live", "polite");
+  if (!box) document.body.appendChild(el);
+  const st = { phase: "wait", done: 0, total: 0, t0: performance.now(), pts: [], steps: [] };
+  const draw = () => {
+    if (!el.isConnected) return;
+    const [en, ar] = XFER_STEPS[st.phase] || XFER_STEPS.wait, now = performance.now(), secs = (now - st.t0) / 1000;
+    const known = st.total > 0, pct = known ? Math.min(100, st.done / st.total * 100) : 0;
+    const a = st.pts[0], b = st.pts[st.pts.length - 1];
+    const speed = a && b && b[0] - a[0] > 400 ? (b[1] - a[1]) / ((b[0] - a[0]) / 1000) : 0;
+    const info = [];
+    if (known) {
+      info.push(`${sizeTxt(st.done)} ${L2("of", "من")} ${sizeTxt(st.total)}`);
+      if (speed > 0) info.push(`${sizeTxt(speed)}/${L2("s", "ث")}`);
+      if (speed > 0 && st.done < st.total) info.push(L2(`about ${durTxt((st.total - st.done) / speed)} left`, `متبقٍ نحو ${durTxt((st.total - st.done) / speed)}`));
+      else if (st.done < st.total) info.push(L2("working out the time left…", "جارٍ حساب الوقت المتبقي…"));
+    } else info.push(L2(`${durTxt(secs)} so far`, `منذ ${durTxt(secs)}`));
+    el.innerHTML = `<div class="xfer-h"><b>${esc(S.lang === "ar" ? ar : en)}</b><span>${known ? Math.floor(pct) + "%" : ""}</span></div>
+      <div class="xfer-bar${known ? "" : " busy"}"><i style="width:${known ? pct.toFixed(1) : 35}%"></i></div>
+      <div class="xfer-s muted">${esc(info.join(" · "))}</div>${st.steps.length ? `<div class="xfer-steps">✓ ${esc(st.steps.join(" · "))}</div>` : ""}`;
+  };
+  const timer = setInterval(draw, 500);
+  const set = (phase, done = 0, total = 0) => {
+    const now = performance.now();
+    if (phase !== st.phase) {
+      const was = XFER_STEPS[st.phase]; if (was && st.phase !== "wait") st.steps.push(S.lang === "ar" ? was[1] : was[0]);
+      Object.assign(st, { phase, t0: now, pts: [] });
+    }
+    st.done = done; st.total = total; st.pts.push([now, done]);
+    while (st.pts.length > 2 && st.pts[0][0] < now - 5000) st.pts.shift();     // speed over the last few seconds
+    draw();
+  };
+  draw();
+  return { el, set, end() { clearInterval(timer); if (!box) el.remove(); else el.remove(); } };
+}
+// steps from bridge.js (the shared workspace): into the bar the screen opened, else a small one in the corner
+let XFER_FLOAT = null, XFER_FLOAT_T = 0;
+window.addEventListener("beyond-progress", e => {
+  const { phase, done, total } = e.detail || {};
+  const bar = S.xfer || XFER_FLOAT;
+  if (phase === "end") { if (!S.xfer && XFER_FLOAT) { clearTimeout(XFER_FLOAT_T); XFER_FLOAT_T = setTimeout(() => { if (XFER_FLOAT) { XFER_FLOAT.end(); XFER_FLOAT = null; } }, 800); } return; }
+  if (bar) { clearTimeout(XFER_FLOAT_T); bar.set(phase, done, total); return; }
+  if (phase === "download" || phase === "copy") { XFER_FLOAT = Xfer(); XFER_FLOAT.set(phase, done, total); }
+});
+// a download with its bar: the file is built (no size yet), then arrives with a size, speed and time left
+async function fetchWithBar(url, bar) {
+  bar.set("build");
+  const r = await fetch(url, { credentials: "same-origin", headers: { "X-Requested-With": "BeyondERP", "X-Lang": S.lang } });
+  if (!r.ok) { let m = ""; try { m = (await r.json()).error; } catch { /* not JSON */ } throw new Error(m || `HTTP ${r.status}`); }
+  const total = Number(r.headers.get("Content-Length")) || 0, parts = [];
+  let got = 0;
+  if (r.body && r.body.getReader) {
+    const rd = r.body.getReader();
+    for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length; bar.set("fetch", got, total || got); }
+  } else parts.push(new Uint8Array(await r.arrayBuffer()));
+  const cd = r.headers.get("Content-Disposition") || "";
+  const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename="?([^";]+)"?/i.exec(cd);
+  return { blob: new Blob(parts, { type: r.headers.get("Content-Type") || "application/octet-stream" }), filename: m ? decodeURIComponent(m[1]) : "" };
 }
 // Motion only where it answers what the person just did, kept short; none when the device asks for reduced motion.
 const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1686,7 +1779,7 @@ async function renderOnboarding() {
           <button type="button" data-a="obtpl">${ar ? "قالب الاستيراد الكامل (Excel)" : "Full import template (Excel)"}</button>
           <button type="button" data-a="obtpl" data-lang="ar">${ar ? "القالب الكامل (عربي)" : "Full template (Arabic)"}</button>
           <button type="button" data-a="obtpl" data-type="1">${ar ? "قالب نوع النشاط المختار" : "Template for the selected business type"}</button></div></div></div></div>
-      <input data-ob="import" data-src="file" type="file" id="obfile" accept=".xlsx,.xlsm,.json,.csv">
+      <input data-ob="import" data-src="file" type="file" id="obfile" accept=".xlsx,.xlsm,.json,.csv,.zip,.gz">
       <input data-ob="import" data-src="link" type="url" id="oburl" dir="ltr" placeholder="https://docs.google.com/spreadsheets/d/…">
       <label class="f" data-ob="import" id="obcsv" hidden>${ar ? "ورقة ملف CSV" : "CSV sheet"}<select id="obsheet">${sheets.map(x => `<option value="${esc(x.name)}">${esc(sheetLabel(x.name))}</option>`).join("")}</select></label>
     </div>
@@ -1706,9 +1799,15 @@ async function renderOnboarding() {
   const upload = async (dry) => {
     let file = src() === "link" ? await fetchGoogleSheet($("#oburl").value.trim()) : $("#obfile").files[0];
     if (!file) throw new Error(ar ? "اختر ملفاً أو الصق رابطاً." : "Choose a file or paste a link.");
-    const ext = (file.name.split(".").pop() || "").toLowerCase(), fmt = ["json", "csv"].includes(ext) ? ext : "xlsx";
-    const r = await api("POST", "/api/import?" + qs({ format: fmt, mode: "replace", dry_run: dry ? 1 : "", sheet: fmt === "csv" ? $("#obsheet").value : "" }), undefined, await file.arrayBuffer());
-    return { r, file };
+    const ext = (file.name.replace(/\.gz$/i, "").split(".").pop() || "").toLowerCase(), fmt = ["json", "csv"].includes(ext) ? ext : "xlsx";
+    const bar = Xfer(); $("#obres").innerHTML = ""; $("#obres").appendChild(bar.el); S.xfer = bar;
+    try {
+      const buf = await file.arrayBuffer();
+      if (STATIC) bar.set("check"); else bar.set("send", 0, buf.byteLength);
+      await new Promise(ok => setTimeout(ok, 60));
+      const r = await api("POST", "/api/import?" + qs({ format: fmt, mode: "replace", dry_run: dry ? 1 : "", sheet: fmt === "csv" ? $("#obsheet").value : "" }), undefined, buf);
+      return { r, file };
+    } finally { S.xfer = null; bar.end(); }
   };
   S.H = {
     obtpl: el => { $$(".dd.open").forEach(d => d.classList.remove("open"));
@@ -5910,13 +6009,13 @@ PAGES.data = async (view) => {
       <a class="btn pri" href="/api/export/workbook?files=1&lang=${S.lang}" title="${esc(L2("The workbook with all attached documents, in monthly folders. Import the .zip to restore the files as well.", "المصنف مع جميع المستندات المرفقة في مجلدات شهرية. استورد ملف zip لاستعادة الملفات أيضاً."))}">⬇ ${esc(L2("Excel with attachments (.zip, monthly folders)", "Excel مع المرفقات (zip، مجلدات شهرية)"))}</a>
       <a class="btn" href="/api/templates/workbook?lang=${S.lang}">⬇ ${t("empty_tpl")}</a>
       <a class="btn" href="/api/demo/workbook?lang=${S.lang}">⬇ ${L2("Import template with demo data (Excel)", "قالب الاستيراد ببيانات تجريبية (Excel)")}</a>
-      <a class="btn" href="/api/export/json">⬇ ${t("json_backup")}</a>${S.boot.user.is_super ? `<a class="btn" href="/api/backup" title="${esc(L2("The complete database as a single file (.sqlite3). Restore it from Import data.", "قاعدة البيانات كاملة في ملف واحد (.sqlite3). تُستعاد من «استيراد البيانات».")) }">⬇ ${t("db_backup")}</a>` : ""}
+      <a class="btn" href="/api/export/json?gz=1">⬇ ${t("json_backup")}</a>${S.boot.user.is_super ? `<a class="btn" href="/api/backup?gz=1" title="${esc(L2("The complete database as a single file (.sqlite3). Restore it from Import data.", "قاعدة البيانات كاملة في ملف واحد (.sqlite3). تُستعاد من «استيراد البيانات».")) }">⬇ ${t("db_backup")}</a>` : ""}
       ${S.boot.user.is_super ? `<label class="f chk" title="${esc(L2("API keys, e-invoice and e-receipt credentials and the AI provider key (desktop application). Store this backup securely.", "مفاتيح API وبيانات دخول الفاتورة والإيصال الإلكتروني ومفتاح مزوّد الذكاء الاصطناعي (تطبيق سطح المكتب). احفظ هذه النسخة في مكان آمن."))}"><input type="checkbox" id="expsec" checked>${esc(L2("Include integration keys (API, e-invoice, AI). Store the file securely.", "تضمين مفاتيح التكامل (API، الفاتورة الإلكترونية، الذكاء الاصطناعي). احفظ الملف في مكان آمن."))}</label>` : ""}
       <div class="row"><select id="csvs">${sheets.map(s => `<option value="${esc(s.name)}">${esc(S.lang === "ar" ? s.ar : s.name)}</option>`).join("")}</select>
         <button class="btn" data-a="csv">${t("csv_sheet")}</button><button class="btn" data-a="csvt">${t("csv_tpl")}</button></div></div>
       <p class="muted" style="font-size:.85em">${S.lang === "ar" ? "المصنف الكامل هو قالب الاستيراد أيضاً: بنفس أسماء الأوراق والأعمدة، مع قوائم مالية وحاسبات تعمل داخل Excel." : "The full workbook is also the import template: same sheet and column names, with financial statements and calculators that work in Excel."}</p></div>
     <div class="card"><h2>${t("imp_title")}</h2>${ed ? `<div class="grid">
-      <div class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.xlsm,.json,.csv,.zip,.sqlite3,.sqlite,.db"></div>
+      <div class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.xlsm,.json,.csv,.zip,.sqlite3,.sqlite,.db,.gz"></div>
       <label class="f spanall">${L2("Or a Google Sheets link", "أو رابط Google Sheets")}<input id="impurl" type="url" placeholder="https://docs.google.com/spreadsheets/d/…" dir="ltr"></label>
       <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">${esc(L2("Excel workbook or sheet (.xlsx)", "مصنف أو ورقة Excel (.xlsx)"))}</option><option value="zip">${esc(L2("Excel with attachments (.zip)", "Excel مع المرفقات (.zip)"))}</option><option value="json">${esc(L2("JSON backup (.json)", "نسخة JSON (.json)"))}</option><option value="csv">${esc(L2("CSV, single sheet (.csv)", "CSV، ورقة واحدة (.csv)"))}</option>${S.boot.user.is_super ? `<option value="sqlite">${esc(L2("Database backup (.sqlite3)", "نسخة احتياطية لقاعدة البيانات (.sqlite3)"))}</option>` : ""}<option value="legacy">${esc(L2("Legacy BEYOND workbook (v0.6 to v1.4)", "مصنف BEYOND سابق (v0.6 إلى v1.4)"))}</option></select></label>
       <label class="f" id="impsheetl" style="display:none">CSV → <select id="impsheet">${sheets.map(s => `<option value="${esc(s.name)}">${esc(S.lang === "ar" && s.ar ? s.ar : s.name)}</option>`).join("")}</select></label>
@@ -5963,7 +6062,7 @@ PAGES.data = async (view) => {
   const fmtSel = $("#impfmt");
   if (fmtSel) {
     fmtSel.addEventListener("change", () => { $("#impsheetl").style.display = fmtSel.value === "csv" ? "" : "none"; });
-    $("#impf").addEventListener("change", e => { const n = (e.target.files[0] || {}).name || ""; const ext = n.split(".").pop().toLowerCase();
+    $("#impf").addEventListener("change", e => { const n = ((e.target.files[0] || {}).name || "").replace(/\.gz$/i, ""); const ext = n.split(".").pop().toLowerCase();
       fmtSel.value = ["json", "csv", "zip"].includes(ext) ? ext : ["sqlite3", "sqlite", "db"].includes(ext) && $('option[value="sqlite"]', fmtSel) ? "sqlite" : "xlsx";
       fmtSel.dispatchEvent(new Event("change")); });
   }
@@ -5982,9 +6081,22 @@ PAGES.data = async (view) => {
     }
     if (!file) { toast(t("file") + "?", true); return; }
     if ($("#impmode").value === "replace" && !$("#impdry").checked && !await uiConfirm(S.lang === "ar" ? "سيتم استبدال جميع البيانات (بعد نسخة احتياطية تلقائية). هل تريد المتابعة؟" : "This replaces all data (an automatic backup is taken first). Continue?")) return;
-    out.innerHTML = `<div class="muted">${t("loading")}</div>`;
+    out.innerHTML = "";
+    const bar = Xfer(Object.assign(document.createElement("div"))); out.appendChild(bar.el);
+    const btn = $('[data-a="imp"]', view); if (btn) btn.disabled = true;
+    S.xfer = bar;
+    // the desktop app sends to the shared workspace itself: follow its progress
+    const poll = !STATIC ? setInterval(async () => {
+      try { const c = await (await fetch("/api/cloud-status", { credentials: "same-origin", headers: { "X-Requested-With": "BeyondERP" } })).json();
+            if (c && c.progress && c.progress.total) bar.set(c.progress.what === "copy" ? "copy" : c.progress.what === "download" ? "download" : "upload", c.progress.done, c.progress.total); } catch { /* next time */ }
+    }, 1000) : 0;
     try {
-      const r = await api("POST", "/api/import?" + qs({ format: fmtSel.value, mode: $("#impmode").value, dry_run: $("#impdry").checked ? 1 : "", sheet: $("#impsheet").value }), undefined, await file.arrayBuffer());
+      bar.set("read", 0, file.size);
+      const buf = await file.arrayBuffer();
+      if (STATIC) bar.set("check"); else bar.set("send", 0, buf.byteLength);
+      await new Promise(ok => setTimeout(ok, 60));        // the bar is drawn before the work starts
+      const r = await api("POST", "/api/import?" + qs({ format: fmtSel.value, mode: $("#impmode").value, dry_run: $("#impdry").checked ? 1 : "", sheet: $("#impsheet").value }), undefined, buf);
+      S.xfer = null; clearInterval(poll); bar.end();
       out.innerHTML = `<div class="banner ok">${r.dry_run ? (S.lang === "ar" ? "نجح التحقق ولم يتغير شيء. ألغِ تحديد «فحص فقط» للاستيراد." : "Validation passed; nothing was changed. Clear “Check only” to import.") : t("saved")}</div>
         <div class="tbl"><table><tbody>${Object.entries(r.counts).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v}</td></tr>`).join("") || `<tr><td>${esc(L2("No new records to import.", "لا توجد سجلات جديدة للاستيراد."))}</td><td></td></tr>`}</tbody></table></div>
         ${r.skipped && Object.keys(r.skipped).length ? `<div class="banner info" style="margin-top:6px">${esc(L2("Already recorded, skipped: ", "مسجلة سابقاً، تم تخطيها:"))}${Object.entries(r.skipped).map(([k, v]) => `${esc(sheetLabel(k))} ${v}`).join(" · ")}</div>` : ""}
@@ -5992,9 +6104,10 @@ PAGES.data = async (view) => {
         ${(r.notes || []).map(n => `<div class="banner info" style="margin-top:6px">${esc(n)}</div>`).join("")}`;
       if (!r.dry_run) await refreshBoot();
     } catch (e) {
+      S.xfer = null; clearInterval(poll); bar.end();
       const errs = (e.data && e.data.errors) || [];
       out.innerHTML = `<div class="banner err">${esc(e.message)}</div>${errs.length ? `<div class="tbl"><table><thead><tr><th>Sheet</th><th>Row</th><th>Problem</th></tr></thead><tbody>${errs.map(x => `<tr><td>${esc(x.sheet)}</td><td>${x.row}</td><td>${esc(x.error)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
-    }
+    } finally { if (btn) btn.disabled = false; }
   };
 };
 
@@ -6478,7 +6591,7 @@ PAGES.settings = async (view, parts, q) => {
       <p class="muted">${esc(L2("Current version", "الإصدار الحالي"))} ${esc(S.boot.version || "")}${window.BEYOND_BUILD ? ` <small>(${esc(String(window.BEYOND_BUILD).slice(0, 12))})</small>` : ""}. ${esc(STATIC ? L2("An open session keeps its version until you select Update now. All members of a shared workspace use the same version, which also loads at the next start.", "تحتفظ الجلسة المفتوحة بإصدارها حتى تختار «التحديث الآن». يستخدم جميع أعضاء مساحة العمل المشتركة الإصدار نفسه، ويُحمَّل أيضاً عند التشغيل التالي.")
         : L2("Updates are never installed automatically; you choose when to install.", "لا تُثبَّت التحديثات تلقائياً؛ أنت تحدد وقت التثبيت."))}</p></div>` + (sys ? `<div class="card"><h2>${t("system_info")}</h2><div class="grid g2"><div>${esc(L2("Version", "الإصدار"))} ${esc(sys.version)}<br><span class="muted" dir="ltr">${esc(sys.db_path)}</span><br>${(sys.db_size / 1048576).toFixed(2)} MB</div>
       <div>${Object.entries(sys.counts).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ")}<br><span class="muted">${sys.backups.length} backups: ${esc(sys.backups.slice(0, 3).join(", "))}</span></div></div>
-      ${ed ? `<div class="row" style="margin-top:10px"><label class="f">${t("backups_keep")}<input id="bkeep" type="number" value="${esc(st.backup_keep || 14)}" style="max-width:100px"></label><button class="btn" data-a="maint">${t("maintenance")}</button><a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a></div>` : ""}</div>
+      ${ed ? `<div class="row" style="margin-top:10px"><label class="f">${t("backups_keep")}<input id="bkeep" type="number" value="${esc(st.backup_keep || 14)}" style="max-width:100px"></label><button class="btn" data-a="maint">${t("maintenance")}</button><a class="btn" href="/api/backup?gz=1">⬇ ${t("db_backup")}</a></div>` : ""}</div>
     ${STATIC ? "" : `<div class="card" id="liccard"><h2>${L2("Licence", "الترخيص")}</h2><div class="muted">${t("loading")}</div></div>`}
     <div class="card" id="costcard"><h2>${esc(L2("Stock costing", "تقييم المخزون"))}</h2><div class="muted">${t("loading")}</div></div>
     <div class="card" id="lockcard"><h2>${t("lock_date")}</h2><div class="row"><input type="date" name="lock_date" value="${esc(st.lock_date || "")}" style="max-width:200px" ${ed ? "" : "disabled"}>${ed ? `<button class="btn" data-a="locksave">${t("save")}</button>` : ""}</div><p class="muted">${t("lock_note")}</p>${ed ? `<a class="btn sm" href="#/year-end">${esc(L2("Year-end close", "إقفال السنة المالية"))}</a>` : ""}</div>
@@ -6488,7 +6601,7 @@ PAGES.settings = async (view, parts, q) => {
       <p class="muted">${esc(L2("Criteria: same type and party (or description) and amount within 3 days, or same supplier and reference. The entry can still be saved after review.", "المعايير: نفس النوع والطرف (أو البيان) والمبلغ خلال 3 أيام، أو نفس المورد والمرجع. يمكن حفظ القيد بعد المراجعة."))}</p></div>
     <div class="card"><h2>${t("hidden_mods")}</h2><p class="muted">${t("hidden_moved")} <a href="#/settings?tab=menus">${t("tab_menus")}</a></p></div>` : "") +
     (S.boot.user.is_super ? `<div class="card danger-zone" id="erasecard"><h2 class="neg">${t("erase_title")}</h2>
-      <div class="banner ${STATIC ? "err" : "info"}">${STATIC ? t("erase_static") + ` <a href="/api/export/json">⬇ JSON</a>` : t("erase_note")}</div>
+      <div class="banner ${STATIC ? "err" : "info"}">${STATIC ? t("erase_static") + ` <a href="/api/export/json?gz=1">⬇ JSON</a>` : t("erase_note")}</div>
       <div class="opt-list"><label class="f chk"><input type="radio" name="escope" value="transactions" checked>${t("erase_tx")}</label>
       <label class="f chk"><input type="radio" name="escope" value="all">${t("erase_all")}</label></div>
       <div class="row" style="margin-top:10px"><input id="econfirm" placeholder="${t("erase_type")}" style="max-width:220px" autocomplete="off"><button class="btn danger" data-a="erase">${t("erase_btn")}</button></div></div>`

@@ -1,6 +1,6 @@
 ; Windows installers (Inno Setup 6), built by .github/workflows/deploy.yml:
-;   iscc /DOnline /DAppVersion=1.2.0 packaging\installer.iss   -> BeyondERP-Setup.exe          (opens the website in its own window)
-;   iscc /DAppVersion=1.2.0 packaging\installer.iss            -> BeyondERP-Offline-Setup.exe  (the full app on this computer)
+;   iscc /DOnline /DAppVersion=1.3.0 packaging\installer.iss   -> BeyondERP-Setup.exe          (opens the website in its own window)
+;   iscc /DAppVersion=1.3.0 packaging\installer.iss            -> BeyondERP-Offline-Setup.exe  (the full app on this computer)
 ; Both install for the current user only (no administrator rights) with Start-menu and desktop shortcuts.
 #ifndef AppVersion
   #define AppVersion "1.0.0"

@@ -8,6 +8,7 @@ with SUMIFS formulas, so the workbook computes the same statements as the app.
 Rows are plain dicts keyed by column key; Excel/CSV headers read like
 "Date / التاريخ" and are matched on either the key or the English part.
 """
+import base64
 import csv
 import datetime as _dt
 import io
@@ -1300,6 +1301,114 @@ def _secrets_import(db, sec, mode, counts):
             m += 1
     if m:
         counts["Connected tools' keys"] = m
+
+
+# ------------------------------------------------------------------ a read file, packed for the shared workspace
+# What a file import read (sheets, rows, attached files, notes) as gzip JSON. The workspace log keeps this instead of the
+# file: a 16 MB workbook becomes well under 1 MB, and every device replays the import without reading the file again.
+# Types JSON cannot hold are tagged, so the data comes back exactly as read; anything unknown → not packed (the file
+# itself is kept, as before).
+_TAG = "\u0000"
+GZ_LIMIT = 1 << 30           # a compressed file may expand to 1 GB at most
+
+
+class NotPackable(TypeError):
+    pass
+
+
+def _pack(o):
+    from decimal import Decimal
+    from .textl10n import Note
+    if o is None or isinstance(o, (bool, int, float)) and type(o) in (bool, int, float):
+        return o
+    if isinstance(o, Note):
+        return {_TAG + "n": [str.__str__(o), getattr(o, "ar", "")]}
+    if type(o) is str:
+        return o
+    if isinstance(o, (bytes, bytearray, memoryview)):
+        return {_TAG + "b": base64.b64encode(bytes(o)).decode("ascii")}
+    if type(o) is _dt.datetime:
+        return {_TAG + "t": o.isoformat()}
+    if type(o) is _dt.date:
+        return {_TAG + "d": o.isoformat()}
+    if type(o) is _dt.time:
+        return {_TAG + "h": o.isoformat()}
+    if isinstance(o, Decimal):
+        return {_TAG + "m": str(o)}
+    if type(o) is list:
+        return [_pack(x) for x in o]
+    if type(o) is tuple:
+        return {_TAG + "u": [_pack(x) for x in o]}
+    if type(o) is dict:
+        if all(type(k) is str and not k.startswith(_TAG) for k in o):
+            return {k: _pack(v) for k, v in o.items()}
+        return {_TAG + "k": [[_pack(k), _pack(v)] for k, v in o.items()]}
+    raise NotPackable(type(o).__name__)
+
+
+def _unpack(o):
+    from decimal import Decimal
+    from .textl10n import Note
+    if type(o) is list:
+        return [_unpack(x) for x in o]
+    if type(o) is not dict:
+        return o
+    if len(o) == 1:
+        (k, v), = o.items()
+        if k.startswith(_TAG):
+            t = k[1:]
+            if t == "n":
+                return Note(v[0], v[1])
+            if t == "b":
+                return base64.b64decode(v)
+            if t == "t":
+                return _dt.datetime.fromisoformat(v)
+            if t == "d":
+                return _dt.date.fromisoformat(v)
+            if t == "h":
+                return _dt.time.fromisoformat(v)
+            if t == "m":
+                return Decimal(v)
+            if t == "u":
+                return tuple(_unpack(x) for x in v)
+            if t == "k":
+                return {_unpack(a): _unpack(b) for a, b in v}
+            raise acc.ValidationError("Not a packed import")
+    return {k: _unpack(v) for k, v in o.items()}
+
+
+def pack_read(data, source):
+    """(source format, data as read) → gzip bytes; raises NotPackable for a type it cannot carry exactly."""
+    import gzip
+    body = json.dumps({"beyond_import": 1, "source": source, "data": _pack(data)}, ensure_ascii=False, separators=(",", ":"))
+    return gzip.compress(body.encode("utf-8"), 6)
+
+
+def read_parsed(raw):
+    """Packed bytes (already un-gzipped by the import) → (source format, data)."""
+    try:
+        obj = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise acc.ValidationError("Not a packed import") from None
+    if not isinstance(obj, dict) or obj.get("beyond_import") != 1 or not isinstance(obj.get("data"), dict):
+        raise acc.ValidationError("Not a packed import")
+    data = _unpack(obj["data"])
+    for k, v in data.items():
+        if not isinstance(k, str) or not (isinstance(v, list) or k.startswith("_")):
+            raise acc.ValidationError("Not a packed import")
+    return str(obj.get("source") or ""), data
+
+
+def gunzip_if(raw):
+    """A compressed backup (.json.gz, .sqlite3.gz, any .gz) → its contents; anything else unchanged."""
+    if not raw or raw[:2] != b"\x1f\x8b":
+        return raw
+    import zlib
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    out = d.decompress(raw, GZ_LIMIT)
+    if d.unconsumed_tail:
+        raise acc.ValidationError("The compressed file is too large (more than 1 GB once expanded)")
+    return out
 
 
 def read_sqlite(raw):

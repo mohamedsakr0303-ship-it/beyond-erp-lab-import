@@ -894,7 +894,7 @@ MESSAGES = {
     'Only a super administrator can restore a database backup file': 'المسؤول الأعلى فقط يمكنه استعادة ملف نسخة احتياطية لقاعدة البيانات',
     'Each change needs method, path and body': 'كل تغيير يحتاج method وpath وbody',
     'You are not a member of any company. Use the website to create a company or join one with an invite code.': 'لست عضواً في أي شركة. استخدم الموقع لإنشاء شركة أو الانضمام إلى شركة برمز دعوة.',
-    'Upload too large (max 25 MB)': 'الملف المرفوع كبير جداً (الحد 25 ميجا)',
+    'Upload too large (max 25 MB; imports up to 1 GB)': 'الملف المرفوع كبير جداً (الحد 25 ميجا، والاستيراد حتى 1 جيجا)',
     'JSON body must be an object': 'محتوى JSON يجب أن يكون كائناً',
     'Server error: {}': 'خطأ في الخادم: {1}',
     'Only a super administrator can set the look for the whole company': 'المسؤول الأعلى فقط يمكنه ضبط المظهر للشركة كلها',

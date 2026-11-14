@@ -28,6 +28,12 @@ from .db import ACTIONS, Database, MODULES, PERM_DEFAULTS, SUBMODULES, SUBTABS, 
 
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_BODY = 25 * 1024 * 1024
+MAX_IMPORT = 1024 * 1024 * 1024          # a whole company's backup (workbook with files, database file) may be large
+BIG_UPLOADS = re.compile(r"^/api/import(?:-sheet)?(?:\?|$)")
+
+
+def body_limit(path):
+    return MAX_IMPORT if BIG_UPLOADS.match(path or "") else MAX_BODY
 PAGE_MAX = 500
 COOKIE = "beyond_session"
 
@@ -96,6 +102,14 @@ def ok(obj=None, status=200):
 
 def download(data, filename, ctype):
     return Reply(data, 200, ctype, filename)
+
+
+def gz_download(ctx, data, filename, ctype):
+    """A backup, compressed when asked (?gz=1, the app's own buttons: about a tenth of the size); imports take both."""
+    if ctx.q.get("gz") != "1":
+        return download(data, filename, ctype)
+    import gzip
+    return download(gzip.compress(data, 6), filename + ".gz", "application/gzip")
 
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -5250,8 +5264,8 @@ def _with_secrets(ctx):
 @route("GET", "/api/export/json", "import_export.export")
 def export_json(ctx):
     _need_full_books(ctx)
-    return download(interchange.to_json(ctx.db, secrets=_with_secrets(ctx)).encode("utf-8"), f"BEYOND_ERP_{acc.today()}.json",
-                    "application/json; charset=utf-8")
+    return gz_download(ctx, interchange.to_json(ctx.db, secrets=_with_secrets(ctx)).encode("utf-8"), f"BEYOND_ERP_{acc.today()}.json",
+                       "application/json; charset=utf-8")
 
 
 @route("GET", "/api/export/csv")
@@ -5443,9 +5457,18 @@ def do_import(ctx):
         _need_super(ctx, "replace all the books with an import")
     if mode == "replace" and not dry:
         ctx.server.backup("before-import")
-    if fmt == "json":
+    raw = interchange.gunzip_if(raw)         # a compressed backup (.json.gz, .sqlite3.gz)
+    if fmt in ("xlsx", "zip") and raw.lstrip()[:1] == b"{":
+        fmt = "json"                         # a JSON backup picked with another format
+    source = fmt
+    if fmt == "parsed":                      # an import replayed from the shared workspace (erp/cloud.py prepare)
+        source, data = interchange.read_parsed(raw)
+        if source == "sqlite" and not ctx.user.get("is_super"):
+            raise PermissionError("Only a super administrator can restore a database backup file")
+    elif fmt == "json":
         data = interchange.read_json(raw)
     elif fmt == "sqlite" or raw[:16] == b"SQLite format 3\x00":     # a "Database backup file"
+        source = "sqlite"
         if not ctx.user.get("is_super"):
             raise PermissionError("Only a super administrator can restore a database backup file")
         data = interchange.read_sqlite(raw)
@@ -5472,6 +5495,12 @@ def do_import(ctx):
     try:
         if not ctx.user.get("is_super") and isinstance(data.get("_extras"), dict):
             data["_extras"].pop("secrets", None)      # keys of connected tools: only a super administrator brings them in
+        if getattr(ctx.app, "pack_import", False):    # the workspace keeps what was read, not the file (erp/cloud.py)
+            app = getattr(ctx.app, "real", ctx.app)
+            try:
+                app.packed_import = interchange.pack_read(data, source)
+            except interchange.NotPackable:
+                app.packed_import = None
         res = interchange.import_data(ctx.db, data, mode=mode, dry_run=dry, user=ctx.user["username"])
     except interchange.ImportErrors as e:
         return ok({"ok": False, "error": str(e), "errors": e.errors}, 400)
@@ -6379,7 +6408,7 @@ def backup_download(ctx):
     # the whole database file: password fingerprints and connected tools' keys included, so super administrators only
     _need_super(ctx, "download the database file")
     path = ctx.server.backup("download")
-    return download(path.read_bytes(), path.name, "application/octet-stream")
+    return gz_download(ctx, path.read_bytes(), path.name, "application/octet-stream")
 
 
 @route("POST", "/api/maintenance", "settings.system", "edit")
@@ -6508,7 +6537,7 @@ def cloud_status_light(ctx):
     """Sync indicator for every signed-in user (no settings exposed)."""
     c = getattr(ctx.app, "cloud", None)
     s = c.public_status() if c else {}
-    return ok({k: s.get(k, "") for k in ("joined", "state", "error", "last_sync")})
+    return ok({**{k: s.get(k, "") for k in ("joined", "state", "error", "last_sync")}, "progress": s.get("progress")})
 
 
 @route("GET", "/api/cloud")
@@ -6700,6 +6729,8 @@ class _DryRunApp:
 
     def __init__(self, app):
         self.db = app.db
+        self.real = app                                         # the workspace's import packing (erp/cloud.py prepare)
+        self.pack_import = getattr(app, "pack_import", False)
 
     def backup(self, reason="auto"):
         return Path("dry-run.sqlite3")
@@ -6754,8 +6785,8 @@ def _handle(app, method, target, headers, raw, as_user, dry):
     db = app.db
     match = None
     try:
-        if len(raw or b"") > MAX_BODY:
-            return ok({"error": "Upload too large (max 25 MB)"}, 413)
+        if len(raw or b"") > body_limit(url.path):
+            return ok({"error": "Upload too large (max 25 MB; imports up to 1 GB)"}, 413)
         api_key = None
         bearer = (headers.get("authorization") or "")
         if bearer.lower().startswith("bearer " + auth.API_PREFIX) and as_user is None and getattr(app, "static", False) is not True:
@@ -6935,8 +6966,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(ok({"error": "Not found"}, 404))
             return self.static(url.path)
         length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_BODY:
-            return self.send(ok({"error": "Upload too large (max 25 MB)"}, 413))
+        if length > body_limit(url.path):
+            return self.send(ok({"error": "Upload too large (max 25 MB; imports up to 1 GB)"}, 413))
         raw = self.rfile.read(length) if length else b""
         headers = {k.lower(): v for k, v in self.headers.items()}
         headers.pop("x-session", None)  # the HTTP server uses HttpOnly cookies only

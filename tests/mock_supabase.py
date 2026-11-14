@@ -14,6 +14,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 
+# Supabase stops one call after a few seconds; here, like there, a call carrying several MB in one go fails.
+STATEMENT_LIMIT = 3_000_000
+
+
 class State:
     def __init__(self):
         self.lock = threading.Lock()
@@ -23,6 +27,8 @@ class State:
         self.people = {}        # email -> username
         self.ops = {}           # company id -> [op]
         self.snapshots = {}     # company id -> {seq: snapshot}
+        self.parts = {}         # (company id, part id, idx) -> {"data", "kind"}: large changes and copies in pieces
+        self.part_calls = 0
         self.confirm_required = False   # Supabase's "Confirm email" setting
         self.unconfirmed = set()
         self.banned = set()             # accounts switched off (manage-user with active = false)
@@ -186,6 +192,10 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int(q.get("limit", ["1000"])[0])
                 rows = [o for o in st.ops.get(cid, []) if o["seq"] > after][:limit] if st.member(cid, email) else []
                 return self._send(200, rows)
+            if url.path == "/rest/v1/op_parts":
+                pid, idx = _q(q, "part_id"), int(_q(q, "idx") or 0)
+                p = st.parts.get((cid, pid, idx)) if st.member(cid, email) else None
+                return self._send(200, [{"data": p["data"]}] if p else [])
             if url.path == "/rest/v1/snapshots":
                 snaps = st.snapshots.get(cid, {}) if st.member(cid, email) else {}
                 return self._send(200, sorted(snaps.values(), key=lambda s: -s["seq"])[:1])
@@ -195,6 +205,8 @@ class Handler(BaseHTTPRequestHandler):
         st, url = self.server.state, urlparse(self.path)
         n = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(n) or b"{}")
+        if url.path.startswith("/rest/v1/rpc/") and n > STATEMENT_LIMIT:   # one call too large for the statement timeout
+            return self._send(500, {"code": "57014", "message": "canceling statement due to statement timeout"})
         with st.lock:
             if url.path == "/auth/v1/signup":
                 e = body["email"].lower()
@@ -613,6 +625,29 @@ class Handler(BaseHTTPRequestHandler):
                          "is_member": bool(cur and cur["active"] and not cur["pending"])}
         if fn == "workspace_info":
             return 200, info()
+        def take_parts(ref, kind):
+            if not str(ref or "").startswith("parts:"):
+                return None
+            mt = re.match(r"^parts:([a-z0-9]{16,40}):([1-9][0-9]{0,3})$", ref)
+            if not mt:
+                return _err("22023", "invalid parts")
+            have = sorted(k[2] for k in st.parts if k[0] == cid and k[1] == mt.group(1))
+            if have != list(range(int(mt.group(2)))):
+                return _err("22023", "some pieces of this upload did not arrive — please try again")
+            for k in st.parts:
+                if k[0] == cid and k[1] == mt.group(1):
+                    st.parts[k]["kind"] = kind
+            return None
+        if fn == "put_part":
+            if not m:
+                return _err("42501", "not a member of this company", 403)
+            if not re.match(r"^[a-z0-9]{16,40}$", p["p_id"] or "") or len(p["p_data"]) > 1200000:
+                return _err("22023", "invalid part")
+            st.part_calls += 1
+            cur = st.parts.get((cid, p["p_id"], p["p_idx"]))
+            if not cur or not cur["kind"]:
+                st.parts[(cid, p["p_id"], p["p_idx"])] = {"data": p["p_data"], "kind": ""}
+            return 200, p["p_idx"]
         if fn == "append_op":
             if not m:
                 return _err("42501", "not a member of this company", 403)
@@ -623,6 +658,9 @@ class Handler(BaseHTTPRequestHandler):
             last = ops[-1]["seq"] if ops else 0
             if p["p_seq"] != last + 1:
                 return _err("40001", f"conflict: next change is {last + 1}")
+            bad = take_parts(p["p_body"], "op")
+            if bad:
+                return bad
             who = p["p_app_user"] if m["gateway"] and p["p_app_user"] else email
             ops.append({"company_id": cid, "seq": p["p_seq"], "version": p["p_version"], "actor": email, "app_user": who,
                         "device": p["p_device"], "method": p["p_method"], "path": p["p_path"], "body": p["p_body"],
@@ -631,6 +669,9 @@ class Handler(BaseHTTPRequestHandler):
         if fn == "put_snapshot":
             if not m or not (m["is_admin"] or m["gateway"]):
                 return _err("42501", "only administrators can save company copies", 403)
+            bad = take_parts(p["p_data"], "snap")
+            if bad:
+                return bad
             st.snapshots.setdefault(cid, {})[p["p_seq"]] = {"company_id": cid, "seq": p["p_seq"], "version": p["p_version"],
                                                            "data": p["p_data"]}
             return 200, p["p_seq"]

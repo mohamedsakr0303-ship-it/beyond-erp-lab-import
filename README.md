@@ -260,7 +260,7 @@ passwords, and the HTTP API permission model.
 ## Keeping it lean ("bloat-proof")
 
 * One small dependency, optional. No frameworks, no node_modules, no CDN.
-* Every list is paginated server-side (max 500 rows per page); uploads capped at 25 MB.
+* Every list is paginated server-side (max 500 rows per page); uploads capped at 25 MB (imports up to 1 GB; JSON and database backups download compressed as .gz and import either way; large imports and copies reach the shared workspace in 250 KB pieces with a progress bar).
 * Money as integers, indexed queries, one WAL-mode SQLite file.
 * Backup rotation, session and audit-log pruning, and a one-click *Compact & optimise* (VACUUM).
 * One interchange spec drives Excel, JSON and CSV, so formats cannot drift apart.

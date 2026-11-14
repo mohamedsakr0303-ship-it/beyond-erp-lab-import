@@ -282,6 +282,41 @@ def cloud_new_books(name, email):
       }
       const rpc = async (name, params) => req("POST", "/rest/v1/rpc/" + name, params || {}, await token());
       const select = async (table, q) => req("GET", `/rest/v1/${table}?${q}`, undefined, await token());
+      // What the screen shows while something large moves: {phase, done, total} (bytes; total 0 = unknown), {phase: "end"}
+      const progress = (phase, done = 0, total = 0) => window.dispatchEvent(new CustomEvent("beyond-progress", { detail: { phase, done, total } }));
+      const paint = () => new Promise(r => setTimeout(r, 40));    // let the page draw before a long step
+      // Large texts (a big change, a copy of the books) travel in pieces: one call to the database is stopped after a
+      // few seconds, so nothing large goes in a single call. Each piece is retried on its own.
+      const PART = 250000, PARTS_RX = /^parts:([a-z0-9]{16,40}):([1-9][0-9]{0,3})$/;
+      async function retry(fn) {
+        for (let i = 0; ; i++) {
+          try { return await fn(); }
+          catch (e) { if (i >= 4 || e.status === 401 || e.status === 403 || e.code === "42501" || e.code === "22023") throw e;
+                      await new Promise(r => setTimeout(r, Math.min(8000, 500 * 2 ** i))); }
+        }
+      }
+      async function putBig(text, phase) {
+        if (!text || text.length <= PART) return text;
+        const id = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, "0")).join("");
+        const n = Math.ceil(text.length / PART), c = co();
+        progress(phase, 0, text.length);
+        for (let i = 0; i < n; i++) {
+          await retry(() => rpc("put_part", { p_company: c, p_id: id, p_idx: i, p_data: text.slice(i * PART, (i + 1) * PART) }));
+          progress(phase, Math.min(text.length, (i + 1) * PART), text.length);
+        }
+        return `parts:${id}:${n}`;
+      }
+      async function getBig(text, phase) {
+        const m = PARTS_RX.exec(text || ""); if (!m) return text;
+        const n = Number(m[2]), c = co(), out = [];
+        progress(phase, 0, n * PART);
+        for (let i = 0; i < n; i++) {
+          const rows = await retry(() => select("op_parts", `select=data&company_id=eq.${c}&part_id=eq.${m[1]}&idx=eq.${i}`));
+          if (!rows.length) throw new CloudError("A piece of a shared change is missing from the workspace — try again in a moment");
+          out.push(rows[0].data); progress(phase, (i + 1) * PART, n * PART);
+        }
+        return out.join("");
+      }
       const lastSeq = () => Number(local("last_seq") ?? -1);
       // connected = a company is open here (not the device-only books) and its books have been downloaded
       const joined = () => !!cfg() && !!company && dbKey !== "db" && lastSeq() >= 0;
@@ -345,7 +380,7 @@ def cloud_new_books(name, email):
         setStatus("syncing", `Loading the latest copy of the books (${s - lastSeq()} changes)…`);
         const full = await select("snapshots", `select=seq,data&company_id=eq.${co()}&seq=eq.${s}&limit=1`);
         if (!full.length) return false;
-        await restoreSnapshot(full[0].data, true);
+        try { await restoreSnapshot(await getBig(full[0].data, "download"), true); } finally { progress("end"); }
         local("last_seq", s); local("snap_seq", Math.max(s, Number(local("snap_seq") || 0)));
         return true;
       }
@@ -357,6 +392,7 @@ def cloud_new_books(name, email):
           for (const [i, op] of rows.entries()) {
             if (Number(op.seq) !== lastSeq() + 1) throw new CloudError("The workspace log has a gap — try again in a moment");
             if (rows.length > 3) setStatus("syncing", `Syncing ${i + 1} of ${rows.length}…`);
+            if (PARTS_RX.test(op.body || "")) { try { op.body = await getBig(op.body, "download"); } finally { progress("end"); } }
             const r = unpackReply(P("cloud_apply")(JSON.stringify(op)));
             if (unsure && unsure.op === opKey(op)) unsure.reply = r;   // the change whose answer was lost did reach the log
             if (r.status === 0) { blocked = new TextDecoder().decode(r.body); setStatus("update", `A newer app version (${blocked}) is in use — reload this page to update`); throw new CloudError(status.error, "update"); }
@@ -383,24 +419,28 @@ def cloud_new_books(name, email):
       };
       // one change; runs inside the lock
       async function writeNow(method, url, h, raw) {
-        const ask = askKey(method, url, raw);
+        const ask = askKey(method, url, raw), big = method === "POST" && HEAVY.test(url) || (raw && raw.length > PART);
+        let sent = [null, null];       // a large change goes up in pieces once (not again when the log moved on)
         for (let attempt = 0; attempt < 8; attempt++) {
           await pullNow();
           if (unsure && unsure.reply && unsure.ask === ask && Date.now() - unsure.at < 3600000) { const r = unsure.reply; unsure = null; return r; }
+          if (big) { progress("check"); await paint(); }
           const out = P("cloud_prepare")(method, url, JSON.stringify(h), raw); const pair = out.toJs(); out.destroy();
           const dry = { status: pair[0][0], ctype: pair[0][1], filename: pair[0][2], body: pair[0][3], headers: JSON.parse(pair[0][4]) };
           if (!pair[1]) return dry;
           const op = JSON.parse(pair[1]); op.seq = lastSeq() + 1;
+          if (sent[0] !== op.body) sent = [op.body, await putBig(op.body, "upload")];
           unsure = { ask, op: opKey(op), at: Date.now(), reply: null };
           let stored;
           try {
             stored = await rpc("append_op", { p_company: co(), p_seq: op.seq, p_version: op.version, p_app_user: op.app_user, p_device: op.device, p_method: op.method,
-              p_path: op.path, p_body: op.body, p_content_type: op.content_type, p_clock: op.clock });
+              p_path: op.path, p_body: sent[1], p_content_type: op.content_type, p_clock: op.clock });
           } catch (e) { if (e.code === "40001") { unsure = null; continue; } throw e; }
           unsure = null;
           op.app_user = (stored && stored.app_user) || op.app_user;
+          if (big) { progress("apply"); await paint(); }
           const r = unpackReply(P("cloud_apply")(JSON.stringify(op)));
-          schedule(); setStatus("ok"); maybeSnapshot(heavy(op));   // after an import / demo / erase: a fresh copy at once, so other devices load it instead of replaying
+          schedule(); setStatus("ok"); if (heavy(op)) maybeSnapshot(true); else { if (big) progress("end"); maybeSnapshot(false); }   // after an import / demo / erase: a fresh copy at once, so other devices load it instead of replaying
           return r;
         }
         return jsonReply(409, { error: "The workspace is very busy — please try again" });
@@ -410,6 +450,7 @@ def cloud_new_books(name, email):
           try {
             return await writeNow(method, url, h, raw);
           } catch (e) {
+            progress("end");
             if (/subscription_ended/.test(e.message)) {   // the trial / paid period is over: nothing was saved (see append_op)
               window.dispatchEvent(new CustomEvent("beyond-billing", { detail: { status: "expired" } }));
               return jsonReply(402, { error: e.message.replace(/^.*subscription_ended:\s*/, ""), billing: "expired" });
@@ -429,13 +470,15 @@ def cloud_new_books(name, email):
         if (snapBusy || (!force && seq - done < 300)) return;
         if (!force && Date.now() < Number(local("snap_retry_at") || 0)) return;   // the last copy failed: wait before trying again
         snapBusy = true;
-        try { await rpc("put_snapshot", { p_company: co(), p_seq: seq, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() });
+        try { if (force) { progress("copy"); await paint(); }
+              const data = await putBig(await makeSnapshot(), "copy");
+              await rpc("put_snapshot", { p_company: co(), p_seq: seq, p_version: window.BEYOND_VERSION || "", p_data: data });
               local("snap_seq", seq); local("snap_wait", "0"); local("snap_retry_at", "0"); }
         catch (e) {
           if (e.status === 401 || e.status === 403 || /permission|not allowed|42501/i.test(e.message || "")) local("snap_seq", seq);   // not allowed: next batch
           else { const w = Math.min(3600, Math.max(300, 2 * Number(local("snap_wait") || 0)));   // still owed: retry after 5 min, doubling to 1 h
                  local("snap_wait", String(w)); local("snap_retry_at", String(Date.now() + w * 1000)); }
-        } finally { snapBusy = false; }
+        } finally { snapBusy = false; progress("end"); }
       }
       // Check for other people's changes: every 20 s while someone is using the page, every 3 min when it has been left
       // open untouched for 10 min, never while it is hidden. Every check is a request Supabase logs, so fewer checks keep
@@ -569,7 +612,8 @@ def cloud_new_books(name, email):
           company = c.id; lsSet("berp.company", c.id); lsSet("berp.cloudLocal", null); dbKey = "db:" + c.id;
           const me = await info();
           P("cloud_ensure_admin")(me.email);
-          await rpc("put_snapshot", { p_company: c.id, p_seq: 0, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() });
+          try { await rpc("put_snapshot", { p_company: c.id, p_seq: 0, p_version: window.BEYOND_VERSION || "", p_data: await putBig(await makeSnapshot(), "copy") }); }
+          finally { progress("end"); }
           local("last_seq", 0); local("snap_seq", 0); dirty = true; await persist(); startPolling();
           return info();
         },
@@ -583,11 +627,13 @@ def cloud_new_books(name, email):
             // a brand-new company: its administrator starts its books here (empty, named after the company)
             await exclusive(async () => {
               P("cloud_new_books")(me.company_name || "", me.email);
-              await rpc("put_snapshot", { p_company: co(), p_seq: 0, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() });
+              try { await rpc("put_snapshot", { p_company: co(), p_seq: 0, p_version: window.BEYOND_VERSION || "", p_data: await putBig(await makeSnapshot(), "copy") }); }
+              finally { progress("end"); }
               local("last_seq", 0); local("snap_seq", 0);
             });
           } else {
-            await exclusive(async () => { await restoreSnapshot(rows[0].data); local("last_seq", rows[0].seq); local("snap_seq", rows[0].seq); await pullNow(); });
+            await exclusive(async () => { try { await restoreSnapshot(await getBig(rows[0].data, "download")); } finally { progress("end"); }
+              local("last_seq", rows[0].seq); local("snap_seq", rows[0].seq); await pullNow(); });
           }
           dirty = true; await persist(); startPolling();
           return info();

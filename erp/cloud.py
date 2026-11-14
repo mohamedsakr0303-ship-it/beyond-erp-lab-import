@@ -31,7 +31,7 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 from . import __version__
 from . import db as _db
@@ -57,6 +57,8 @@ def username_for(email):
     e = (email or "").strip().lower()
     return e.rsplit("@", 1)[0] if e.endswith("@" + PLACEHOLDER_DOMAIN) else None
 PULL_PAGE = 500
+PART = 250_000                # characters per piece: a large change or copy goes up in pieces, each its own short call
+PARTS_RX = re.compile(r"^parts:([a-z0-9]{16,40}):([1-9][0-9]{0,3})$")
 # a change sent without an answer (the connection dropped): if the log turns out to hold it, the same request made
 # again within this many seconds gets that change's result instead of a second copy of the change
 UNSURE_FOR = 3600
@@ -192,17 +194,27 @@ def prepare(app, method, target, headers, raw, user):
         except PermissionError as e:
             return ok({"error": str(e) or "Not allowed"}, 403), None
     conn = app.db.conn
+    url = urlparse(target)
+    packing = method == "POST" and url.path == "/api/import"
+    app.pack_import, app.packed_import = packing, None
     with app.db.lock:
         conn.execute("BEGIN IMMEDIATE")
         try:
             reply = handle(app, method, target, headers, raw, as_user=user["username"], dry=True)
         finally:
             conn.execute("ROLLBACK")
+            app.pack_import = False
+    packed, app.packed_import = app.packed_import, None
     if reply.status >= 400:
         return reply, None
     if b'"_nochange": true' in (reply.body or b"")[:4000]:   # a check that found nothing to do: nothing to share
         return reply, None
     ctype = headers.get("content-type") or ""
+    if packing and packed is not None:
+        # an import: the log keeps what was read (compact, gzip), not the file; every device replays that
+        q = [(k, v) for k, v in parse_qsl(url.query, keep_blank_values=True) if k not in ("format", "sheet")]
+        target = url.path + "?" + urlencode(q + [("format", "parsed")])
+        raw, ctype = packed, "application/x-beyond-import"
     body, pw = _strip_password(method, target, encode_body(raw, ctype))
     op = {"version": __version__, "app_user": user["username"], "device": device_id(app.db), "method": method,
           "path": target, "body": body, "content_type": ctype,
@@ -586,7 +598,7 @@ class CloudSync:
             local_set(self.db, "company", co["id"])
             ensure_app_user(self.db, local_get(self.db, "email") or "", admin=True)
             c.rpc("put_snapshot", {"p_company": co["id"], "p_seq": 0, "p_version": __version__,
-                                   "p_data": snapshot_native(self.db)}, tok)
+                                   "p_data": self.put_big(snapshot_native(self.db), "copy")}, self.token())
             local_set(self.db, "last_seq", 0)
             local_set(self.db, "snap_seq", 0)
             self.start()
@@ -613,7 +625,7 @@ class CloudSync:
                 restore_native(self.db, snapshot_native(fresh_books(info.get("company_name") or "")))
                 ensure_app_user(self.db, info.get("email") or "", admin=True)
                 c.rpc("put_snapshot", {"p_company": self.company, "p_seq": 0, "p_version": __version__,
-                                       "p_data": snapshot_native(self.db)}, tok)
+                                       "p_data": self.put_big(snapshot_native(self.db), "copy")}, self.token())
                 local_set(self.db, "last_seq", 0)
                 local_set(self.db, "snap_seq", 0)
                 self.start()
@@ -623,7 +635,7 @@ class CloudSync:
                 raise NeedsUpdate(snap["version"])
             if hasattr(self.app, "backup"):
                 self.app.backup("before-join")
-            restore_native(self.db, snap["data"])
+            restore_native(self.db, self.get_big(snap["data"], "copy"))
             local_set(self.db, "last_seq", int(snap["seq"]))
             local_set(self.db, "snap_seq", int(snap["seq"]))
             self.pull()
@@ -648,6 +660,7 @@ class CloudSync:
                 for op in rows:
                     if int(op["seq"]) != last_seq(self.db) + 1:
                         raise RuntimeError("The workspace log is incomplete. Try again shortly.")
+                    op["body"] = self.get_big(op.get("body"))
                     r = apply(self.app, op)
                     u = getattr(self, "_unsure", None)
                     if u and u["op"] == _op_key(op):
@@ -663,7 +676,7 @@ class CloudSync:
         from .server import ok
         with self.lock:
             try:
-                ask = (method, target, bytes(raw or b""))
+                ask, sent = (method, target, bytes(raw or b"")), [None, None]
                 for _ in range(8):
                     self.pull()
                     u = getattr(self, "_unsure", None)
@@ -674,12 +687,14 @@ class CloudSync:
                     if op is None:
                         return reply
                     op["seq"] = last_seq(self.db) + 1
+                    if sent[0] != op["body"]:          # a large change goes up in pieces, once (not again on a retry)
+                        sent[:] = [op["body"], self.put_big(op["body"])]
                     self._unsure = {"ask": ask, "op": _op_key(op), "at": time.time(), "reply": None}
                     try:
                         stored = self.client().rpc("append_op", {
                             "p_company": self._co(), "p_seq": op["seq"], "p_version": op["version"], "p_app_user": op["app_user"],
                             "p_device": op["device"], "p_method": op["method"], "p_path": op["path"],
-                            "p_body": op["body"], "p_content_type": op["content_type"], "p_clock": op["clock"]},
+                            "p_body": sent[1], "p_content_type": op["content_type"], "p_clock": op["clock"]},
                             self.token())
                     except Conflict:
                         self._unsure = None       # refused: nothing was stored
@@ -699,6 +714,55 @@ class CloudSync:
                 self.status.update(state="signed_out", error=str(e))
                 return ok({"error": f"Workspace: {e}"}, 403)
 
+    # -- large texts (a big import, a copy of the books) in pieces: a single call is stopped after a few seconds
+    def _progress(self, what, done, total):
+        self.status["progress"] = {"what": what, "done": done, "total": total, "at": time.time(),
+                                   "started": (self.status.get("progress") or {}).get("started") if done else time.time()}
+
+    def _retry(self, fn):
+        for attempt in range(5):
+            try:
+                return fn()
+            except (Offline, RuntimeError):
+                if attempt == 4:
+                    raise
+                time.sleep(min(8, 0.5 * 2 ** attempt))
+
+    def put_big(self, text, what="upload"):
+        """text → itself when small, else "parts:<id>:<count>" once every piece is in the workspace."""
+        if not text or len(text) <= PART:
+            return text
+        pid, co, n = uuid.uuid4().hex[:24], self._co(), -(-len(text) // PART)
+        self._progress(what, 0, len(text))
+        try:
+            for i in range(n):
+                piece = text[i * PART:(i + 1) * PART]
+                self._retry(lambda: self.client().rpc("put_part", {"p_company": co, "p_id": pid, "p_idx": i, "p_data": piece},
+                                                      self.token()))
+                self._progress(what, min(len(text), (i + 1) * PART), len(text))
+        finally:
+            self.status.pop("progress", None)
+        return f"parts:{pid}:{n}"
+
+    def get_big(self, text, what="download"):
+        """The other way: "parts:<id>:<count>" → the whole text, fetched piece by piece."""
+        m = PARTS_RX.match(text or "")
+        if not m:
+            return text
+        pid, n, co, out = m.group(1), int(m.group(2)), self._co(), []
+        self._progress(what, 0, n * PART)
+        try:
+            for i in range(n):
+                rows = self._retry(lambda: self.client().select(
+                    "op_parts", f"select=data&company_id=eq.{co}&part_id=eq.{pid}&idx=eq.{i}", self.token()))
+                if not rows:
+                    raise RuntimeError("A piece of a shared change is missing from the workspace")
+                out.append(rows[0]["data"])
+                self._progress(what, (i + 1) * PART, n * PART)
+        finally:
+            self.status.pop("progress", None)
+        return "".join(out)
+
     def _maybe_snapshot(self, force=False):
         seq, snap = last_seq(self.db), int(local_get(self.db, "snap_seq", "0") or 0)
         if seq - snap < (1 if force else SNAPSHOT_EVERY):
@@ -706,8 +770,9 @@ class CloudSync:
         if not force and time.time() < float(local_get(self.db, "snap_retry_at", "0") or 0):
             return                                   # the last copy failed: wait before trying again
         try:
+            data = self.put_big(snapshot_native(self.db), "copy")
             self.client().rpc("put_snapshot", {"p_company": self._co(), "p_seq": seq, "p_version": __version__,
-                                               "p_data": snapshot_native(self.db)}, self.token())
+                                               "p_data": data}, self.token())
             local_set(self.db, "snap_seq", seq)
             local_set(self.db, "snap_wait", "0")
             local_set(self.db, "snap_retry_at", "0")
