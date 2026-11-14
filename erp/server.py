@@ -553,11 +553,12 @@ def post_entry_type(ctx, tid):
 @route("GET", "/api/accounts", "accounting.coa")
 def accounts(ctx):
     rows = {r["code"]: r for r in acc.account_totals(ctx.db, date_to=ctx.q.get("date_to"))}
+    used = {r["account"] for r in ctx.db.q("SELECT DISTINCT account FROM journal_lines")}     # one query, not one per account
     out = []
     for a in ctx.db.q("SELECT * FROM accounts ORDER BY code"):
         r = rows.get(a["code"], {"net": 0})
         a["balance"] = to_major(r["net"] if a["normal"] == "Debit" else -r["net"])
-        a["used"] = bool(ctx.db.one("SELECT 1 FROM journal_lines WHERE account=? LIMIT 1", (a["code"],)))
+        a["used"] = a["code"] in used
         out.append(a)
     return ok(out)
 
@@ -859,7 +860,7 @@ def journal(ctx):
                                                 "WHERE json_extract(meta,'$.approved_by') IS NOT NULL") if r["u"]})
     from . import approvals
     drafts = len(approvals.listing(ctx.db, ctx.user, ctx.can, {"status": "pending"}))    # the ones this person may see
-    return ok({"rows": [acc.get_entry(ctx.db, i) for i in ids], "total": count, "posted_amount": to_major(total["amt"]),
+    return ok({"rows": acc.get_entries(ctx.db, ids), "total": count, "posted_amount": to_major(total["amt"]),
                "limit": limit, "offset": offset, "people": people, "drafts": drafts,
                "tags": [r["tag"] for r in ctx.db.q("SELECT tag, COUNT(*) n FROM entry_tags GROUP BY tag ORDER BY n DESC, tag LIMIT 200")],
                "bu_groups": [r["grp"] for r in ctx.db.q("SELECT DISTINCT grp FROM business_units WHERE grp<>'' ORDER BY grp")]})
@@ -1957,7 +1958,7 @@ def list_docs(ctx, dtype):
     count = ctx.db.one(f"SELECT COUNT(*) AS n FROM journal_entries e WHERE {w}", p)["n"]
     ids = [r["id"] for r in ctx.db.q(f"SELECT e.id FROM journal_entries e WHERE {w} ORDER BY e.date DESC, e.id DESC "
                                      "LIMIT ? OFFSET ?", p + [limit, offset])]
-    return ok({"rows": [acc.get_entry(ctx.db, i) for i in ids], "total": count, "limit": limit, "offset": offset})
+    return ok({"rows": acc.get_entries(ctx.db, ids), "total": count, "limit": limit, "offset": offset})
 
 
 KIND_MODULE = {"Revenue Recognition": "shop.subscriptions", "Supplier Discount": "purchasing.payments", "Direct Cost": "purchasing.costs", "Operating Expense": "purchasing.expenses",
@@ -1996,7 +1997,7 @@ def _vouchers_report(ctx):
     lang = ctx.q.get("lang") or "en"
     title = ctx.q.get("title") or reports.L("vouchers", lang)
     sub = " · ".join(f"{k}: {v}" for k, v in ctx.q.items() if k in ("date_from", "date_to", "q", "party") and v)
-    return reports.vouchers_table(ctx.db, [acc.get_entry(ctx.db, i) for i in ids], title, lang, sub)
+    return reports.vouchers_table(ctx.db, acc.get_entries(ctx.db, ids), title, lang, sub)
 
 
 @route("GET", "/api/supplier-discount", "purchasing.payables")

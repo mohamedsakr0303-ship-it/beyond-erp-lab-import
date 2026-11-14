@@ -185,8 +185,20 @@ def _ar_half(v):
     return None
 
 
+_TRANSLATIONS = None
+
+
 def translations():
-    """English → Arabic from the app's own texts (screens, reports, partner pack, payroll) and the terms above."""
+    """English → Arabic from the app's own texts (screens, reports, partner pack, payroll) and the terms above. Built once
+    (reading and scanning the app's script took a third of a second, and a screen's import columns asked for it hundreds
+    of times); callers only read it."""
+    global _TRANSLATIONS
+    if _TRANSLATIONS is None:
+        _TRANSLATIONS = _build_translations()
+    return _TRANSLATIONS
+
+
+def _build_translations():
     import os
     pairs = {}
     here = os.path.dirname(__file__)

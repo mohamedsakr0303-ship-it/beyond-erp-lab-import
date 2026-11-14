@@ -13,7 +13,7 @@ The idea it is built on: profit is only distributable once it is BILLED.
 import datetime as _dt
 
 from . import accounting as acc
-from .db import to_major
+from .db import db_cached, to_major
 
 OPEX = ("employee", "general_admin", "marketing", "utilities", "other_operating")
 
@@ -253,6 +253,7 @@ def billed_profit(revenue, wip, net):
     return round(net * (revenue - wip) / revenue, 2)
 
 
+@db_cached
 def compute(db, date_from=None, date_to=None):
     date_to = acc.clean_date(date_to) if date_to else acc.today()
     wip_codes = set(wip_accounts(db))

@@ -336,10 +336,12 @@ def restore_native(db, data_b64):
         with db.lock:
             src.backup(db.conn)
         src.close()
+    db.bump()
     restore_local_rows(db, keep)
 
 
 def restore_local_rows(db, keep):
+    db.bump()                                    # the books were replaced underneath: forget kept results
     with db.lock:
         db._init()  # schema upgrades if the copy came from an older version
         keep = dict(keep)

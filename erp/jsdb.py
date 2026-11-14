@@ -50,12 +50,26 @@ def _plain(v):
     return str(v)
 
 
+_READ = ("SELECT", "PRAGMA", "EXPLAI", "VALUES")
+
+
+def _writes(sql):
+    """May this statement change the books? (sql.js reports the last write's row count even after later reads, so the
+    statement itself decides.)"""
+    head = sql.lstrip()[:6].upper()
+    if head.startswith("WITH"):
+        import re
+        return bool(re.search(r"\b(INSERT|UPDATE|DELETE|REPLACE)\b", sql, re.I))
+    return not head.startswith(_READ)
+
+
 class Connection:
     def __init__(self, runner, closer=None):
         self._run = runner          # JS function (sql, params_json) -> result_json
         self._closer = closer       # frees a scratch database (None for the books themselves)
         self.row_factory = None
         self.in_transaction = False
+        self.writes = 0             # every statement that may change the books (Database.data_version)
 
     def _track(self, sql):
         head = sql.lstrip()[:8].upper()
@@ -72,6 +86,8 @@ class Connection:
             msg = res["error"]
             raise (IntegrityError if "constraint" in msg.lower() else DatabaseError)(msg)
         self._track(sql)
+        if _writes(sql):
+            self.writes += 1
         return Cursor(res.get("rows", []), res.get("cols", []), res.get("lastId"), res.get("changes", 0))
 
     def executemany(self, sql, seq):
@@ -82,6 +98,7 @@ class Connection:
 
     def executescript(self, script):
         res = json.loads(self._run(script, "null"))
+        self.writes += 1
         if res.get("error"):
             raise DatabaseError(res["error"])
 

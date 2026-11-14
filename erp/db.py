@@ -2510,6 +2510,25 @@ class Database:
                           "(SELECT code FROM accounts WHERE role='inventory'))")
 
     # --- helpers -------------------------------------------------------------
+    def data_version(self):
+        """A number that changes whenever the books may have changed (any write through this connection, a restore):
+        the key for results worth keeping between screens (db_cached)."""
+        c = self.conn
+        n = getattr(c, "total_changes", None)
+        if n is None:                         # the browser build's connection counts its writes itself (it is the only one)
+            return (getattr(c, "writes", 0), getattr(self, "_bumps", 0))
+        with self.lock:
+            other = c.execute("PRAGMA data_version").fetchone()[0]     # another connection to the same file wrote
+            return (c.total_changes, other, getattr(self, "_bumps", 0))
+
+    def keeping(self):
+        """Kept results may be used: not inside a transaction (a dry run's changes are undone, its figures must not stay)."""
+        return not getattr(self.conn, "in_transaction", False)
+
+    def bump(self):
+        """The whole database was replaced underneath (a restore): forget kept results."""
+        self._bumps = getattr(self, "_bumps", 0) + 1
+
     def q(self, sql, params=()):
         with self.lock:
             return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
@@ -2527,8 +2546,14 @@ class Database:
         return _Tx(self)
 
     def setting(self, key, default=None):
-        r = self.one("SELECT value FROM settings WHERE key=?", (key,))
-        return r["value"] if r else default
+        # read once per change of the books: one screen asks for dozens of settings
+        if not self.keeping():
+            r = self.one("SELECT value FROM settings WHERE key=?", (key,))
+            return r["value"] if r else default
+        v, kept = self.data_version(), getattr(self, "_settings", None)
+        if not kept or kept[0] != v:
+            kept = self._settings = (v, {r["key"]: r["value"] for r in self.q("SELECT key, value FROM settings")})
+        return kept[1][key] if key in kept[1] else default
 
     def set_setting(self, key, value):
         self.x("INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)", (key, str(value)))
@@ -2591,3 +2616,27 @@ class _Tx:
         finally:
             self.db.lock.release()
         return False
+
+
+_CACHE = {}
+
+
+def db_cached(fn):
+    """Keep a function's result until the books change (Database.data_version): heavy figures several screens and the
+    bell ask for (the partners' distribution check) are worked out once, not on every screen. A copy is handed out, so a
+    caller changing it changes nothing kept."""
+    import copy
+    import functools
+
+    @functools.wraps(fn)
+    def wrap(db, *a, **k):
+        if not db.keeping():
+            return fn(db, *a, **k)
+        import datetime
+        key = (fn.__module__, fn.__name__, id(db), db.data_version(), datetime.date.today(), repr(a), repr(sorted(k.items())))
+        if key not in _CACHE:
+            if len(_CACHE) > 64:
+                _CACHE.clear()
+            _CACHE[key] = fn(db, *a, **k)
+        return copy.deepcopy(_CACHE[key])
+    return wrap

@@ -75,7 +75,8 @@ async function api(method, path, body, raw) {
     if (r && r._push) pushHints(r._push);
     if (typeof path === "string") autoAfterChange(path.split("?")[0]);
     // something changed: the bell follows shortly (one refresh for a burst of saves)
-    if (typeof path === "string" && !/^\/api\/(alerts|my-alerts\/read|presence|chat)/.test(path)) {
+    // (not for calls that change no figures: the automations sweep refreshes the bell itself when something was done)
+    if (typeof path === "string" && !/^\/api\/(alerts|my-alerts\/read|presence|chat|automations\/run|activity|drafts)/.test(path)) {
       S.alertsAt = 0; clearTimeout(S.bellT); S.bellT = setTimeout(() => { if ($("#bellmenu")) loadAlerts(true); }, 1500); }
     return r; }
   finally { API_WRITES--; }

@@ -84,9 +84,14 @@ window.BEYOND_STATIC = true;
     let db = saved ? new SQL.Database(new Uint8Array(saved)) : new SQL.Database();
     db.run("PRAGMA foreign_keys = ON");
 
+    // the books changed (any write, a restore): the background copy that answers reads is refreshed before the next one
+    let dbVer = 0;
+    const isWrite = sql => { const h = sql.trimStart().slice(0, 6).toUpperCase();
+      return h.startsWith("WITH") ? /\b(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(sql) : !/^(SELECT|PRAGMA|EXPLAI|VALUES)/.test(h); };
     // one runner per sql.js database: the books, or a throw-away scratch copy (see beyondSqlScratch)
-    const runOn = d => (sql, paramsJson) => {
+    const runOn = (d, books) => (sql, paramsJson) => {
       const db = d();
+      if (books && isWrite(sql)) dbVer++;
       try {
         const params = JSON.parse(paramsJson);
         if (params === null) { db.exec(sql); return JSON.stringify({ rows: [], cols: [] }); }
@@ -101,7 +106,7 @@ window.BEYOND_STATIC = true;
         } finally { st.free(); }
       } catch (e) { return JSON.stringify({ error: String(e && e.message || e) }); }
     };
-    globalThis.beyondSqlRun = runOn(() => db);
+    globalThis.beyondSqlRun = runOn(() => db, true);
     // Python's Database(":memory:") — templates for a business type, the demo company… — gets its own empty database
     globalThis.beyondSqlScratch = bytes => {     // bytes: a database file to open (a backup being restored)
       const tmp = bytes ? new SQL.Database(bytes) : new SQL.Database(); tmp.run("PRAGMA foreign_keys = ON");
@@ -352,7 +357,7 @@ def cloud_new_books(name, email):
         if (!keepAll) keep.sessions = [];
         try { Object.assign(keep, JSON.parse(P("cloud_device_secrets")())); } catch { /* older books */ }   // this device's own secrets stay
         const bytes = await gz(await b64bytes(b64), false);
-        const old = db; db = new SQL.Database(bytes); db.run("PRAGMA foreign_keys = ON"); old.close();
+        const old = db; db = new SQL.Database(bytes); db.run("PRAGMA foreign_keys = ON"); old.close(); dbVer++;
         P("cloud_after_restore")(JSON.stringify(keep));
         dirty = true; await persist();
       }
@@ -807,31 +812,45 @@ def worker_call(method, url, headers_json):
         APP.db = Database("/tmp/beyond-erp.sqlite3", connection=jsdb.connect(js.beyondSqlRun))
     r = handle(APP, method, url, json.loads(headers_json), b"")
     return [r.status, r.ctype, r.filename or "", r.body, json.dumps(r.headers)]
+
+def worker_fresh():
+    # a new copy of the books arrived: results kept from the previous copy are forgotten
+    if APP.db is not None:
+        APP.db.bump()
 `);
-            run = py.globals.get("worker_call");
+            run = py.globals.get("worker_call"); self.workerFresh = py.globals.get("worker_fresh");
             self.postMessage({ ready: true });
           } catch (err) { self.postMessage({ fatal: String(err && err.message || err) }); }
           return;
         }
         try {
-          if (db) db.close();
-          db = new SQL.Database(new Uint8Array(m.db)); db.run("PRAGMA foreign_keys = ON");
+          if (m.db) {                       // only when the books changed since the last copy (see heavyWorker)
+            if (db) db.close();
+            db = new SQL.Database(new Uint8Array(m.db)); db.run("PRAGMA foreign_keys = ON");
+            self.workerFresh();
+          }
+          const changes = () => db.exec("SELECT total_changes()")[0].values[0][0], before = changes();
           const out = run(m.method, m.url, JSON.stringify(m.headers)), arr = out.toJs(); out.destroy();
           const body = arr[3] instanceof Uint8Array ? arr[3] : new Uint8Array(arr[3] || []);
-          self.postMessage({ id: m.id, reply: { status: arr[0], ctype: arr[1], filename: arr[2], body, headers: JSON.parse(arr[4]) } }, [body.buffer]);
+          // a read that wrote (it must happen on the books themselves): the page runs it again
+          self.postMessage({ id: m.id, wrote: changes() !== before, reply: { status: arr[0], ctype: arr[1], filename: arr[2], body, headers: JSON.parse(arr[4]) } }, [body.buffer]);
         } catch (err) { self.postMessage({ id: m.id, error: String(err && err.message || err) }); }
       };
     }
-    let heavy = null, heavyBroken = location.protocol === "file:" || typeof Worker === "undefined";
+    let heavy = null, heavyBroken = location.protocol === "file:" || typeof Worker === "undefined", workerReady = false, workerVer = -1, downloads = 0;
     const heavyWorker = () => heavy || (heavy = new Promise((ok, bad) => {
       const w = new Worker(URL.createObjectURL(new Blob([`"use strict";(${workerMain.toString()})();`], { type: "text/javascript" })));
       const waiting = new Map(); let seq = 0;
+      // the worker keeps its copy of the books; a new one goes only when they changed since (dbVer)
       const call = (method, url, headers) => new Promise((res, rej) => { const id = ++seq; waiting.set(id, { res, rej });
-        const snap = exportDb(); w.postMessage({ id, method, url, headers, db: snap }, [snap.buffer]); });
+        if (workerVer !== dbVer) { const snap = exportDb(); workerVer = dbVer; w.postMessage({ id, method, url, headers, db: snap }, [snap.buffer]); }
+        else w.postMessage({ id, method, url, headers }); });
       w.onmessage = e => { const m = e.data;
-        if (m.ready) return ok(call);
+        if (m.ready) { workerReady = true; return ok(call); }
         if (m.fatal) { heavyBroken = true; w.terminate(); return bad(new Error(m.fatal)); }
-        const p = waiting.get(m.id); if (!p) return; waiting.delete(m.id); m.error ? p.rej(new Error(m.error)) : p.res(m.reply); };
+        const p = waiting.get(m.id); if (!p) return; waiting.delete(m.id);
+        if (m.wrote) workerVer = -1;       // its copy now differs from the books: a fresh one next time
+        m.error ? p.rej(new Error(m.error)) : p.res(m.wrote ? { wrote: true } : m.reply); };
       w.onerror = e => { heavyBroken = true; waiting.forEach(p => p.rej(new Error("worker stopped"))); waiting.clear(); bad(new Error(e.message || "worker failed")); };
       w.postMessage({ init: true, base: new URL(V, location.href).href, blobs: BLOBS, wheels: window.BEYOND_WHEELS || [] });
     }));
@@ -840,11 +859,25 @@ def worker_call(method, url, headers_json):
       const h = {}; Object.entries(headers || {}).forEach(([k, v]) => { h[k.toLowerCase()] = v; });
       h["x-beyond-static"] = "1";
       if (!heavyBroken) {
-        try { return await (await heavyWorker())("GET", url, h); }
+        downloads++;
+        try { const r = await (await heavyWorker())("GET", url, h); if (!r.wrote) return r; }
         catch (e) { console.warn("Background downloads unavailable — building on the page", e); heavyBroken = true; }
+        finally { downloads--; }
       }
       return localRun("GET", url, h, null);
     };
+    // Screens' reads (lists, reports, the bell) are answered by the same background copy, so working them out never
+    // freezes the page — scrolling, menus and animations stay smooth on big books. Not while it builds a download (the
+    // read would wait behind it), not for calls that talk to the device or the outside, and never for a read that turns
+    // out to write: those run on the page as before.
+    const PAGE_ONLY = /^\/api\/(cloud|ai\/|einvoice|ereceipt|licence|backup|export\/|templates\/|demo\/workbook|reports\/[\w-]+\?(?:.*&)?format=)/;
+    async function readInBackground(url, h) {
+      if (heavyBroken || !workerReady || downloads || PAGE_ONLY.test(url)) return null;
+      try { const r = await (await heavyWorker())("GET", url, h); if (r.wrote) return null; window.__beyondBgReads = (window.__beyondBgReads || 0) + 1; return r; }
+      catch (e) { console.warn("Background reads unavailable — answering on the page", e); heavyBroken = true; return null; }
+    }
+    // start it once the page is up and quiet (it loads a second copy of the engine)
+    if (!heavyBroken) setTimeout(() => { heavyWorker().catch(() => {}); }, 5000);
 
     window.__beyondFetch = async (method, url, headers, body) => {
       const h = {}; Object.entries(headers || {}).forEach(([k, v]) => { h[k.toLowerCase()] = v; });
@@ -852,6 +885,7 @@ def worker_call(method, url, headers_json):
       let raw = null;
       if (body != null) raw = typeof body === "string" ? new TextEncoder().encode(body) : new Uint8Array(body);
       if (method !== "GET" && Cloud.replicated(method, url)) return Cloud.write(method, url, h, raw);
+      if (method === "GET") { const r = await readInBackground(url, h); if (r) return r; }
       const r = localRun(method, url, h, raw);
       if (method !== "GET") schedule();
       // a call to the tax authority runs on this device only; what it changed (e-invoice / e-receipt status) is then

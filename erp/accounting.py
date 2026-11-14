@@ -343,6 +343,41 @@ def get_entry(db, eid):
     return e
 
 
+def get_entries(db, ids):
+    """get_entry for many entries at once, in the order given: three queries in all instead of three per entry (a page of
+    the journal in the browser edition was a hundred and fifty round trips)."""
+    ids = [int(i) for i in ids]
+    if not ids:
+        return []
+    if len(ids) > 500:                        # a whole export: in parts, within any SQLite's limit on parameters
+        return [e for k in range(0, len(ids), 500) for e in get_entries(db, ids[k:k + 500])]
+    marks = ",".join("?" * len(ids))
+    heads = {e["id"]: e for e in db.q(
+        "SELECT e.*, b.code AS bu_code, (SELECT COUNT(*) FROM attachments WHERE owner='entry' AND owner_id=e.id) AS files "
+        f"FROM journal_entries e LEFT JOIN business_units b ON b.id=e.bu_id WHERE e.id IN ({marks})", ids)}
+    lines, tags = {}, {}
+    for r in db.q("SELECT l.*, a.name, a.name_ar FROM journal_lines l JOIN accounts a ON a.code=l.account "
+                  f"WHERE entry_id IN ({marks}) ORDER BY l.id", ids):
+        lines.setdefault(r["entry_id"], []).append(
+            {"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
+             "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {}),
+             **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {})})
+    for r in db.q(f"SELECT entry_id, tag FROM entry_tags WHERE entry_id IN ({marks}) ORDER BY tag", ids):
+        tags.setdefault(r["entry_id"], []).append(r["tag"])
+    out = []
+    for i in ids:
+        if i not in heads:
+            continue
+        e = dict(heads[i])                    # its own copy (an id asked for twice gets two separate entries)
+        e["meta"] = json.loads(e["meta"] or "{}")
+        e["history"] = json.loads(e["history"] or "[]")
+        e["lines"] = [dict(ln) for ln in lines.get(i, [])]
+        e["amount"] = round(sum(ln["debit"] for ln in e["lines"]), 2)
+        e["tags"] = list(tags.get(i, []))
+        out.append(e)
+    return out
+
+
 def set_tags(db, eid, tags):
     """An entry's tags: short labels, at most 12, each up to 40 characters."""
     clean = []
