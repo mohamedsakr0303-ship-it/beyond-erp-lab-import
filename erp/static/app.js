@@ -2248,6 +2248,15 @@ function exportMenu(name, params) {
     <a href="${base}&format=pdf" target="_blank" rel="noopener">${esc(L2("PDF (print)", "PDF (طباعة)"))}</a><a href="${base}&format=xlsx">${esc(L2("Excel (.xlsx)", "إكسل (.xlsx)"))}</a>
     <a href="${base}&format=docx">${esc(L2("Word (.docx)", "وورد (.docx)"))}</a><a href="${base}&format=csv">CSV</a></div></div>`;
 }
+// one Export menu for a screen with more than one table: a heading per table, then its formats
+function exportMenus(list) {
+  if (!actionOk(screenKey(), "export")) return "";
+  return `<div class="dd"><button class="btn">${t("export")} ▾</button><div class="dd-menu">${list.map(([title, name, params]) => {
+    const base = `/api/reports/${name}?` + qs({ ...params, lang: params.lang || S.lang });
+    return `<div class="dd-h muted" style="padding:6px 12px 2px;font-size:12px;font-weight:600">${esc(title)}</div>
+      <a href="${base}&format=pdf" target="_blank" rel="noopener">${esc(L2("PDF (print)", "PDF (طباعة)"))}</a><a href="${base}&format=xlsx">${esc(L2("Excel (.xlsx)", "إكسل (.xlsx)"))}</a>
+      <a href="${base}&format=docx">${esc(L2("Word (.docx)", "وورد (.docx)"))}</a><a href="${base}&format=csv">CSV</a>`; }).join("")}</div></div>`;
+}
 // Client documents (company layout, logo & watermark per Settings → Documents & branding)
 function docMenu(base, formats, extra = "") {
   if (!actionOk(screenKey(), "export")) return "";
@@ -7565,7 +7574,8 @@ PAGES.partners = async (view, parts, q) => {
       <td class="num">${money(a.loan)}${p.loan_rate ? `<div class="lines">@ ${pct(p.loan_rate)}</div>` : ""}</td><td class="num">${money(a.interest)}</td><td class="num">${money(a.distributions_payable + a.due_to)}</td></tr>`; };
   const tot = k => d.partners.reduce((s, p) => s + (p.accounts[k] || 0), 0);
   view.innerHTML = `<div class="toolbar">${txMenu}${ownMenu}${ed ? `<button class="btn" data-a="pnew">+ ${t("partner")}</button>` : ""}<span class="spacer"></span>
-      ${exportMenu("vouchers", { kinds: "Capital Contribution,Capital Withdrawal,Owner Drawing,Profit Distribution,Partner Loan,Partner Loan Repayment,Partner Loan Interest,Share Transfer,Partner Admission,Partner Exit", title: t("m_partners") })}</div>` + filterBar(q, ["dates"]) +
+      ${exportMenus([[L2("Partners' accounts (this table)", "حسابات الشركاء (هذا الجدول)"), "partner_accounts", { date_from: q.date_from || "", date_to: q.date_to || "" }],
+        [L2("Partner transactions", "حركات الشركاء"), "vouchers", { ...q, kinds: "Capital Contribution,Capital Withdrawal,Owner Drawing,Profit Distribution,Partner Loan,Partner Loan Repayment,Partner Loan Interest,Share Transfer,Partner Admission,Partner Exit", title: t("m_partners") }]])}</div>` + filterBar(q, ["dates"]) +
     `<div class="card"><h2>${L2("Partners' accounts", "حسابات الشركاء")}</h2><div class="tbl"><table><thead><tr><th>${t("partner")}</th><th class="num">${L2("Ownership", "الملكية")}</th><th class="num">${L2("Capital", "رأس المال")}</th><th class="num">${L2("Current account", "جاري الشريك")}</th>
       <th class="num">${L2("Drawings", "المسحوبات")}</th><th class="num">${L2("Loans to the company", "قروض للشركة")}</th><th class="num">${L2("Accrued interest", "فوائد مستحقة")}</th><th class="num">${L2("Due to partner", "مستحق للشريك")}</th></tr></thead><tbody>
       ${d.partners.map(acctRow).join("")}

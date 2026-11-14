@@ -375,6 +375,29 @@ def trial_balance_table(db, date_from=None, date_to=None, bu_id=None, lang="en",
             "columns": cols, "rows": rows, "lang": lang, "ok": tb["balanced"]}
 
 
+def partner_accounts_table(db, date_from=None, date_to=None, lang="en"):
+    """The Partners screen's table: each partner's ownership and accounts with the company, and the totals."""
+    ar = lang == "ar"
+    rep_ = acc.partner_report(db, date_from or None, date_to or None)
+    keys = [("capital", "Capital", "رأس المال"), ("current", "Current account", "الحساب الجاري"), ("drawings", "Drawings", "المسحوبات"),
+            ("loan", "Loans to the company", "قروض للشركة"), ("interest", "Accrued interest", "فوائد مستحقة"),
+            ("due", "Due to partner", "مستحق للشريك")]
+    cols = [{"label": "الشريك" if ar else "Partner", "align": "left"}, {"label": "الملكية" if ar else "Ownership", "align": "right"}]
+    cols += [{"label": a if ar else e, "align": "right", "fmt": "money"} for _, e, a in keys]
+    val = lambda pa, k: (pa.get("distributions_payable") or 0) + (pa.get("due_to") or 0) if k == "due" else (pa.get(k) or 0)
+    rows, tot = [], {k: 0.0 for k, _, _ in keys}
+    for p in rep_["partners"]:
+        a = p.get("accounts") or {}
+        name = p["name"] + ("" if p.get("active", 1) else (" (شريك سابق)" if ar else " (former partner)"))
+        rows.append(_row(name, [f"{round((p.get('default_share') or 0) * 100, 2)}%"] + [round(val(a, k), 2) for k, _, _ in keys]))
+        for k, _, _ in keys:
+            tot[k] = round(tot[k] + val(a, k), 2)
+    rows.append(_row(L("total", lang), [""] + [tot[k] for k, _, _ in keys], "grand"))
+    pers = [("", date_from or "…", acc.clean_date(date_to))]
+    return {"title": "حسابات الشركاء" if ar else "Partners' accounts", "subtitle": _subtitle(db, lang, pers, None, as_of=not date_from),
+            "columns": cols, "rows": rows, "lang": lang, "ok": True}
+
+
 def chart_of_accounts_table(db, date_to=None, lang="en", inactive=False):
     """The chart as the screen shows it: each group (with the total of everything under it) followed by its accounts and
     then its subgroups, indented by depth; accounts outside every group at the end. Balances as of a date, on the debit
@@ -1127,6 +1150,8 @@ def build(db, name, p):
         return balance_sheet_table(db, p.get("date_to"), p.get("date_from"), p.get("compare"), bu, lang)
     if name == "cash_flow":
         return cash_flow_table(db, p.get("date_from"), p.get("date_to"), p.get("compare"), bu, lang)
+    if name == "partner_accounts":
+        return partner_accounts_table(db, p.get("date_from"), p.get("date_to"), lang)
     if name == "chart_of_accounts":
         return chart_of_accounts_table(db, p.get("date_to"), lang, p.get("inactive") in ("1", "true", 1, True))
     if name == "trial_balance":
@@ -1189,7 +1214,7 @@ def build(db, name, p):
 
 
 REPORT_PERMS = {"payroll_register": "payroll.runs", "partner_pack": ("reports.partner_pack", "partners.equity"), "funding_schedule": ("partners.equity", "reports.partner_pack"), "income_statement": "reports.income_statement", "profit_categories": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
-                "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance", "chart_of_accounts": "accounting.coa",
+                "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance", "chart_of_accounts": "accounting.coa", "partner_accounts": ("partners.equity", "partners.transactions"),
                 "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability", "project_cash": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
                 "tax": "tax.report", "fixed_assets": "assets.register",
