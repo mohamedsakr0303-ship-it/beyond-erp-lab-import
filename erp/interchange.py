@@ -101,6 +101,15 @@ SHEETS = [
     {"name": "Settings", "ar": "الإعدادات", "module": "settings",
      "title": "Company settings & report period",
      "cols": [C("key", "Key", "المفتاح", width=26, required=True), C("value", "Value", "القيمة", width=40)]},
+    {"name": "Account Groups", "ar": "مجموعات الحسابات", "module": "accounting",
+     "title": "Groups of the chart (headings such as Fixed assets or Suppliers): they total the accounts under them and are never "
+              "posted to. Parent Group = the group above it (blank = top level); Type blank = any type below it",
+     "cols": [C("code", "Group Code", "كود المجموعة", width=10, required=True),
+              C("name", "Group Name", "اسم المجموعة", width=32, required=True),
+              C("type", "Type", "النوع", width=11, choices=list(SUBTYPES)),
+              C("parent", "Parent Group", "المجموعة الأعلى", width=12),
+              C("name_ar", "Arabic Name", "الاسم بالعربية", width=32),
+              C("active", "Active", "نشط", width=7, choices=["Yes", "No"])]},
     {"name": "Chart of Accounts", "ar": "دليل الحسابات", "module": "accounting",
      "title": "Chart of accounts — edit codes and names freely; Role is the system tag (do not duplicate)",
      "cols": [C("code", "Code", "رقم الحساب", width=10, required=True),
@@ -114,7 +123,9 @@ SHEETS = [
                      '{subtype}="sales_discount"),"Debit","Credit"))'),
               C("role", "System Role", "الدور في النظام", width=18),
               C("name_ar", "Arabic Name", "الاسم بالعربية", width=34),
-              C("active", "Active", "نشط", width=7, choices=["Yes", "No"])]},
+              C("active", "Active", "نشط", width=7, choices=["Yes", "No"]),
+              # last, so the columns before it (and the workbook's formulas on them) stay where they were
+              C("parent", "Group", "المجموعة", width=12, note="the account's group in Account Groups; blank = top level")]},
     {"name": "Cost Items", "ar": "بنود التكلفة", "module": "business_units",
      "title": "Cost items: one catalogue of work items for every project (01 = a trade, 01.02 = an item under it). "
               "Cost lines are tagged with them; budgets are per project and item",
@@ -674,10 +685,13 @@ def export_data(db):
                                 | {"active": "Yes" if t["active"] else "No"})
     for p in db.q("SELECT * FROM parties ORDER BY name"):
         out["Parties"].append({k: v for k, v in p.items() if k != "id"})
+    for g in _groups_in_order(db):
+        out["Account Groups"].append({"code": g["code"], "name": g["name"], "name_ar": g["name_ar"], "type": g["type"],
+                                      "parent": g["parent"], "active": "Yes" if g["active"] else "No"})
     for a in db.q("SELECT * FROM accounts ORDER BY code"):
         out["Chart of Accounts"].append({"code": a["code"], "name": a["name"], "name_ar": a["name_ar"], "type": a["type"],
                                          "subtype": a["subtype"], "role": a["role"] or "",
-                                         "active": "Yes" if a["active"] else "No"})
+                                         "active": "Yes" if a["active"] else "No", "parent": a.get("parent") or ""})
     bus = {b["id"]: b for b in db.q("SELECT * FROM business_units ORDER BY code")}
     code = lambda bid: bus[bid]["code"] if bid in bus else ""  # noqa: E731
     for b in bus.values():
@@ -1936,7 +1950,7 @@ WIPE_ORDER = ("cost_budgets", "cost_items", "year_closes", "cost_subs", "entry_t
 # key is there (so changes made in the app are never overwritten); several rows sharing a key (an invoice and its
 # lines, an order and its items) come in or stay out together. Other sheets compare the whole row.
 ONLY_NEW_KEYS = {
-    "Chart of Accounts": ("code",), "Tax Codes": ("code",), "Business Units": ("code",), "Cost Items": ("code",),
+    "Chart of Accounts": ("code",), "Account Groups": ("code",), "Tax Codes": ("code",), "Business Units": ("code",), "Cost Items": ("code",),
     "Cost Budgets": ("bu_code", "item"), "Parties": ("name",), "Partners": ("name",),
     "Fixed Assets": ("code",), "E-Invoice Templates": ("code",), "E-Invoices Received": ("uuid",), "Warehouses": ("name",), "Stock Items": ("name",), "Products": ("code",), "Employees": ("code",),
     "Loans": ("code",), "Cash Custody": ("code",), "Rental Equipment": ("code",), "Rental Contracts": ("ref",), "Sales Contracts": ("code",),
@@ -2157,6 +2171,8 @@ def _import_data(db, data, mode="append", dry_run=False, user=""):
             if mode == "replace":  # a restore; appending into closed periods stays refused
                 db.conn.execute("UPDATE settings SET value='' WHERE key='lock_date'")
             run("Settings", lambda r: _imp_setting(db, r))
+            data["Account Groups"] = _parents_first(data.get("Account Groups") or [])   # the group above first
+            run("Account Groups", lambda r: _imp_group(db, r))
             run("Chart of Accounts", lambda r: _imp_account(db, r))
             run("Tax Codes", lambda r: _imp_tax_code(db, r))
             run("Business Units", lambda r: _imp_bu(db, r))
@@ -2271,6 +2287,37 @@ def _imp_setting(db, r):
         settlement.apply_funding_mode(db, acc.text(r.get("value")) or "capital")
 
 
+def _groups_in_order(db):
+    """The chart's groups, each after the group above it (a file then imports top-down)."""
+    rows = db.q("SELECT * FROM account_groups ORDER BY code")
+    return _parents_first(rows)
+
+
+def _parents_first(rows):
+    by = {acc.text(r.get("code")): r for r in rows}
+    out, done = [], set()
+
+    def put(r, path=()):
+        c = acc.text(r.get("code"))
+        if c in done or c in path:
+            return
+        p = acc.text(r.get("parent"))
+        if p in by and p != c:
+            put(by[p], path + (c,))
+        done.add(c)
+        out.append(r)
+    for r in rows:
+        put(r)
+    return out
+
+
+def _imp_group(db, r):
+    code = acc.text(r.get("code"))
+    d = {"code": code, "name": r.get("name"), "name_ar": r.get("name_ar"), "type": acc.text(r.get("type")),
+         "parent": acc.text(r.get("parent")), "active": 0 if str(r.get("active", "Yes")).lower() in ("no", "0", "false") else 1}
+    acc.save_group(db, d, old_code=code if db.one("SELECT 1 FROM account_groups WHERE code=?", (code,)) else None)
+
+
 def _imp_account(db, r):
     code = acc.text(r.get("code"))
     existing = db.one("SELECT * FROM accounts WHERE code=?", (code,))
@@ -2278,6 +2325,8 @@ def _imp_account(db, r):
     by_role = db.one("SELECT * FROM accounts WHERE role=?", (role,)) if role else None
     d = {"code": code, "name": r.get("name"), "name_ar": r.get("name_ar"), "type": r.get("type"), "subtype": r.get("subtype"),
          "active": 0 if str(r.get("active", "Yes")).lower() in ("no", "0", "false") else 1}
+    if "parent" in r:          # a file with the Group column places the account; an older file leaves it where it is
+        d["parent"] = acc.text(r.get("parent"))
     if by_role and by_role["code"] != code:
         acc.save_account(db, d, old_code=by_role["code"])  # renumbered system account
     elif existing:

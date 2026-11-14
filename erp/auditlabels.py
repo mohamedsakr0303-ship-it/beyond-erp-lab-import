@@ -6,7 +6,7 @@ from the lists below. Anything not listed reads as its words ("rent lot adjust")
 import re
 
 OBJECTS = {
-    "account": ("account", "حساب"), "ai": ("assistant", "المساعد الذكي"), "allocation": ("allocation", "التوزيع"),
+    "account": ("account", "حساب"), "account_group": ("account group", "مجموعة حسابات"), "ai": ("assistant", "المساعد الذكي"), "allocation": ("allocation", "التوزيع"),
     "rule": ("rule", "قاعدة"), "api_key": ("API key", "مفتاح API"), "approval": ("approval", "اعتماد"), "asset": ("fixed asset", "أصل ثابت"),
     "attachment": ("attachment", "مرفق"), "attendance": ("attendance", "الحضور"), "bank": ("bank", "البنك"), "statement": ("statement", "كشف"),
     "bill": ("bill", "فاتورة مورد دورية"), "branding": ("branding", "الهوية"), "image": ("image", "صورة"), "bu": ("business unit", "وحدة أعمال"),

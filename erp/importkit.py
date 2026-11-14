@@ -29,7 +29,7 @@ SHEET_PERM = {
     "Invoice Lines": "sales.invoices", "BOQ Lines": "estimating.boqs", "Price List": "estimating.prices",
     "Parties": "sales.parties", "Business Units": "business_units.units", "Fixed Assets": "assets.register",
     "Stock Items": "stock.balances", "Stock Moves": "stock.moves", "Warehouses": "stock.warehouses",
-    "Journal Vouchers": "accounting.journal", "Chart of Accounts": "accounting.coa", "Partners": "partners",
+    "Journal Vouchers": "accounting.journal", "Chart of Accounts": "accounting.coa", "Account Groups": "accounting.coa", "Partners": "partners",
     "Partner Shares": "partners", "Partner Transactions": "partners.transactions", "Tax Codes": "tax.codes",
     "Products": "shop.products", "Settings": "settings", "Loans": "accounting.loans", "Loan Transactions": "accounting.loans",
     "Entry Models": "accounting.journal", "Saved Fill-ins": "settings",

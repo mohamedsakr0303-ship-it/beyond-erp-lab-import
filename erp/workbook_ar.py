@@ -36,6 +36,7 @@ TERMS = {
     "Cash held by staff (custody)": "عهد نقدية لدى العاملين", "Cash given to staff (custody)": "العهد النقدية لدى العاملين", "What the custody was spent on": "تسويات العهد",
     "Capital in, drawings and distributions": "رأس المال والمسحوبات والتوزيعات", "What each client owes, less advances": "المستحق على كل عميل بعد الدفعات المقدمة",
     "What you owe each supplier and worker": "المستحق لكل مورد وعامل", "The account list and how each maps to the statements": "دليل الحسابات وارتباطه بالقوائم",
+    "The chart's headings: each group totals the accounts under it": "عناوين الدليل: كل مجموعة تجمع الحسابات التي تحتها",
     "Every account: opening, period debits and credits, closing": "كل حساب: أول المدة وحركة المدة والرصيد الختامي",
     "Net sales → gross profit → EBITDA → net profit": "صافي المبيعات ← مجمل الربح ← الربح التشغيلي ← صافي الربح",
     "What the business owns and owes": "ما تملكه الشركة وما عليها", "Where the cash actually went": "أين ذهبت النقدية فعلاً",

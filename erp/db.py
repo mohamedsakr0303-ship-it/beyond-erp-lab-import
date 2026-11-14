@@ -86,6 +86,18 @@ CREATE TABLE IF NOT EXISTS accounts (
     subtype TEXT NOT NULL,
     normal  TEXT NOT NULL CHECK (normal IN ('Debit','Credit')),
     role    TEXT UNIQUE,
+    active  INTEGER NOT NULL DEFAULT 1,
+    parent  TEXT NOT NULL DEFAULT ''          -- its group in the chart's tree (account_groups.code); '' = top level
+);
+
+-- Groups of the chart of accounts ("Fixed assets 111", "Suppliers 221"): headings that total the accounts and groups under
+-- them. Kept apart from accounts on purpose: a group is never posted to, offered in a form or counted twice in a report.
+CREATE TABLE IF NOT EXISTS account_groups (
+    code    TEXT PRIMARY KEY,
+    name    TEXT NOT NULL,
+    name_ar TEXT DEFAULT '',
+    type    TEXT NOT NULL DEFAULT '',          -- '' = any type below it (a heading over assets and liabilities)
+    parent  TEXT NOT NULL DEFAULT '',
     active  INTEGER NOT NULL DEFAULT 1
 );
 
@@ -2168,6 +2180,7 @@ class Database:
         # the general chat room has a fixed id so every device of a shared workspace agrees on it
         self.conn.execute("INSERT OR IGNORE INTO chat_rooms(id, kind, name, created_at) VALUES (1, 'general', 'General', datetime('now'))")
         have = self._add_cols("accounts", [("name_ar", "TEXT DEFAULT ''")])
+        self._add_cols("accounts", [("parent", "TEXT NOT NULL DEFAULT ''")])     # its group in the chart's tree
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("workdays", [("start_site", "TEXT NOT NULL DEFAULT ''"), ("end_site", "TEXT NOT NULL DEFAULT ''"),

@@ -11,6 +11,7 @@ import copy
 import datetime as _dt
 import functools
 import json
+import collections
 import re
 import weakref
 
@@ -887,6 +888,12 @@ def save_account(db, d, old_code=None):
     role = text(d.get("role")) or None
     active = 0 if d.get("active") in (0, "0", False, "false") else 1
     with db.tx():
+        if db.one("SELECT 1 FROM account_groups WHERE code=?", (code,)):
+            raise ValidationError(f"Code {code} is used by a group of the chart")
+        cur0 = db.one("SELECT parent FROM accounts WHERE code=?", (old_code,)) if old_code else None
+        # its group: given, or kept as it was (callers that do not know about groups never move an account)
+        parent = text(d.get("parent")) if "parent" in d else ((cur0 or {}).get("parent") or "")
+        _check_parent(db, parent, typ)
         if old_code:
             cur = db.one("SELECT * FROM accounts WHERE code=?", (old_code,))
             if not cur:
@@ -902,13 +909,13 @@ def save_account(db, d, old_code=None):
                 # cash ↔ not cash re-states every past cash flow and the money lists; open a new account instead
                 raise ValidationError("This account has postings; it cannot move into or out of Cash & cash equivalents. "
                                       "Open a new account and move the balance.")
-            db.conn.execute("UPDATE accounts SET code=?, name=?, name_ar=?, type=?, subtype=?, normal=?, active=? "
-                            "WHERE code=?", (code, name, name_ar, typ, sub, normal_for(typ, sub), active, old_code))
+            db.conn.execute("UPDATE accounts SET code=?, name=?, name_ar=?, type=?, subtype=?, normal=?, active=?, parent=? "
+                            "WHERE code=?", (code, name, name_ar, typ, sub, normal_for(typ, sub), active, parent, old_code))
         else:
             if db.one("SELECT 1 FROM accounts WHERE code=?", (code,)):
                 raise ValidationError(f"Code {code} is already used")
-            db.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,active) VALUES (?,?,?,?,?,?,?)",
-                            (code, name, name_ar, typ, sub, normal_for(typ, sub), active))
+            db.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,active,parent) VALUES (?,?,?,?,?,?,?,?)",
+                            (code, name, name_ar, typ, sub, normal_for(typ, sub), active, parent))
     return code
 
 
@@ -921,6 +928,151 @@ def delete_account(db, code):
     if db.one("SELECT 1 FROM journal_lines WHERE account=? LIMIT 1", (code,)):
         raise ValidationError("The account has postings. Deactivate it instead.")
     db.x("DELETE FROM accounts WHERE code=?", (code,))
+
+
+# ------------------------------------------------------- groups of the chart (the tree)
+# A group is a heading ("Fixed assets 111", "Suppliers 221") that totals the accounts and groups under it. Groups live in
+# their own table, so nothing that reads accounts (forms, money lists, reports, imports) ever sees one, and nothing can
+# be posted to one. A book without groups works exactly as before: every account at the top level.
+def _check_parent(db, parent, typ):
+    """An account's group: none, or an existing group whose type (if it has one) is the account's."""
+    if not parent:
+        return
+    g = db.one("SELECT code, type FROM account_groups WHERE code=?", (parent,))
+    if not g:
+        raise ValidationError(f"Unknown group {parent}. Add it under the chart's groups first.")
+    for t in _group_types_up(db, parent):
+        if t and t != typ:
+            raise ValidationError(f"Group {parent} holds {t} accounts; this account is {typ}")
+
+
+def _group_types_up(db, code):
+    """The types of a group and every group above it (the nearest first)."""
+    out, seen = [], set()
+    while code and code not in seen:
+        seen.add(code)
+        g = db.one("SELECT type, parent FROM account_groups WHERE code=?", (code,))
+        if not g:
+            break
+        out.append(g["type"])
+        code = g["parent"]
+    return out
+
+
+def group_descendants(db, code):
+    """Every group under a group (not the group itself)."""
+    kids = collections.defaultdict(list)
+    for g in db.q("SELECT code, parent FROM account_groups"):
+        kids[g["parent"]].append(g["code"])
+    out, todo = [], list(kids.get(code, []))
+    while todo:
+        c = todo.pop()
+        if c in out:
+            continue
+        out.append(c)
+        todo += kids.get(c, [])
+    return out
+
+
+def group_accounts(db, code):
+    """Every account under a group, however deep."""
+    groups = [code] + group_descendants(db, code)
+    marks = ",".join("?" * len(groups))
+    return [r["code"] for r in db.q(f"SELECT code FROM accounts WHERE parent IN ({marks}) ORDER BY code", groups)]
+
+
+def save_group(db, d, old_code=None):
+    code = text(d.get("code"), "code", required=True, maxlen=20)
+    if not re.fullmatch(r"[\w.\-]+", code):
+        raise ValidationError("A group code uses letters, digits, dots and dashes only")
+    name = text(d.get("name"), "name", required=True)
+    name_ar = text(d.get("name_ar"))
+    typ = text(d.get("type"))
+    if typ and typ not in SUBTYPES:
+        raise ValidationError("Choose an account type for the group, or leave it for any type")
+    parent = text(d.get("parent"))
+    active = 0 if d.get("active") in (0, "0", False, "false") else 1
+    with db.tx():
+        if db.one("SELECT 1 FROM accounts WHERE code=?", (code,)):
+            raise ValidationError(f"Code {code} is used by an account")
+        if code != old_code and db.one("SELECT 1 FROM account_groups WHERE code=?", (code,)):
+            raise ValidationError(f"Group {code} already exists")
+        if old_code and not db.one("SELECT 1 FROM account_groups WHERE code=?", (old_code,)):
+            raise ValidationError("Group not found")
+        if parent:
+            if parent in (code, old_code) or (old_code and parent in group_descendants(db, old_code)):
+                raise ValidationError("A group cannot sit under itself or under one of its own groups")
+            up = db.one("SELECT 1 FROM account_groups WHERE code=?", (parent,))
+            if not up:
+                raise ValidationError(f"Unknown group {parent}")
+            for t in _group_types_up(db, parent):
+                if t and typ and t != typ:
+                    raise ValidationError(f"Group {parent} holds {t} accounts; this group is {typ}")
+        if typ and old_code:
+            # what is already under it must be of its type
+            under = group_accounts(db, old_code)
+            if under:
+                marks = ",".join("?" * len(under))
+                bad = db.one(f"SELECT code, type FROM accounts WHERE code IN ({marks}) AND type<>? LIMIT 1", (*under, typ))
+                if bad:
+                    raise ValidationError(f"Account {bad['code']} under this group is {bad['type']}; the group cannot be {typ}")
+            for g in group_descendants(db, old_code):
+                t = db.one("SELECT type FROM account_groups WHERE code=?", (g,))["type"]
+                if t and t != typ:
+                    raise ValidationError(f"Group {g} under this group is {t}; the group cannot be {typ}")
+        if old_code:
+            db.conn.execute("UPDATE account_groups SET code=?, name=?, name_ar=?, type=?, parent=?, active=? WHERE code=?",
+                            (code, name, name_ar, typ, parent, active, old_code))
+            if code != old_code:      # what was under it follows the new code
+                db.conn.execute("UPDATE account_groups SET parent=? WHERE parent=?", (code, old_code))
+                db.conn.execute("UPDATE accounts SET parent=? WHERE parent=?", (code, old_code))
+        else:
+            db.conn.execute("INSERT INTO account_groups(code,name,name_ar,type,parent,active) VALUES (?,?,?,?,?,?)",
+                            (code, name, name_ar, typ, parent, active))
+    return code
+
+
+def delete_group(db, code):
+    if not db.one("SELECT 1 FROM account_groups WHERE code=?", (code,)):
+        raise ValidationError("Group not found")
+    if db.one("SELECT 1 FROM accounts WHERE parent=? LIMIT 1", (code,)) or db.one("SELECT 1 FROM account_groups WHERE parent=? LIMIT 1", (code,)):
+        raise ValidationError("Move or delete the accounts and groups under this group first")
+    db.x("DELETE FROM account_groups WHERE code=?", (code,))
+
+
+def group_chain(db):
+    """{account code: [its groups, top first]} for every account that has a group."""
+    groups = {g["code"]: g["parent"] for g in db.q("SELECT code, parent FROM account_groups")}
+    out = {}
+    for a in db.q("SELECT code, parent FROM accounts WHERE parent<>''"):
+        chain, c, seen = [], a["parent"], set()
+        while c in groups and c not in seen:
+            seen.add(c)
+            chain.append(c)
+            c = groups[c]
+        out[a["code"]] = list(reversed(chain))
+    return out
+
+
+def chart_tree(db, balances=None):
+    """The groups with their depth and the totals of everything under them ({code: minor} balances, optional)."""
+    groups = {g["code"]: dict(g) for g in db.q("SELECT * FROM account_groups ORDER BY code")}
+    def depth(c, seen=()):
+        g = groups.get(c)
+        return 0 if not g or not g["parent"] or c in seen else 1 + depth(g["parent"], seen + (c,))
+    for c, g in groups.items():
+        g["depth"] = depth(c)
+        g["accounts"] = 0
+        g["total"] = 0
+    for a in db.q("SELECT code, parent FROM accounts WHERE parent<>''"):
+        c, seen = a["parent"], set()
+        while c in groups and c not in seen:
+            seen.add(c)
+            groups[c]["accounts"] += 1
+            if balances is not None:
+                groups[c]["total"] += balances.get(a["code"], 0)
+            c = groups[c]["parent"]
+    return list(groups.values())
 
 
 # --------------------------------------------------------------------- stock
@@ -1864,9 +2016,15 @@ def cash_flow(db, date_from=None, date_to=None, bu_id=None):
             "reconciles": abs(computed - change) < 0.005}
 
 
-def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, party=None, limit=500, offset=0):
+def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, party=None, limit=500, offset=0, group=None):
     w, p = _where(date_from=date_from, date_to=date_to, bu_id=bu_id)
     acc = None
+    if group:                                # every account under a group of the chart, however deep
+        if not db.one("SELECT 1 FROM account_groups WHERE code=?", (group,)):
+            raise ValidationError(f"Unknown group {group}")
+        codes = group_accounts(db, group) or ["\u0000"]
+        w += f" AND l.account IN ({','.join('?' * len(codes))})"
+        p += codes
     if account and len(str(account)) == 1:  # account-class filter, e.g. "5" = all 5000s
         w += " AND l.account LIKE ?"
         p.append(f"{account}%")

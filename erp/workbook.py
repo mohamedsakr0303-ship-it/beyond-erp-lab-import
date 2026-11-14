@@ -154,13 +154,13 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     given = data
     data = base = export_data(db)
     if given is not None:   # a ready-made set of rows (e.g. the demo company) in the import layout
-        data = {k: given.get(k, v if k in ("Chart of Accounts", "Tax Codes") else []) for k, v in data.items()}
+        data = {k: given.get(k, v if k in ("Chart of Accounts", "Account Groups", "Tax Codes") else []) for k, v in data.items()}
         # the statements read the report period from Settings: keep it (on top) when the given rows leave it out
         have = {r.get("key") for r in data["Settings"]}
         period = [r for r in base["Settings"] if r["key"] in ("report_from", "report_to") and r["key"] not in have]
         data["Settings"] = period + list(data["Settings"])
     elif template:
-        keep = {"Settings", "Chart of Accounts", "Warehouses", "Tax Codes", "Entry Models"}   # set-up, not data
+        keep = {"Settings", "Chart of Accounts", "Account Groups", "Warehouses", "Tax Codes", "Entry Models"}   # set-up, not data
         data = {k: (v if k in keep else []) for k, v in data.items()}
     from . import branding
     ident = identity or (branding.template_identity(db) if template and given is None else None)   # not the demo file
@@ -1781,7 +1781,7 @@ def _guide(wb, F, fill):
         ws.column_dimensions[col].width = w
 
 
-SHEET_ORDER = ["Cover", "How to Use", "Partner Pack", "Dashboard", "Journal Vouchers", "Chart of Accounts", "Trial Balance", "Income Statement",
+SHEET_ORDER = ["Cover", "How to Use", "Partner Pack", "Dashboard", "Journal Vouchers", "Chart of Accounts", "Account Groups", "Trial Balance", "Income Statement",
                "Balance Sheet", "Cash Flow", "BU Profitability", "Payables", "Receivables", "Partner Equity", "Business Units",
                "Sales Invoices", "Invoice Lines", "Rental Contracts", "Rental Equipment", "Rental Stock Lots", "Loans",
                "Loan Transactions", "Employees", "Payroll Run", "Price List", "BOQ Lines", "Quick Estimator", "Scaffold Calculator",
@@ -1796,7 +1796,7 @@ SHEET_ORDER = ["Cover", "How to Use", "Partner Pack", "Dashboard", "Journal Vouc
 EXTRA_SHEET_MODULE = {"Extract Print": "sales.extracts", "Crew Pay Calculator": "payroll.crew", "Scaffold Calculator": "rentals.calculator", "Quick Estimator": "estimating", "Budget vs Actual": "accounting.budgets",
                       "Receivables": "sales.receivables", "Payables": "purchasing.payables", "Partner Equity": "partners",
                       "Tax Summary": "tax", "BU Profitability": "business_units.profitability"}
-NEVER_HIDDEN = {"Cover", "Partner Pack", "Dashboard", "Settings", "Chart of Accounts", "Journal Vouchers", "Trial Balance", "Income Statement",
+NEVER_HIDDEN = {"Cover", "Partner Pack", "Dashboard", "Settings", "Chart of Accounts", "Account Groups", "Journal Vouchers", "Trial Balance", "Income Statement",
                 "Balance Sheet", "Cash Flow", "Model Audit"}
 
 
@@ -2090,6 +2090,7 @@ COVER_SECTIONS = [
                    ("Partner Transactions", "Capital in, drawings and distributions"),
                    ("Receivables", "What each client owes, less advances"), ("Payables", "What you owe each supplier and worker")]),
     ("THE ACCOUNTS", [("Chart of Accounts", "The account list and how each maps to the statements"),
+                      ("Account Groups", "The chart's headings: each group totals the accounts under it"),
                       ("Trial Balance", "Every account: opening, period debits and credits, closing"),
                       ("Income Statement", "Net sales → gross profit → EBITDA → net profit"),
                       ("Balance Sheet", "What the business owns and owes"), ("Cash Flow", "Where the cash actually went"),

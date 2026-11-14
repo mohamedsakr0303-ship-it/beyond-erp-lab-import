@@ -319,8 +319,12 @@ def cash_flow_table(db, date_from=None, date_to=None, compare="none", bu_id=None
             "rows": rows, "lang": lang, "ok": ok}
 
 
-def trial_balance_table(db, date_from=None, date_to=None, bu_id=None, lang="en"):
+def trial_balance_table(db, date_from=None, date_to=None, bu_id=None, lang="en", level=None):
     tb = acc.trial_balance(db, date_from, date_to, bu_id)
+    try:
+        level = int(level or 0)
+    except (TypeError, ValueError):
+        level = 0
     cols = [{"label": L("account", lang), "align": "left"}]
     if date_from:
         cols += [{"label": f"{L('opening', lang)} {L('debit', lang)}", "align": "right", "fmt": "money"},
@@ -333,8 +337,36 @@ def trial_balance_table(db, date_from=None, date_to=None, bu_id=None, lang="en")
               "fmt": "money"}]
     keys = (["opening_debit", "opening_credit", "period_debit", "period_credit"] if date_from else []) + ["debit", "credit"]
     nm = _names(db, lang)
-    rows = [_row(f"{r['code']}  {nm.get(r['code'], r['name'])}", [r[k] or "" for k in keys], "item", 0, r["code"])
-            for r in tb["rows"]]
+    if level > 0:
+        # summed by the chart's groups: each account into its group at that level (the deepest it has, when its branch is
+        # shorter); an account outside every group stays a row of its own. The totals are the same either way.
+        chain = acc.group_chain(db)
+        gname = {g["code"]: (g["name_ar"] if lang == "ar" and g["name_ar"] else g["name"]) for g in db.q("SELECT * FROM account_groups")}
+        summed, order = {}, []
+        for r in tb["rows"]:
+            ch = chain.get(r["code"]) or []
+            key = ch[min(level, len(ch)) - 1] if ch else None
+            label = f"{key}  {gname.get(key, key)}" if key else f"{r['code']}  {nm.get(r['code'], r['name'])}"
+            k = ("g", key) if key else ("a", r["code"])
+            if k not in summed:
+                summed[k] = {"label": label, "code": key or r["code"], **{x: 0.0 for x in keys}}
+                order.append(k)
+            for x in keys:
+                summed[k][x] = round(summed[k][x] + (r[x] or 0), 2)
+        rows = []
+        for k in order:
+            s_ = summed[k]
+            if "debit" in keys:     # a group shows its net closing balance on one side, as an account does
+                net = round(s_["debit"] - s_["credit"], 2)
+                s_["debit"], s_["credit"] = max(net, 0), max(-net, 0)
+            if "opening_debit" in keys:
+                net = round(s_["opening_debit"] - s_["opening_credit"], 2)
+                s_["opening_debit"], s_["opening_credit"] = max(net, 0), max(-net, 0)
+            rows.append(_row(s_["label"], [s_[x] or "" for x in keys], "subtotal" if k[0] == "g" else "item", 0,
+                             None if k[0] == "g" else s_["code"]))
+    else:
+        rows = [_row(f"{r['code']}  {nm.get(r['code'], r['name'])}", [r[k] or "" for k in keys], "item", 0, r["code"])
+                for r in tb["rows"]]
     rows.append(_row(L("total", lang), [tb["totals"][k] for k in keys], "grand"))
     rows.append(_row(L("balanced_ok" if tb["balanced"] else "unbalanced", lang), ["" for _ in keys], "note"))
     pers = [("", date_from or "…", acc.clean_date(date_to))]
@@ -342,8 +374,8 @@ def trial_balance_table(db, date_from=None, date_to=None, bu_id=None, lang="en")
             "columns": cols, "rows": rows, "lang": lang, "ok": tb["balanced"]}
 
 
-def general_ledger_table(db, account=None, date_from=None, date_to=None, bu_id=None, party=None, lang="en"):
-    gl = acc.general_ledger(db, account, date_from, date_to, bu_id, party, limit=100000)
+def general_ledger_table(db, account=None, date_from=None, date_to=None, bu_id=None, party=None, lang="en", group=None):
+    gl = acc.general_ledger(db, account, date_from, date_to, bu_id, party, limit=100000, group=group or None)
     nm = _names(db, lang)
     cols = [{"label": L("date", lang), "align": "left"}, {"label": L("voucher", lang), "align": "left"},
             {"label": L("description", lang), "align": "left"}, {"label": L("party", lang), "align": "left"},
@@ -1043,9 +1075,9 @@ def build(db, name, p):
     if name == "cash_flow":
         return cash_flow_table(db, p.get("date_from"), p.get("date_to"), p.get("compare"), bu, lang)
     if name == "trial_balance":
-        return trial_balance_table(db, p.get("date_from"), p.get("date_to"), bu, lang)
+        return trial_balance_table(db, p.get("date_from"), p.get("date_to"), bu, lang, p.get("level"))
     if name == "general_ledger":
-        return general_ledger_table(db, p.get("account"), p.get("date_from"), p.get("date_to"), bu, p.get("party"), lang)
+        return general_ledger_table(db, p.get("account"), p.get("date_from"), p.get("date_to"), bu, p.get("party"), lang, p.get("group"))
     if name == "bu_pnl":
         return bu_table(db, p.get("date_from"), p.get("date_to"), p.get("status"), lang)
     if name == "payables":

@@ -191,6 +191,8 @@ def narrow(sc, path, data):
             data.pop("shared_overhead", None)
     if isinstance(data, dict):
         _company_figures(sc, path, data)
+    if path == "/api/account-groups" and isinstance(data, list):     # group totals are company-wide
+        data = [{**r, "total": None} if isinstance(r, dict) else r for r in data]
     if path == "/api/accounts" and isinstance(data, list):     # balances are company-wide
         data = [{**r, "balance": None} if isinstance(r, dict) else r for r in data]
     if isinstance(data, dict) and re.match(r"^/api/[\w-]+/[^/]+$", path):

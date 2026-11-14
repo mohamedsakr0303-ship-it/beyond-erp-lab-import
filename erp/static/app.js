@@ -2104,6 +2104,11 @@ function filterBar(q, fields, extra = "") {
     else if (Array.isArray(f) && f[0] === "kind") parts.push(`<label class="f">${t("kind")}<select name="kind"><option value="">${t("all")}</option>${f[1].map(k => `<option value="${esc(k)}" ${q.kind === k ? "selected" : ""}>${esc(tl(k))}</option>`).join("")}</select></label>`);
     else if (Array.isArray(f) && f[0] === "select") parts.push(`<label class="f">${esc(f[2])}<select name="${f[1]}"><option value="">${t("all")}</option>${f[3].map(([v, l]) => `<option value="${esc(v)}" ${String(q[f[1]]) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`);
     else if (f === "account") parts.push(`<label class="f">${t("account")}<select name="account"><option value="">${t("all")}</option>${["1", "2", "3", "4", "5", "6", "7"].map(x => `<option value="${x}" ${q.account === x ? "selected" : ""}>${x}000s</option>`).join("")}${S.boot.accounts.map(a => `<option value="${esc(a.code)}" ${q.account === a.code ? "selected" : ""}>${esc(a.code)} ${esc(aname(a))}</option>`).join("")}</select></label>`);
+    else if (f === "glevel") { const gs = S.boot.account_groups || []; if (gs.length) { const depth = c => { let d = 1, g = gs.find(x => x.code === c); const seen = new Set();
+        while (g && g.parent && !seen.has(g.code)) { seen.add(g.code); d++; g = gs.find(x => x.code === g.parent); } return d; };
+      const max = Math.max(...gs.map(g => depth(g.code)));
+      parts.push(`<label class="f">${esc(L2("Show", "العرض"))}<select name="level"><option value="">${esc(L2("Every account", "كل الحسابات"))}</option>${Array.from({ length: max }, (_, i) => i + 1).map(n => `<option value="${n}" ${String(q.level) === String(n) ? "selected" : ""}>${esc(L2(`Groups, level ${n}`, `المجموعات، المستوى ${n}`))}</option>`).join("")}</select></label>`); } }
+    else if (f === "agroup") { const gs = S.boot.account_groups || []; if (gs.length) parts.push(`<label class="f">${esc(L2("Group", "المجموعة"))}<select name="group"><option value="">${t("all")}</option>${gs.map(g => `<option value="${esc(g.code)}" ${q.group === g.code ? "selected" : ""}>${esc(g.code)} ${esc(S.lang === "ar" && g.name_ar ? g.name_ar : g.name)}</option>`).join("")}</select></label>`); }
     else if (f === "party") parts.push(`<label class="f">${t("party")}<input name="party" value="${esc(q.party || "")}" list="fbparty" autocomplete="off"></label>`);
     else if (f === "warehouse") parts.push(`<label class="f">${t("warehouse")}<select name="warehouse_id"><option value="">${t("all")}</option>${whOpts().map(([v, l]) => `<option value="${v}" ${String(q.warehouse_id) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`);
     else if (f === "compare") parts.push(`<label class="f">${t("compare")}<select name="compare">${["none", "month", "quarter", "year"].map(c => `<option value="${c}" ${(q.compare || "none") === c ? "selected" : ""}>${t("c_" + c)}</option>`).join("")}</select></label>`);
@@ -5419,13 +5424,23 @@ async function openApproval(id) {
   drawer(`${L2("Draft", "مسودة")} #${r.id} — ${dtypeLabel(r.dtype)}`, head + body + attBox("approval", r.id, r.mine && open), null, { readOnly: true, extraButtons: btns, wide: r.dtype === "journal",
     onOpen: f => mountAttach($(".attbox", f.closest(".drawer"))) });
 }
-PAGES.ledger = async (view, parts, q) => reportPage(view, "general_ledger", q, ["dates", "account", "bu", "party", "lang"]);
+PAGES.ledger = async (view, parts, q) => reportPage(view, "general_ledger", q, ["dates", "account", "agroup", "bu", "party", "lang"]);
+// the chart's groups (headings that total what is under them): every group above a code, top first
+const grpChain = (groups, code) => { const out = [], seen = new Set(); let g = groups.find(x => x.code === code);
+  while (g && !seen.has(g.code)) { seen.add(g.code); out.unshift(g.code); g = g.parent ? groups.find(x => x.code === g.parent) : null; } return out; };
+const grpName = g => (S.lang === "ar" && g.name_ar ? g.name_ar : g.name);
 PAGES.coa = async (view, parts, q) => {
-  const rows = await api("GET", "/api/accounts?" + qs(q));
+  const [rows, groups] = await Promise.all([api("GET", "/api/accounts?" + qs(q)), api("GET", "/api/account-groups?" + qs(q)).catch(() => [])]);
+  S.coaFind = "";
   const types = Object.keys(S.boot.enums.subtypes);
+  // groups an account (or group) of a type may go under: no type, or the same type, all the way up
+  const grpOk = (code, ty) => grpChain(groups, code).every(c => { const g = groups.find(x => x.code === c); return !g.type || !ty || g.type === ty; });
+  const grpOpts = (ty, not) => [["", L2("— None (top level)", "— بدون (المستوى الأول)")], ...groups.filter(g => !(not || []).includes(g.code) && grpOk(g.code, ty))
+    .map(g => [g.code, `${"  ".repeat(grpChain(groups, g.code).length - 1)}${g.code} ${grpName(g)}`])];
   const edit = a => drawer(t("m_coa"), form([{ k: "code", l: t("code"), v: a.code, req: 1 }, ...inLang(["name", a.name], ["name_ar", a.name_ar], t("name"), { req: 1 }),
     { k: "type", l: t("type"), type: "select", opts: types.map(x => [x, tl(x)]), v: a.type || "Expense", change: "atype", dis: a.used },
     { k: "subtype", l: t("statement_line"), type: "select", opts: [], v: a.subtype },
+    ...(groups.length ? [{ k: "parent", l: L2("Group", "المجموعة"), type: "select", opts: grpOpts(a.type || "Expense"), v: a.parent || "" }] : []),
     { k: "active", l: t("active"), type: "checkbox", v: a.active !== 0 },
     { html: a.role ? `<div class="banner info">${t("role")}: <b dir="ltr"><code>${esc(a.role)}</code></b> — ${S.lang === "ar" ? "يمكن تغيير الرقم والاسم؛ ويتبع النظام دور الحساب." : "The code and name can be changed; the system follows the account role."}</div>` : "", span: "spanall" }]),
   async v => { if (a.used) v.type = a.type; if (a.code && !a._new) await api("PUT", "/api/accounts/" + encodeURIComponent(a.code), v); else await api("POST", "/api/accounts", v); await refreshBoot(); toast(t("saved")); },
@@ -5434,18 +5449,56 @@ PAGES.coa = async (view, parts, q) => {
   const nextCode = ty => { const cs = rows.filter(a => a.type === ty && /^\d+$/.test(a.code)).map(a => +a.code).sort((x, y) => x - y);
     if (!cs.length) return ""; let c = cs[cs.length - 1] + 5; while (rows.some(a => a.code === String(c))) c++; return String(c); };
   S.H.anew = el => { const ty = (el && el.dataset.type) || "Expense"; edit({ type: ty, active: 1, code: nextCode(ty), _new: 1 }); };
-  S.H.coaq = el => { const v = el.value.trim().toLowerCase(); $$(".coa-row", view).forEach(tr => { tr.style.display = !v || tr.dataset.s.includes(v) ? "" : "none"; });
+  S.H.coaq = el => { const v = el.value.trim().toLowerCase(); S.coaFind = v;
+    if ($("#coatree", view)) { drawTree(); return; }     // the tree draws every group open while searching
+    $$(".coa-row", view).forEach(tr => { tr.style.display = !v || tr.dataset.s.includes(v) ? "" : "none"; });
     $$(".coa-card", view).forEach(c => { c.style.display = !v || $$(".coa-row", c).some(tr => tr.style.display !== "none") ? "" : "none"; }); };
   S.H.aedit = el => { const a = rows.find(x => x.code === el.dataset.id); S.H.adel = async () => { try { await api("DELETE", "/api/accounts/" + encodeURIComponent(a.code)); closeDrawer(); await refreshBoot(); route(); } catch (e) { fail(e); } }; edit(a); };
   const ed = can("accounting.coa", "edit");
+  // a group of the chart: a heading that totals the accounts and groups under it; never posted to
+  const gedit = g => { const under = g.code ? groups.filter(x => grpChain(groups, x.code).includes(g.code)).map(x => x.code) : [];
+    drawer(g.code ? L2("Group", "المجموعة") + " " + g.code : L2("New group", "مجموعة جديدة"), form([{ k: "code", l: t("code"), v: g.code || "", req: 1 },
+      ...inLang(["name", g.name], ["name_ar", g.name_ar], t("name"), { req: 1 }),
+      { k: "type", l: t("type"), type: "select", opts: [["", L2("Any type below it", "أي نوع تحتها")], ...types.map(x => [x, tl(x)])], v: g.type || "" },
+      { k: "parent", l: L2("Parent group", "المجموعة الأعلى"), type: "select", opts: grpOpts(g.type || "", under), v: g.parent || "" },
+      { k: "active", l: t("active"), type: "checkbox", v: g.active !== 0 },
+      { html: `<div class="muted" style="font-size:.85em">${esc(L2("A group totals the accounts under it in the chart and in the trial balance. Entries are always posted to accounts, never to a group.", "المجموعة تجمع الحسابات التي تحتها في الدليل وفي ميزان المراجعة. القيود تُرحّل دائماً على الحسابات، لا على المجموعة."))}</div>`, span: "spanall" }]),
+    async v => { if (g.code) await api("PUT", "/api/account-groups/" + encodeURIComponent(g.code), v); else await api("POST", "/api/account-groups", v); await refreshBoot(); toast(t("saved")); },
+    { extraButtons: g.code && ed && !g.accounts && !under.length ? `<button type="button" class="btn danger" data-a="gdel">${t("delete")}</button>` : "" }); };
+  S.H.gnew = () => gedit({ active: 1 });
+  S.H.gedit = el => { const g = groups.find(x => x.code === el.dataset.id); S.H.gdel = async () => { try { await api("DELETE", "/api/account-groups/" + encodeURIComponent(g.code)); closeDrawer(); await refreshBoot(); route(); } catch (e) { fail(e); } }; gedit(g); };
+  // the tree: groups (open / closed, remembered on this device) with their accounts under them
+  const shut = new Set(store.get("coaShut", []) || []);
+  S.H.gtoggle = el => { const c = el.dataset.id; shut.has(c) ? shut.delete(c) : shut.add(c); store.set("coaShut", [...shut]); drawTree(); };
+  S.H.coaview = el => setQ({ ...q, view: el.dataset.v === "tree" ? "" : el.dataset.v });
+  const treeView = groups.length && q.view !== "types";
+  const rowHtml = (a, depth) => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}">
+      <td style="padding-inline-start:${10 + depth * 18}px"><b>${esc(a.code)}</b></td><td>${esc(aname(a))} ${a.role ? `<span class="chip" title="${esc(L2("System account: the app posts to it by itself", "حساب نظام: يرحّل عليه البرنامج تلقائياً"))}">${esc(L2("System account", "حساب نظامي"))}</span>` : ""}</td>
+      <td>${esc(sub(a.subtype))}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`;
+  const drawTree = () => { const box = $("#coatree", view); if (!box) return;
+    const find = S.coaFind || "", hit = a => !find || [a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase().includes(find);
+    const gHit = g => [g.code, g.name, g.name_ar].join(" ").toLowerCase().includes(find);
+    const kids = c => groups.filter(g => (g.parent || "") === c), accs = c => rows.filter(a => (a.parent || "") === c && (a.active || q.inactive) && hit(a));
+    // while searching: only the groups with a matching account or name, all of them open
+    const has = c => !find || accs(c).length > 0 || kids(c).some(g => gHit(g) || has(g.code));
+    const open = c => !!find || !shut.has(c);
+    const branch = (c, depth) => kids(c).filter(g => !find || gHit(g) || has(g.code)).map(g => `<tr class="coa-grp" data-gid="${esc(g.code)}"><td style="padding-inline-start:${10 + depth * 18}px">
+        <button type="button" class="btn sm ghost" data-a="gtoggle" data-id="${esc(g.code)}" aria-label="${esc(L2("Open or close", "فتح أو إغلاق"))}">${open(g.code) ? "▾" : "▸"}</button> <b>${esc(g.code)}</b></td>
+        <td><b>${esc(grpName(g))}</b> <span class="muted small">(${g.accounts})</span>${ed ? ` <button type="button" class="btn sm ghost" data-a="gedit" data-id="${esc(g.code)}">${esc(L2("Edit", "تعديل"))}</button>` : ""}</td>
+        <td>${g.type ? esc(tl(g.type)) : ""}</td><td class="num"><b>${g.total == null ? "" : money(g.total)}</b></td></tr>` + (open(g.code) ? accs(g.code).map(a => rowHtml(a, depth + 1)).join("") + branch(g.code, depth + 1) : "")).join("");
+    const loose = accs("");
+    box.innerHTML = `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>${branch("", 0)}
+      ${loose.length ? `<tr class="coa-grp"><td colspan="4"><b>${esc(L2("Not in a group", "خارج المجموعات"))}</b></td></tr>${loose.map(a => rowHtml(a, 1)).join("")}` : ""}</tbody></table></div>`; };
   const inactive = rows.filter(a => !a.active).length;
   S.H.coainact = el => setQ({ ...q, inactive: el.checked ? "1" : "" });
   const add = can("accounting.coa", "add");
-  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="anew">+ ${L2("Add account", "إضافة حساب")}</button>` : ""}
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="anew">+ ${L2("Add account", "إضافة حساب")}</button><button class="btn" data-a="gnew">+ ${L2("Add group", "إضافة مجموعة")}</button>` : ""}
+    ${groups.length ? `<span class="seg"><button class="btn sm ${treeView ? "pri" : ""}" data-a="coaview" data-v="tree">${esc(L2("Tree", "الشجرة"))}</button><button class="btn sm ${treeView ? "" : "pri"}" data-a="coaview" data-v="types">${esc(L2("By type", "حسب النوع"))}</button></span>` : ""}
     <input type="search" class="coa-q" placeholder="${L2("Search by account code or name", "البحث برقم الحساب أو اسمه")}" data-input="coaq" style="min-width:220px;flex:1;max-width:360px">
     ${inactive ? `<label class="f chk"><input type="checkbox" data-change="coainact" ${q.inactive ? "checked" : ""}>${S.lang === "ar" ? "إظهار الحسابات غير النشطة" : "Show inactive accounts"} (${inactive})</label>` : ""}<span class="spacer"></span>${exportMenu("trial_balance", {})}</div>` +
-    filterBar(q, ["asof"]) + types.map(ty => `<div class="card coa-card"><div class="row" style="justify-content:space-between;align-items:center"><h2>${esc(tl(ty))}</h2>${add ? `<button class="btn sm" data-a="anew" data-type="${ty}">+ ${L2("Add", "إضافة")} ${esc(tl(ty))}</button>` : ""}</div><div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th>${t("normal")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
-    ${rows.filter(a => a.type === ty && (a.active || q.inactive)).map(a => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))} ${a.role ? `<span class="chip" title="${esc(L2("System account: the app posts to it by itself", "حساب نظام: يرحّل عليه البرنامج تلقائياً"))}">${esc(L2("System account", "حساب نظامي"))}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
+    filterBar(q, ["asof"]) + (treeView ? `<div class="card coa-card" id="coatree"></div>` : types.map(ty => `<div class="card coa-card"><div class="row" style="justify-content:space-between;align-items:center"><h2>${esc(tl(ty))}</h2>${add ? `<button class="btn sm" data-a="anew" data-type="${ty}">+ ${L2("Add", "إضافة")} ${esc(tl(ty))}</button>` : ""}</div><div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th>${t("normal")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
+    ${rows.filter(a => a.type === ty && (a.active || q.inactive)).map(a => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))} ${a.role ? `<span class="chip" title="${esc(L2("System account: the app posts to it by itself", "حساب نظام: يرحّل عليه البرنامج تلقائياً"))}">${esc(L2("System account", "حساب نظامي"))}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join(""));
+  if (treeView) drawTree();
 };
 
 // ------------------------------------------------------------------ offers
@@ -5762,7 +5815,7 @@ PAGES.costitems = async (view, parts, q) => {
 PAGES.report = async (view, parts, q) => {
   const name = parts[1];
   const f = { income_statement: ["dates", "compare", "bu", "detail", "allocate", "lang"], balance_sheet: ["asof", "compare", "bu", "lang"],
-    cash_flow: ["dates", "compare", "bu", "lang"], trial_balance: ["dates", "bu", "lang"], bu_pnl: ["dates", "lang"], tax: ["dates", "lang"],
+    cash_flow: ["dates", "compare", "bu", "lang"], trial_balance: ["dates", "bu", "glevel", "lang"], bu_pnl: ["dates", "lang"], tax: ["dates", "lang"],
     partner_pack: ["dates", "lang"] }[name] || ["dates", "lang"];
   if (name === "balance_sheet" && q.compare && q.compare !== "none" && !q.date_from) q.date_from = yearStart();
   if (name === "profit_categories") return profitCategories(view, q);

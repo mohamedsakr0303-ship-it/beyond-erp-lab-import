@@ -244,6 +244,8 @@ def bootstrap(ctx):
         "cloud": {"joined": bool(sync and sync.active)},
         "settings": settings_dict(db),
         "accounts": db.q("SELECT * FROM accounts ORDER BY code"),
+        # the chart's groups (headings): for the report filters; never offered where an account is chosen
+        "account_groups": db.q("SELECT code, name, name_ar, type, parent FROM account_groups WHERE active=1 ORDER BY code"),
         "bus": _my_bus(db, user),
         "alloc_rules": db.q("SELECT code, name FROM alloc_rules WHERE active=1 ORDER BY priority, id"),
         "stages": [r["name"] for r in db.q("SELECT DISTINCT name FROM project_phases ORDER BY name LIMIT 300")],
@@ -564,6 +566,38 @@ def edit_account(ctx, code):
 def del_account(ctx, code):
     acc.delete_account(ctx.db, code)
     ctx.log("account.delete", code)
+    return ok()
+
+
+@route("GET", "/api/account-groups", "accounting.coa")
+def account_groups(ctx):
+    """The chart's groups with how many accounts are under each and their total (in the group's normal direction)."""
+    net = {r["code"]: r["net"] for r in acc.account_totals(ctx.db, date_to=ctx.q.get("date_to"))}
+    out = []
+    for g in acc.chart_tree(ctx.db, net):
+        credit = g["type"] in ("Liability", "Equity", "Revenue")
+        out.append({**g, "total": to_major(-g["total"] if credit else g["total"])})
+    return ok(out)
+
+
+@route("POST", "/api/account-groups", "accounting.coa", "add")
+def add_account_group(ctx):
+    code = acc.save_group(ctx.db, ctx.body)
+    ctx.log("account_group.add", code)
+    return ok({"code": code})
+
+
+@route("PUT", "/api/account-groups/<code>", "accounting.coa", "edit")
+def edit_account_group(ctx, code):
+    new = acc.save_group(ctx.db, ctx.body, old_code=code)
+    ctx.log("account_group.edit", f"{code} -> {new}")
+    return ok({"code": new})
+
+
+@route("DELETE", "/api/account-groups/<code>", "accounting.coa", "edit")
+def del_account_group(ctx, code):
+    acc.delete_group(ctx.db, code)
+    ctx.log("account_group.delete", code)
     return ok()
 
 
@@ -6330,6 +6364,7 @@ def _erase(db, scope):
         if scope == "all":
             db.conn.execute("DELETE FROM warehouses")
             db.conn.execute("DELETE FROM accounts")
+            db.conn.execute("DELETE FROM account_groups")     # the chart's tree goes with the chart
             db.conn.execute("DELETE FROM settings WHERE key NOT IN ('schema_version')")
             db.seed()
             db._migrate()

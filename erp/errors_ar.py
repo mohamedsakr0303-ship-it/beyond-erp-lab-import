@@ -4,6 +4,20 @@ English stays the source; {} in a message is a value, {1}, {2}… place it in th
 generic message ("{} is required") have their own list."""
 
 MESSAGES = {
+    'Code {} is used by a group of the chart': 'الكود {1} مستخدم لمجموعة في الدليل',
+    "Unknown group {}. Add it under the chart's groups first.": 'مجموعة غير معروفة {1}. أضفها أولاً ضمن مجموعات الدليل.',
+    'Group {} holds {} accounts; this account is {}': 'المجموعة {1} تضم حسابات من نوع {2}؛ وهذا الحساب من نوع {3}',
+    'A group code uses letters, digits, dots and dashes only': 'كود المجموعة حروف وأرقام ونقاط وشرطات فقط',
+    'Choose an account type for the group, or leave it for any type': 'اختر نوع الحسابات للمجموعة، أو اتركه فارغاً لأي نوع',
+    'Code {} is used by an account': 'الكود {1} مستخدم لحساب',
+    'Group {} already exists': 'المجموعة {1} موجودة بالفعل',
+    'Group not found': 'المجموعة غير موجودة',
+    'A group cannot sit under itself or under one of its own groups': 'لا يمكن أن تكون المجموعة تحت نفسها أو تحت إحدى مجموعاتها',
+    'Unknown group {}': 'مجموعة غير معروفة {1}',
+    'Group {} holds {} accounts; this group is {}': 'المجموعة {1} تضم حسابات من نوع {2}؛ وهذه المجموعة من نوع {3}',
+    'Account {} under this group is {}; the group cannot be {}': 'الحساب {1} تحت هذه المجموعة من نوع {2}؛ فلا يمكن أن تكون المجموعة من نوع {3}',
+    'Group {} under this group is {}; the group cannot be {}': 'المجموعة {1} تحت هذه المجموعة من نوع {2}؛ فلا يمكن أن تكون المجموعة من نوع {3}',
+    'Move or delete the accounts and groups under this group first': 'انقل أو احذف الحسابات والمجموعات التي تحت هذه المجموعة أولاً',
     "Exporting or importing the whole ERP needs that permission, for every project":
         "تصدير البرنامج كاملاً أو استيراده يتطلب هذه الصلاحية، على كل المشروعات",
     "You do not have access to this data": "ليست لديك صلاحية على هذه البيانات",

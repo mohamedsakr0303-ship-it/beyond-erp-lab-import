@@ -106,7 +106,7 @@ def label(sheet, key, code, ar=False, long=False):
     if key == "subtype" and code in SUBTYPE_INFO:
         en, a, hen, har = SUBTYPE_INFO[code]
         return (a + (SEP + har if long else "")) if ar else (en + (SEP + hen if long else ""))
-    if key == "type" and sheet == "Chart of Accounts" and code in TYPE_LABELS:
+    if key == "type" and sheet in ("Chart of Accounts", "Account Groups") and code in TYPE_LABELS:
         return TYPE_LABELS[code][1 if ar else 0]
     if ar:
         from .workbook_ar import code_meaning
