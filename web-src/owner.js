@@ -157,7 +157,7 @@ const NAV0 = () => [
   [L("Money", "المال"), [["payments", "⧗", L("Payments to verify", "مدفوعات للتحقق"), "billing"], ["ledger", "≣", L("All payments", "كل المدفوعات"), "billing"],
     ["methods", "💳", L("Payment methods", "طرق الدفع"), "settings"]]],
   [L("Support", "الدعم"), [["queue", "☰", L("Support queue", "قائمة الدعم"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "desk:replies"],
-    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"], ["patchnotes", "📝", L("Patch notes", "ملاحظات الإصدار"), "desk:help"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"],
+    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["errors", "⚠", L("App errors", "أخطاء التطبيق"), "desk:bugs"], ["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"], ["patchnotes", "📝", L("Patch notes", "ملاحظات الإصدار"), "desk:help"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]]],
   [L("Product", "المنتج"), [["plans", "◎", L("Plans", "الباقات"), "settings"], ["addons", "＋", L("Modules, AI & support", "الأقسام والذكاء الاصطناعي والدعم"), "settings"],
     ["menus", "☰", L("Menus by industry", "القوائم حسب النشاط"), "settings"], ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"],
@@ -169,7 +169,7 @@ const DESK_KEYS = ["reply", "notes", "manage", "close", "books", "contacts", "re
 const dcan = k => !!S.me && (S.me.full || !!(S.me.desk || {})[k]);
 const navOk = a => a === "*" || (a.startsWith("desk:") ? dcan(a.slice(5)) : can(a));
 const DESK_NAV = () => [[L("Support", "الدعم"), [["queue", "☰", L("Queue", "قائمة الانتظار"), "support"], ["support", "✉", L("All tickets", "كل البلاغات"), "support"],
-    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "desk:replies"],
+    ["bugs", "🐞", L("Bug reports", "بلاغات الأخطاء"), "desk:bugs"], ["errors", "⚠", L("App errors", "أخطاء التطبيق"), "desk:bugs"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "desk:visits"], ["replies", "💬", L("Saved replies", "الردود المحفوظة"), "desk:replies"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]], "support"],
   [L("Help center", "مركز المساعدة"), [["help", "📖", L("Help & FAQ", "المساعدة والأسئلة الشائعة"), "desk:help"], ["solved", "✅", L("Shared solutions", "الحلول المنشورة"), "desk:help"],
     ["patchnotes", "📝", L("Patch notes", "ملاحظات الإصدار"), "desk:help"], ["texts", "✎", L("Website", "الموقع"), "site"]], "product"],
@@ -986,11 +986,34 @@ PAGES.company = async (view, parts) => {
       <div><div class="card"><h2>${esc(L("Orders", "الطلبات"))}</h2>${x.orders.length ? `<div class="list">${x.orders.map(o => `<a class="li" href="#/payments?ref=${esc(o.ref)}">${mapChip(ORDER_ST(), o.status)}<span class="who"><b dir="ltr">${esc(o.ref)}</b><small class="muted">${esc(day(o.created_at))}</small></span><span class="amt"><b>${money(o.amount)}</b></span></a>`).join("")}</div>` : `<div class="empty">${esc(L("No orders.", "لا طلبات."))}</div>`}</div>
       <div class="card"><h2>${esc(L("Support", "الدعم"))}</h2>${x.tickets.length ? `<div class="list">${x.tickets.map(t => `<a class="li" href="#/ticket/${t.id}">${mapChip(TK_ST(), t.status)}<span class="who"><b>${esc(t.ref)}</b><small class="muted">${esc(t.subject)}</small></span><span class="amt"><small class="muted">${esc(ago(t.updated_at))}</small></span></a>`).join("")}</div>` : `<div class="empty">${esc(L("No tickets.", "لا بلاغات."))}</div>`}
         ${visits.length ? `<h3 style="margin-top:12px">${esc(L("Visits", "الزيارات"))}</h3><div class="list">${visits.map(v => `<a class="li" href="#/visit/${v.id}">${mapChip(VIS_ST(), v.status)}<span class="who"><b>${esc(v.ref)}</b><small class="muted">${esc(v.reason)}</small></span><span class="amt"><b>${v.price != null ? money(v.price) : "—"}</b></span></a>`).join("")}</div>` : ""}</div></div></div>`;
+  afterHooks.push(v => healthCard(v, id));
   afterHooks.push(v => table($("#cpay", v), "cpay", x.payments, { sort: "created_at", dir: "desc", search: ["reference", "plan"],
     cols: [{ k: "created_at", l: L("Date", "التاريخ"), date: true, h: p => esc(day(p.paid_at || p.created_at)) }, { k: "plan", l: L("Plan", "الباقة") },
       { k: "period", l: L("Period", "المدة"), v: p => `${day(p.period_start)} → ${day(p.period_end)}` }, { k: "amount", l: L("Amount", "المبلغ"), num: true, h: p => `${money(p.amount)} ${esc(p.currency)}` },
       { k: "reference", l: L("Reference", "المرجع"), h: p => `<span dir="ltr">${esc(p.reference || "")}</span>` }, { k: "status", l: L("Status", "الحالة") }] }));
 };
+// A company's devices (app version on each, who used it last, when it last synced) and the app errors it ran into
+async function healthCard(view, id) {
+  if (!(can("customers") || dcan("bugs"))) return;
+  const box = document.createElement("div"); box.className = "card"; view.appendChild(box);
+  box.innerHTML = `<h2>${esc(L("Devices and app health", "الأجهزة وسلامة التطبيق"))}</h2><div class="muted small">…</div>`;
+  let h; try { h = await rpc("console_company_health", { p_company: id }); } catch (e) { box.remove(); return; }
+  const older = v => h.latest && v && verCmp(v, h.latest) < 0, stale = d => Date.now() - new Date(d) > 14 * 864e5;
+  box.innerHTML = `<h2>${esc(L("Devices and app health", "الأجهزة وسلامة التطبيق"))}</h2>
+    ${h.latest ? `<p class="muted small">${esc(L(`Latest version: ${h.latest}. A device on an older one is flagged; it updates when the app is reopened.`, `أحدث إصدار: ${h.latest}. يُعلَّم الجهاز ذو الإصدار الأقدم؛ ويتحدث عند إعادة فتح التطبيق.`))}</p>` : ""}
+    ${h.devices.length ? `<div class="tbl"><table><thead><tr><th>${esc(L("Device", "الجهاز"))}</th><th>${esc(L("Version", "الإصدار"))}</th><th>${esc(L("Last used by", "آخر مستخدم"))}</th><th class="num">${esc(L("Changes", "التعديلات"))}</th><th>${esc(L("Last change", "آخر تعديل"))}</th></tr></thead><tbody>
+      ${h.devices.map(d => `<tr><td dir="ltr" class="small">${esc((d.device || "—").slice(0, 12))}</td><td>${esc(d.version || "—")} ${older(d.version) ? chip(L("Older version", "إصدار أقدم"), "warn") : ""}</td>
+        <td><span dir="ltr" class="small">${esc(d.user || "")}</span>${d.app_user ? ` <span class="muted small">(${esc(d.app_user)})</span>` : ""}</td><td class="num">${num(d.changes)}</td>
+        <td>${esc(ago(d.last))} ${stale(d.last) ? chip(L("Quiet 2+ weeks", "متوقف أسبوعين+"), "") : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${esc(L("No device has written to its online books yet.", "لم يكتب أي جهاز في دفاترها على الإنترنت بعد."))}</div>`}
+    <h3 style="margin-top:14px">${esc(L("App errors here", "أخطاء التطبيق هنا"))}</h3>
+    ${h.errors.length ? `<div class="list">${h.errors.map(e => `<a class="li" href="#/errors?id=${e.id}">${mapChip(ERR_ST(), e.status)}<span class="who"><b dir="ltr">${esc(e.message.slice(0, 120))}</b><small class="muted" dir="ltr">${esc(e.place)} · ${esc(e.version || "")}</small></span><span class="amt"><b>${num(e.hits)}×</b><small class="muted">${esc(ago(e.last_seen))}</small></span></a>`).join("")}</div>`
+      : `<div class="empty">${esc(L("No errors reported from this company.", "لم يُبلَّغ عن أخطاء من هذه الشركة."))}</div>`}`;
+}
+const verCmp = (a, b) => { const x = String(a).split(/\D+/).filter(Boolean).map(Number), y = String(b).split(/\D+/).filter(Boolean).map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; } return 0; };
+const ERR_ST = () => ({ open: [L("Open", "مفتوح"), "bad"], fixed: [L("Fixed", "تم الإصلاح"), "ok"], ignored: [L("Ignored", "متجاهَل"), ""] });
+
 function payPanel(x, cfg) {
   const sold = Object.keys(cfg.module_prices || {});
   panel(`${x.name} — ${L("Record payment", "تسجيل دفعة")}`, form([
@@ -1301,13 +1324,20 @@ PAGES.ticket = async (view, parts) => {
         { k: "title_ar", l: L("Title (Arabic)", "العنوان (عربي)"), v: "", dir: "rtl" }, { type: "html", html: "" },
         { k: "resolution", l: L("How it was resolved", "كيف حُلّت"), type: "area", rows: 4 }, { k: "resolution_ar", l: L("How it was resolved (Arabic)", "كيف حُلّت (عربي)"), type: "area", rows: 4, dir: "rtl" }]),
         async v => { tk = await rpc("console_ticket_close", { p_ticket: id, p: v }); if ((v.reply || "").trim()) push("ticket", id, { text: v.reply.slice(0, 140) }); toast(v.share ? L("Closed and shared.", "أُغلق ونُشر.") : L("Closed.", "أُغلق.")); }, { saveLabel: L("Close the ticket", "إغلاق البلاغ") }); },
+    accask: () => panel(L("Ask to be let into the books", "طلب الدخول إلى الدفاتر"), form([
+        { k: "mode", l: L("What you need", "ما تحتاجه"), type: "select", v: "view", opts: [["view", L("View only", "عرض فقط")], ["fix", L("View and fix", "عرض وإصلاح")]] },
+        { k: "note", l: L("Why (the customer sees it)", "السبب (يراه العميل)"), v: "", span: 1 }]),
+      async v => { tk = await rpc("support_access_ask", { p_ticket: id, p_mode: v.mode, p_note: v.note || "" }); push("ticket", id, { text: L("Support asks to be let into your books", "يطلب الدعم الدخول إلى دفاترك") });
+        toast(L("Asked. You'll see it here when they allow it.", "تم الطلب. ستراه هنا عند السماح.")); closePanel(); route(); return false; }),
     accend: async el => { if (!await confirmIt(L("End this access to the customer's books now?", "إنهاء هذا الوصول إلى دفاتر العميل الآن؟"))) return; await rpc("support_access_end", { p_id: +el.dataset.id }); route(); } });
   const who = m => m.staff ? (m.name ? `${m.name} (${m.email.split("@")[0]})` : m.email) : (tk.app_user && m.email === tk.email ? tk.app_user : m.email);
   const evt = b => { b = String(b || ""); const until = b.includes(":") ? dt(b.slice(b.indexOf(":") + 1)) : "";
     return b === "chat_ended_solved" ? L("Chat ended, ticket solved", "انتهت المحادثة وحُل البلاغ") : b === "chat_ended" ? L("Chat ended", "انتهت المحادثة")
       : b.startsWith("access_fix") ? L(`The customer let support view and fix the books until ${until}`, `سمح العميل للدعم بعرض الدفاتر وإصلاحها حتى ${until}`)
       : b.startsWith("access_view") ? L(`The customer let support view the books until ${until}`, `سمح العميل للدعم بعرض الدفاتر حتى ${until}`)
-      : b === "access_ended" ? L("Access to the books ended", "انتهى الوصول إلى الدفاتر") : b; };
+      : b === "access_ended" ? L("Access to the books ended", "انتهى الوصول إلى الدفاتر")
+      : b.startsWith("access_asked_") ? (b.startsWith("access_asked_fix") ? L("Asked the customer to let support view and fix the books", "طُلب من العميل السماح للدعم بعرض الدفاتر وإصلاحها")
+        : L("Asked the customer to let support view the books", "طُلب من العميل السماح للدعم بعرض الدفاتر")) + (b.slice(b.indexOf(":") + 1) ? ` — ${b.slice(b.indexOf(":") + 1)}` : "") : b; };
   const msg = (m, extra = "") => m.kind === "event" ? `<div class="evt">— ${esc(evt(m.body))}${m.staff && m.name ? " · " + esc(m.name) : ""} · ${esc(dt(m.created_at))} —</div>`
     : `<div class="msg ${m.staff ? "staff" : ""} ${m.internal ? "internal" : ""}"><div class="h"><b>${esc(who(m))}</b>${m.internal ? chip(L("Internal note", "ملاحظة داخلية"), "warn") : ""}<span class="muted">${esc(dt(m.created_at))}</span></div>
     ${m.body ? `<div class="t" dir="auto">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}${extra}</div>`;
@@ -1333,7 +1363,8 @@ PAGES.ticket = async (view, parts) => {
         <button class="btn sm" data-a="accend" data-id="${a.id}">${esc(L("End", "إنهاء"))}</button></div>`).join("")}
         ${acc.some(a => a.agent === myEmail()) ? `<a class="btn pri" href="index.html" target="_blank" rel="noopener">↗ ${esc(L("Open their books", "فتح دفاترهم"))}</a>
           <p class="muted small">${esc(L(`In the ERP, choose “${tk.company_name || ""}” in the company list. Changes are signed with your name; when the time is up you are out.`, `في النظام اختر «${tk.company_name || ""}» من قائمة الشركات. التغييرات تُوقّع باسمك؛ وعند انتهاء المدة تخرج تلقائياً.`))}</p>` : ""}</div>`
-      : tk.company_id && tk.status !== "closed" ? `<div class="card"><p class="muted small" style="margin:0">🔑 ${esc(L("To look into their books, ask the customer to let you in (🔑 in their chat, or on the ticket).", "للاطلاع على دفاترهم، اطلب من العميل السماح لك بالدخول (🔑 في محادثته أو في البلاغ)."))}</p></div>` : ""}
+      : tk.company_id && tk.status !== "closed" ? `<div class="card"><p class="muted small" style="margin:0 0 8px">🔑 ${esc(L("To look into their books, ask the customer to let you in: they get the request with the button that does it.", "للاطلاع على دفاترهم، اطلب من العميل السماح لك بالدخول: يصله الطلب مع الزر الذي يتيح ذلك."))}</p>
+        ${dcan("reply") ? `<button class="btn" data-a="accask">🔑 ${esc(L("Ask for access…", "طلب الوصول…"))}</button>` : ""}</div>` : ""}
       ${cust ? `<div class="card"><h3>${esc(L("Customer", "العميل"))}</h3><p class="small" style="margin:0 0 8px"><b dir="ltr">${esc(tk.app_user || "")} ${esc(tk.email)}</b></p>
         <div class="small">${pr ? `<div><b>${esc(L("Support priority", "أولوية الدعم"))}</b>: ${pr.rank} · ${esc(pr.plan_name || pr.plan || L("Trial / none", "تجربة / بدون"))}${pr.reply_hours ? ` · ${esc(L(`first reply within ${pr.reply_hours} h`, `أول رد خلال ${pr.reply_hours} ساعة`))}` : ""}</div>` : ""}
           ${co ? `<div><b>${esc(L("Company", "الشركة"))}</b>: ${can("customers") ? `<a href="#/company/${co.id}">${esc(co.name)}</a>` : esc(co.name)} · ${esc(co.status || "")}${co.paid_until ? ` · ${esc(L("paid until", "مدفوعة حتى"))} ${esc(day(co.paid_until))}` : co.trial_ends ? ` · ${esc(L("trial until", "تجربة حتى"))} ${esc(day(co.trial_ends))}` : ""}</div>
@@ -1379,6 +1410,40 @@ PAGES.bugs = async view => {
       { k: "assignee", l: L("Assigned", "المسؤول"), h: t => t.assignee ? esc(t.assignee.split("@")[0]) : "—" }, { k: "created_at", l: L("Reported", "أُبلغ"), date: true, h: t => esc(dt(t.created_at)) }],
     filters: [{ k: "st", l: L("Status", "الحالة"), type: "select", opts: [["open", L("Not closed", "غير مغلقة")], ["closed", L("Closed", "مغلقة")]], test: (t, v) => v === "open" ? t.status !== "closed" : t.status === "closed" }] }));
 };
+
+// App errors: what the app reported by itself (crashes, calls the server could not answer), one row per error across
+// every company — how often, how widespread, since which version; marked fixed in a version, it reopens if seen again
+PAGES.errors = async (view, parts, q) => {
+  const rows = await rpc("console_app_errors", { p_status: "" });
+  if (!DT.errors) DT.errors = { f: { st: "open" }, q: "" };
+  const open = rows.filter(r => r.status === "open");
+  view.innerHTML = `<div class="kpis">${kpi(L("Open", "مفتوحة"), num(open.length), open.length ? "warn" : "ok")}
+      ${kpi(L("Companies hit (7 days)", "شركات تأثرت (7 أيام)"), num(Math.max(0, ...open.map(r => r.companies_7d))))}
+      ${kpi(L("Seen today", "ظهرت اليوم"), num(rows.filter(r => Date.now() - new Date(r.last_seen) < 864e5).length))}
+      ${kpi(L("Fixed", "تم إصلاحها"), num(rows.filter(r => r.status === "fixed").length), "ok")}</div>
+    <p class="muted small">${esc(L("Reported by the app itself, with numbers and e-mail addresses masked. A row marked fixed in a version opens again if the error comes back from that version or a later one.",
+      "يبلغ عنها التطبيق بنفسه، مع إخفاء الأرقام وعناوين البريد. الخطأ المعلَّم كمُصلَح في إصدار يُفتح من جديد إن عاد من ذلك الإصدار أو ما بعده."))}</p><div class="card"><div id="etbl"></div></div>`;
+  afterHooks.push(v => table($("#etbl", v), "errors", rows, { sort: "last_seen", dir: "desc", search: ["message", "place", "last_version", "first_version"],
+    onRow: r => errPanel(r.id),
+    cols: [{ k: "message", l: L("Error", "الخطأ"), h: r => `<b dir="ltr">${esc(r.message.slice(0, 160))}</b><span class="sub" dir="ltr">${esc(r.kind === "server" ? "⚙ " : "🖥 ")}${esc(r.place || "—")}</span>` },
+      { k: "total", l: L("Times", "المرات"), num: true, h: r => num(r.total) }, { k: "companies", l: L("Companies", "الشركات"), num: true, h: r => num(r.companies) },
+      { k: "last_version", l: L("Versions", "الإصدارات"), h: r => esc(r.first_version === r.last_version ? r.last_version || "—" : `${r.first_version || "?"} → ${r.last_version}`) },
+      { k: "st", l: L("Status", "الحالة"), v: r => r.status, h: r => mapChip(ERR_ST(), r.status) + (r.fixed_in ? ` <span class="muted small">${esc(r.fixed_in)}</span>` : "") },
+      { k: "last_seen", l: L("Last seen", "آخر ظهور"), date: true, h: r => esc(ago(r.last_seen)) }, { k: "first_seen", l: L("First seen", "أول ظهور"), date: true, h: r => esc(day(r.first_seen)) }],
+    filters: [{ k: "st", l: L("Status", "الحالة"), type: "select", opts: [["open", L("Open", "مفتوحة")], ["fixed", L("Fixed", "تم إصلاحها")], ["ignored", L("Ignored", "متجاهلة")]], test: (r, v) => r.status === v }] }));
+  if (q && q.id) afterHooks.push(() => errPanel(+q.id));
+};
+async function errPanel(id) {
+  const e = await rpc("console_app_error", { p_id: id });
+  panel(L("App error", "خطأ في التطبيق"), `<pre class="small" dir="ltr" style="white-space:pre-wrap;margin:0 0 8px">${esc(e.message)}</pre>
+    <p class="muted small" dir="ltr">${esc(e.kind === "server" ? "Server call" : "Screen")}: ${esc(e.place || "—")} · ${esc(L(`${e.total} times, ${e.companies} companies`, `${e.total} مرة، ${e.companies} شركة`))} · ${esc(day(e.first_seen))} → ${esc(ago(e.last_seen))}</p>
+    <div class="tbl"><table><thead><tr><th>${esc(L("Company", "الشركة"))}</th><th class="num">${esc(L("Times", "المرات"))}</th><th>${esc(L("Version", "الإصدار"))}</th><th>${esc(L("Last", "الأخير"))}</th></tr></thead><tbody>
+      ${e.where.map(w => `<tr><td>${can("customers") ? `<a href="#/company/${w.company_id}">${esc(w.company)}</a>` : esc(w.company)}<span class="sub" dir="ltr">${esc(w.user || "")}</span></td><td class="num">${num(w.hits)}</td><td>${esc(w.version || "—")}</td><td>${esc(ago(w.last_seen))}</td></tr>`).join("")}</tbody></table></div>` +
+    form([{ k: "status", l: L("Status", "الحالة"), type: "select", v: e.status, opts: Object.entries(ERR_ST()).map(([k, [l]]) => [k, l]) },
+      { k: "fixed_in", l: L("Fixed in version", "أُصلح في الإصدار"), v: e.fixed_in || "", help: L("When fixed: it reopens if seen from this version or a later one.", "عند الإصلاح: يُفتح من جديد إن ظهر من هذا الإصدار أو ما بعده.") },
+      { k: "note", l: L("Note for the team", "ملاحظة للفريق"), type: "area", rows: 3, v: e.note || "", span: 1 }]),
+    async v => { await rpc("console_app_error_set", { p_id: id, p: { status: v.status, fixed_in: v.fixed_in, note: v.note } }); toast(L("Saved.", "تم الحفظ.")); closePanel(); route(); return false; });
+}
 
 // the answer's light formatting, as the app shows it (erp/static/app.js, helpMd)
 const HELP_FORMAT = () => L("Formatting: ## heading · - list · 1. numbered list · > note · | a | b | table (then |---|---|) · **bold** · *italic* · "

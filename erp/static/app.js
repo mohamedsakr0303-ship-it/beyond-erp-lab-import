@@ -108,6 +108,7 @@ async function apiSend(method, path, body, raw) {
   let data = null;
   try { data = await r.json(); } catch { data = null; }
   if (r.status === 401) { S.boot.user = null; renderAuth(); throw new Error(data && data.error || L2("Please sign in", "يرجى تسجيل الدخول")); }
+  if (r.status >= 500) errReport("server", (data && data.error) || `HTTP ${r.status}`, `${method} ${String(path).split("?")[0].replace(/\/\d+(?=\/|$)/g, "/N")}`);
   if (!r.ok) { const e = new Error((data && data.error) || (r.status >= 500 ? L2(`The server could not finish this (error ${r.status}). Try again in a moment.`, `تعذر على الخادم إتمام العملية (خطأ ${r.status}). حاول مرة أخرى بعد قليل.`)
                                                          : L2(`The request was refused (error ${r.status}).`, `تم رفض الطلب (خطأ ${r.status}).`))); e.data = data; e.status = r.status; throw e; }
   return data;
@@ -123,6 +124,7 @@ async function staticApi(method, path, body, raw) {
   try { data = JSON.parse(new TextDecoder().decode(r.body)); } catch { data = null; }
   if (data && "token" in data) store.set("token", data.token || "");
   if (r.status === 401) { S.boot.user = null; renderAuth(); throw new Error(data && data.error || "Please sign in"); }
+  if (r.status >= 500) errReport("server", (data && data.error) || `HTTP ${r.status}`, `${method} ${String(path).split("?")[0].replace(/\/\d+(?=\/|$)/g, "/N")}`);
   if (r.status >= 400) { const e = new Error((data && data.error) || `HTTP ${r.status}`); e.data = data; e.status = r.status; throw e; }
   return data;
 }
@@ -265,8 +267,31 @@ const RECENT_ERRS = [];
 const ACT = [];
 const actNote = (k, x) => { ACT.push({ at: new Date().toISOString().slice(11, 19), t: k, ...x }); if (ACT.length > 150) ACT.shift(); };
 const noteErr = m => { if (!m) return; actNote("error", { m: String(m).slice(0, 300) }); RECENT_ERRS.push(`${new Date().toISOString().slice(11, 19)} ${String(m).slice(0, 300)}`); if (RECENT_ERRS.length > 8) RECENT_ERRS.shift(); };
-addEventListener("error", e => noteErr(e.message + (e.filename ? ` (${String(e.filename).split("/").pop()}:${e.lineno})` : "")));
-addEventListener("unhandledrejection", e => noteErr("Unhandled: " + ((e.reason && e.reason.message) || e.reason)));
+addEventListener("error", e => { const m = e.message + (e.filename ? ` (${String(e.filename).split("/").pop()}:${e.lineno})` : ""); noteErr(m); errReport("js", m); });
+addEventListener("unhandledrejection", e => { const r = e.reason, m = "Unhandled: " + ((r && r.message) || r); noteErr(m);
+  if (!(r && (r.status || r.duplicate))) errReport("js", m); });     // a refused request is the person's to fix, not a crash
+// Crashes reported to the workspace (online companies), so the team sees a problem before anyone writes in: the message
+// and the screen or call only (the workspace masks numbers and e-mail addresses too), never what was typed or the
+// figures. Repeats are counted, sent together a little later; at most 60 a session.
+const ERRQ = { q: new Map(), sent: 0, t: null };
+const ERR_NOISE = /ResizeObserver loop|Script error\.?$|NetworkError|Failed to fetch|Load failed|AbortError|The user aborted/i;
+function errReport(kind, message, place) {
+  try {
+    message = String(message || "").slice(0, 500);
+    if (!message || ERR_NOISE.test(message) || ERRQ.sent >= 60) return;
+    place = String(place || location.hash || "#/").split("?")[0].replace(/\/\d+(?=\/|$)/g, "/N").slice(0, 200);
+    const k = `${kind}|${message}|${place}`, x = ERRQ.q.get(k);
+    if (x) x.n++; else ERRQ.q.set(k, { kind, message, place, version: (S.boot && S.boot.version) || "", n: 1 });
+    clearTimeout(ERRQ.t); ERRQ.t = setTimeout(errFlush, 15000);
+  } catch { /* never let reporting break anything */ }
+}
+async function errFlush() {
+  try {
+    if (!ERRQ.q.size || !platformOn() || !window.BeyondCloud.company || !window.BeyondCloud.company()) return;
+    const items = [...ERRQ.q.values()].slice(0, 20); ERRQ.q.clear(); ERRQ.sent += items.length;
+    await PLAT("app_errors_report", { p_company: window.BeyondCloud.company(), p_items: items });
+  } catch { /* offline or not signed in: dropped */ }
+}
 const fail = e => { const m = String((e && e.message) || e).replace(/^(seat_limit|contact_us|support_not_included|maintenance|subscription_ended): /, "");
   noteErr(m); if (/seat_limit|user\(s\) and all are taken/.test((e && e.message) || "")) return seatFull(m); toast(m, true); };
 // every user seat of the company's plan is taken (online workspace with billing): say so, and where to add seats
@@ -15492,13 +15517,13 @@ PAGES.help = async (view, parts, q) => {
 // The access is the workspace's (support_access); the books get a user of the support desk's own the first time, through
 // the normal Users screen, so whatever the team member changes is signed with their name and synced like anyone's.
 const myCompanyTicket = tk => !!(tk.company_id && S.billing && S.billing.is_admin && window.BeyondCloud.company && tk.company_id === window.BeyondCloud.company());
-function supportLetIn(tid) {
+function supportLetIn(tid, mode = "view") {
   const fromChat = SCH.open; if (fromChat) chatClose();      // the chat would cover the form
   drawer(L2("Let support into your books", "السماح للدعم بالدخول إلى دفاترك"), `<div class="grid g1">
       <p class="muted" style="margin:0">${esc(L2("The team member answering this ticket can open this company's books for the time you choose. Everything they change is a normal entry signed with their name in the audit trail, and you can end the access at any time.",
         "يستطيع عضو الفريق الذي يرد على هذا البلاغ فتح دفاتر هذه الشركة للمدة التي تختارها. كل ما يغيّره قيد عادي موقّع باسمه في سجل التدقيق، ويمكنك إنهاء الوصول في أي وقت."))}</p>
-      <div class="paym"><label class="paym-o"><input type="radio" name="mode" value="view" checked><span><b>👁 ${esc(L2("View only", "عرض فقط"))}</b><small class="muted">${esc(L2("They look; you make the changes.", "يطّلع، وأنت من يجري التغييرات."))}</small></span></label>
-        <label class="paym-o"><input type="radio" name="mode" value="fix"><span><b>🛠 ${esc(L2("View and fix", "عرض وإصلاح"))}</b><small class="muted">${esc(L2("They may correct entries for you, signed with their name.", "يمكنه تصحيح القيود نيابة عنك، موقّعة باسمه."))}</small></span></label></div>
+      <div class="paym"><label class="paym-o"><input type="radio" name="mode" value="view" ${mode !== "fix" ? "checked" : ""}><span><b>👁 ${esc(L2("View only", "عرض فقط"))}</b><small class="muted">${esc(L2("They look; you make the changes.", "يطّلع، وأنت من يجري التغييرات."))}</small></span></label>
+        <label class="paym-o"><input type="radio" name="mode" value="fix" ${mode === "fix" ? "checked" : ""}><span><b>🛠 ${esc(L2("View and fix", "عرض وإصلاح"))}</b><small class="muted">${esc(L2("They may correct entries for you, signed with their name.", "يمكنه تصحيح القيود نيابة عنك، موقّعة باسمه."))}</small></span></label></div>
       <label class="f">${esc(L2("For", "المدة"))}<select name="hours">${[[1, L2("1 hour", "ساعة واحدة")], [4, L2("4 hours", "4 ساعات")], [24, L2("1 day", "يوم واحد")], [72, L2("3 days", "3 أيام")]].map(([h, l]) => `<option value="${h}" ${h === 4 ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>`,
     async v => {
       const g = await PLAT("support_access_grant", { p_ticket: tid, p_hours: +v.hours, p_mode: v.mode });
@@ -15519,7 +15544,7 @@ async function supportUserInBooks(g) {
   await api("POST", "/api/users", { username, email: g.agent, full_name: `${g.agent_name} · BeyondERP Support`, _no_password: true,
     perms: Object.fromEntries((S.boot.modules || []).map(m => [m, "edit"])) });
 }
-S.GLOBAL_H.supletin = el => supportLetIn(+el.dataset.id);
+S.GLOBAL_H.supletin = el => supportLetIn(+el.dataset.id, el.dataset.mode);
 S.GLOBAL_H.supletend = async el => { if (!await uiConfirm(L2("End support's access to your books now?", "إنهاء وصول الدعم إلى دفاترك الآن؟"))) return;
   try { await PLAT("support_access_end", { p_id: +el.dataset.id }); toast(L2("Support's access has ended.", "انتهى وصول الدعم.")); if (SCH.open) chatOpen(SCH.id); else route(); } catch (e) { fail(e); } };
 // on the customer's ticket page: who is let in now, and the button to let them in
@@ -15544,8 +15569,13 @@ const chatEvt = m => { const b = String(m.body || ""), until = b.includes(":") ?
     : b === "chat_ended" ? L2("The chat has ended", "انتهت المحادثة")
     : b.startsWith("access_fix") ? L2(`Support may view and fix the books until ${until}`, `يمكن للدعم عرض الدفاتر وإصلاحها حتى ${until}`)
     : b.startsWith("access_view") ? L2(`Support may view the books until ${until}`, `يمكن للدعم عرض الدفاتر حتى ${until}`)
-    : b === "access_ended" ? L2("Support's access to the books has ended", "انتهى وصول الدعم إلى الدفاتر") : b;
+    : b === "access_ended" ? L2("Support's access to the books has ended", "انتهى وصول الدعم إلى الدفاتر")
+    : b.startsWith("access_asked_") ? (b.startsWith("access_asked_fix") ? L2("Support asks to view and fix your books", "يطلب الدعم عرض دفاترك وإصلاحها")
+      : L2("Support asks to view your books", "يطلب الدعم عرض دفاترك")) + (b.slice(b.indexOf(":") + 1) ? ` — ${b.slice(b.indexOf(":") + 1)}` : "") : b;
   return `${what}${m.name ? " · " + m.name : ""} · ${dt16(m.created_at)}`; };
+// support asked to be let in: the company's administrator gets the button that does it, on the request itself
+const askBtn = (m, tk) => String(m.body || "").startsWith("access_asked_") && myCompanyTicket(tk)
+  ? ` <button class="btn sm pri" data-a="supletin" data-id="${tk.id}" data-mode="${String(m.body).startsWith("access_asked_fix") ? "fix" : "view"}">🔑 ${esc(L2("Let support in…", "السماح للدعم بالدخول…"))}</button>` : "";
 async function chatPoll() {
   clearTimeout(SCH.t);
   if (!platformOn() || !window.BeyondCloud.joined || !window.BeyondCloud.joined()) { SCH.t = setTimeout(chatPoll, 60000); return; }
@@ -15588,7 +15618,7 @@ function chatDraw(keep) {
   if (!w) { w = document.createElement("section"); w.id = "schat"; w.className = "schat"; w.setAttribute("aria-label", L2("Support chat", "محادثة الدعم")); document.body.appendChild(w); }
   const agent = [...(tk.messages || [])].reverse().find(m => m.staff && m.kind !== "event"), live = tk.chat === "live";
   const box = $(".schat-m", w), atEnd = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-  const msg = m => m.kind === "event" ? `<div class="schat-e">${esc(chatEvt(m))}</div>`
+  const msg = m => m.kind === "event" ? `<div class="schat-e">${esc(chatEvt(m))}${askBtn(m, tk)}</div>`
     : `<div class="schat-x ${m.staff ? "them" : "me"}">${m.staff ? `<small>${esc(m.name || "BeyondERP")}</small>` : ""}${m.body ? `<div dir="auto">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}<time>${esc(String(m.created_at).slice(11, 16))}</time></div>`;
   w.innerHTML = `<header><span class="schat-av">${esc((agent && agent.name || "B")[0].toUpperCase())}</span><div style="flex:1;min-width:0"><b>${esc(agent && agent.name || "BeyondERP")} · ${esc(L2("Support", "الدعم"))}</b>
       <small>${esc(tk.ref)} — ${esc(tk.subject)}</small></div>
@@ -15658,7 +15688,7 @@ async function supportTicket(view, id, staff) {
     tksolved: async el => { try { await PLAT("support_close", { p_ticket: id, p_solved: el.dataset.v === "1" }); route(); } catch (e) { fail(e); } },
     tkset: async el => { try { await PLAT("console_ticket_set", { p_ticket: id, p: { [el.name]: el.value } }); toast(t("saved")); } catch (e) { fail(e); } } });
   const who = m => m.staff ? (staff ? m.email : `${m.name || "BeyondERP"} · ${L2("BeyondERP support", "دعم BeyondERP")}`) : (tk.app_user && m.email === tk.email ? tk.app_user : m.email);
-  const bubble = (m, first) => m.kind === "event" ? `<div class="muted" style="text-align:center;font-size:.85em;margin:8px 0">— ${esc(chatEvt(m))} —</div>` : `<div class="tk-msg ${m.staff ? "staff" : "cust"} ${m.internal ? "internal" : ""} ${(m.staff === staff) ? "mine" : ""}">
+  const bubble = (m, first) => m.kind === "event" ? `<div class="muted" style="text-align:center;font-size:.85em;margin:8px 0">— ${esc(chatEvt(m))} —${askBtn(m, tk)}</div>` : `<div class="tk-msg ${m.staff ? "staff" : "cust"} ${m.internal ? "internal" : ""} ${(m.staff === staff) ? "mine" : ""}">
       <div class="tk-h"><b>${esc(who(m))}</b>${m.internal ? ` <span class="chip warn">${esc(L2("Internal note", "ملاحظة داخلية"))}</span>` : ""}<span class="muted">${dt16(m.created_at)}</span></div>
       ${m.body ? `<div class="tk-b" dir="auto">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}${first || ""}</div>`;
   const diag = Object.entries(tk.diag || {}).filter(([, v]) => v);
