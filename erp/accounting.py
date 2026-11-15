@@ -1357,7 +1357,8 @@ def stock_report(db, warehouse_id=None, q=None):
         r["min"] = m["min"] if m else 0
         r["alert_mode"] = m["alert_mode"] if m else "both"
         r["low"] = bool(m and m["below"])
-    return rows
+    from . import customfilter            # (here: it imports this module)
+    return customfilter.keep(rows, "stock")
 
 
 # ------------------------------------------------------------- BOQ & extracts
@@ -1701,7 +1702,8 @@ def list_extracts(db, boq_id=None, bu_id=None, status=None, date_from=None, date
             lines = [{"category": ln["category"], "amount": to_major(round(ln["qty"] * ln["price"] * (ln["pct"] if ln["pct"] is not None else 1)))}
                      for ln in db.q("SELECT category, qty, price, pct FROM extract_lines WHERE extract_id=?", (r["id"],))]
             r["total"] = round(r["total"] + sum(f["amount"] for f in fee_rows(r["fees"], lines)), 2)
-    return rows
+    from . import customfilter            # (here: it imports this module)
+    return customfilter.keep(rows, "extracts")
 
 
 def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=None):
@@ -1793,6 +1795,9 @@ def memo(fn):
         conn = getattr(db, "conn", None)
         ver = getattr(conn, "total_changes", None)
         if ver is None:                       # browser build: no cheap change counter
+            return fn(db, *a, **kw)
+        from . import customfilter
+        if customfilter.active():             # a list narrowed by someone's own conditions: never kept, never reused
             return fn(db, *a, **kw)
         try:
             with db.lock:
@@ -2150,7 +2155,8 @@ def party_balances(db, subtypes=("payable",), accounts=None, date_to=None):
     for r in rows:
         for k in ("owed", "paid", "balance"):
             r[k] = to_major(r[k])
-    return rows
+    from . import customfilter            # (here: it imports this module)
+    return customfilter.keep(rows, "parties")
 
 
 def shared_overhead_total(db, date_from=None, date_to=None):
@@ -2293,7 +2299,8 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
                     "live_gap": to_major(client_paid - actual),
                     "live_fee": round((client_paid - actual) / actual, 4) if actual > 0 else None,
                     "live_margin": round((client_paid - actual) / client_paid, 4) if client_paid > 0 else None})
-    return out
+    from . import customfilter            # (here: it imports this module)
+    return customfilter.keep(out, "bus")
 
 
 def negotiations(db, date_from=None, date_to=None, bu_id=None):

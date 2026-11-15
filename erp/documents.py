@@ -14,6 +14,7 @@ import json
 import re
 import zipfile
 
+from . import customfilter
 from . import accounting as acc
 from . import branding, countries
 from .accounting import ValidationError, text
@@ -1507,7 +1508,7 @@ def list_offers(db, type_id=None, q=None, status=None):
         p += [f"%{q}%"] * 3
     rows = db.q(f"SELECT o.*, t.name AS type_name, u.code AS bu_code FROM offers o LEFT JOIN offer_types t ON t.id=o.type_id "
                 f"LEFT JOIN business_units u ON u.id=o.bu_id WHERE {' AND '.join(w)} ORDER BY o.date DESC, o.id DESC LIMIT 1000", p)
-    return [_row_offer(r) for r in rows]
+    return customfilter.keep([_row_offer(r) for r in rows], "offers")
 
 
 def get_offer(db, oid):

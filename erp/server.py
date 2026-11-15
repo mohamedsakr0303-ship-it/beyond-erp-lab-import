@@ -249,6 +249,8 @@ def bootstrap(ctx):
             base["licence"]["licensee"] = lst["licence"].get("company")
     from . import ai, chat
     base["profile"] = chat.profile(db, user["id"])
+    from . import customfilter
+    base["list_rules"] = customfilter.fields()        # the custom filter's fields on each list screen
     base["user_since"] = (db.one("SELECT created_at FROM users WHERE id=?", (user["id"],)) or {}).get("created_at") or ""
     pol = ai.policy(db)
     base["ai"] = {"allowed": ai.allowed(pol, user), "used_today": ai.used_today(db, user), "has_key": ai.has_key(db),
@@ -1824,7 +1826,8 @@ def crm_deal_del(ctx, did):
 @route("GET", "/api/crm/contacts", "crm.contacts")
 def crm_contacts(ctx):
     from . import crm
-    return ok({"rows": crm.contacts(ctx.db, ctx.q)})
+    from . import customfilter
+    return ok({"rows": customfilter.keep(crm.contacts(ctx.db, ctx.q), "crm_contacts")})
 
 
 @route("GET", "/api/crm/timeline", "crm.contacts")
@@ -2132,7 +2135,8 @@ def boqs(ctx):
                     f"ORDER BY b.date DESC, b.id DESC", p)
     for r in rows:
         r["total"] = to_major(r.pop("total_minor"))
-    return ok(rows)
+    from . import customfilter
+    return ok(customfilter.keep(rows, "boqs"))
 
 
 @route("GET", "/api/boqs/<bid>")
@@ -4252,6 +4256,11 @@ def parties_master(ctx):
                 "category", "governate", "notes")
         w.append("(" + " OR ".join(f"{c} LIKE ?" for c in cols) + ")")
         p += [f"%{ctx.q['q']}%"] * len(cols)
+    from . import customfilter
+    cw, cp = customfilter.sql_where(ctx.db, "contacts", ctx.q.get("rules"), ctx.q.get("match") or "all")
+    if cw:
+        w.append(cw[len(" AND "):])
+        p += cp
     limit, offset = page(ctx.q)
     rows = ctx.db.q(f"SELECT * FROM parties WHERE {' AND '.join(w)} ORDER BY name LIMIT ? OFFSET ?", p + [limit, offset])
     total = ctx.db.one(f"SELECT COUNT(*) n FROM parties WHERE {' AND '.join(w)}", p)["n"]
@@ -6864,6 +6873,12 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             from . import approvals as _apr
             held = acc.POSTING_HELD.set(method != "GET" and as_user is None and _apr.needs_approval(db, user))
             over = acc.OVER_OK.set(bool(isinstance(body, dict) and body.get("confirm_over")) or as_user is not None)
+            cf = None
+            if method == "GET" and ctx.q.get("rules"):     # custom filter on a list (or its export): erp/customfilter.py
+                from . import customfilter
+                rep = re.match(r"^/api/reports/([\w-]+)$", url.path)
+                key = customfilter.LIST_OF_REPORT.get(rep.group(1)) if rep else customfilter.LIST_OF_PATH.get(url.path)
+                cf = customfilter.activate(key, ctx.q.get("rules"), ctx.q.get("match"))
             try:
                 if ai_change and re.fullmatch(r"[\w-]{6,60}", ai_change):   # the assistant's change: recorded so it can be undone
                     from . import aiundo
@@ -6873,6 +6888,8 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             finally:
                 acc.POSTING_HELD.reset(held)
                 acc.OVER_OK.reset(over)
+                if cf is not None:
+                    customfilter.deactivate(cf)
             if method == "GET" and match.groupdict() and isinstance(reply, Reply) and reply.status == 200 and reply.body == b'{"ok": true}':
                 return ok({"error": "Not found"}, 404)       # a record asked for by its number that is not there
             if sc and method == "GET" and isinstance(reply, Reply) and reply.status == 200 and "json" in (reply.ctype or ""):

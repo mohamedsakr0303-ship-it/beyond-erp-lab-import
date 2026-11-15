@@ -20,6 +20,7 @@ A certificate goes draft → approved → posted. Advances, payments and the ret
 contract (reference = the contract code), so the contract's statement shows certified, retained, advanced, recovered,
 paid and still owed.
 """
+from . import customfilter
 from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
@@ -476,7 +477,7 @@ def listing(db, kind=None, bu_id=None, status=None, q=None):
                       "retention_held": c["statement"]["retention_held"],
                       "expired": bool(c["status"] == "active" and c["revised_finish"] and c["revised_finish"] < today),
                       "ending_soon": due_soon})
-    return out
+    return customfilter.keep(out, "contracts")
 
 
 def _plus(d, days):

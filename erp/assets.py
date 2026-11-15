@@ -13,6 +13,7 @@ import datetime as _dt
 import json
 import re
 
+from . import customfilter
 from . import accounting as acc, yearend
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
@@ -219,6 +220,7 @@ def register(db, q=None, account=None, state=None, as_of=None):
         rows = [r for r in rows if not r["disposed"]]
     elif state == "disposed":
         rows = [r for r in rows if r["disposed"]]
+    rows = customfilter.keep(rows, "assets")
     tot = {k: round(sum(r[k] for r in rows if not r["disposed"]), 2) for k in ("cost", "accumulated", "book_value")}
     return {"rows": rows, "totals": tot, "next_code": next_code(db)}
 

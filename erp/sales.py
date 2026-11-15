@@ -25,6 +25,7 @@ import datetime as _dt
 import json
 import re
 
+from . import customfilter
 from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
@@ -224,7 +225,7 @@ def list_products(db, q=None, kind=None, category=None, status=None, bu_id=None)
         a.append(status)
     else:
         w.append("status<>'hidden'")
-    rows = [product_row(db, p) for p in db.q(f"SELECT * FROM products WHERE {' AND '.join(w)} ORDER BY category, code", a)]
+    rows = customfilter.keep([product_row(db, p) for p in db.q(f"SELECT * FROM products WHERE {' AND '.join(w)} ORDER BY category, code", a)], "products")
     cats = [r["category"] for r in db.q("SELECT DISTINCT category FROM products WHERE category<>'' ORDER BY 1")]
     stat = {r["status"]: r["n"] for r in db.q("SELECT status, COUNT(*) n FROM products WHERE kind='unit' GROUP BY status")}
     return {"rows": rows, "categories": cats, "unit_status": stat, "next_code": _next(db, "products", "P-")}
@@ -603,6 +604,7 @@ def register(db, q=None, status=None, customer=None, date_from=None, date_to=Non
             w.append(cond)
             a.append(v)
     rows = [_row(db, s, as_of) for s in db.q(f"SELECT s.* FROM sales_orders s WHERE {' AND '.join(w)} ORDER BY s.date DESC, s.id DESC", a)]
+    rows = customfilter.keep(rows, "sales")
     live = [r for r in rows if r["status"] in ("confirmed", "delivered")]
     totals = {k: round(sum(r[k] for r in live), 2) for k in ("total", "paid", "balance", "in_cheques", "overdue")}
     totals["count"] = len(live)
@@ -902,6 +904,7 @@ def installments(db, as_of=None, status=None, date_from=None, date_to=None, cust
             out.append({**r, "sale_id": s["id"], "code": s["code"], "customer": s["customer"],
                         "phone": ph.get("phone", ""), "whatsapp": ph.get("whatsapp", "")})
     out.sort(key=lambda r: (r["due"], r["code"]))
+    out = customfilter.keep(out, "installments")
     tot = {k: round(sum(r[k] for r in out), 2) for k in ("amount", "paid", "by_cheque", "left")}
     tot["overdue"] = round(sum(r["left"] for r in out if r["status"] == "overdue"), 2)
     return {"rows": out, "totals": tot, "as_of": as_of}

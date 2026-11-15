@@ -2630,7 +2630,8 @@ def db_cached(fn):
 
     @functools.wraps(fn)
     def wrap(db, *a, **k):
-        if not db.keeping():
+        from . import customfilter
+        if not db.keeping() or customfilter.active():
             return fn(db, *a, **k)
         import datetime
         key = (fn.__module__, fn.__name__, id(db), db.data_version(), datetime.date.today(), repr(a), repr(sorted(k.items())))

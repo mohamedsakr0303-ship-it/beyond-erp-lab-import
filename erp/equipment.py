@@ -16,6 +16,7 @@ logged); the dashboard warns a week / 10 % of the interval ahead.
 """
 import datetime as _dt
 
+from . import customfilter
 from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
@@ -262,7 +263,7 @@ def listing(db, status=None, q=None, today=None):
     if q:
         w.append("(code LIKE ? OR name LIKE ? OR category LIKE ? OR serial LIKE ?)")
         p += [f"%{q}%"] * 4
-    return [get(db, r["id"], today) for r in db.q(f"SELECT id FROM equipment WHERE {' AND '.join(w)} ORDER BY code", p)]
+    return customfilter.keep([get(db, r["id"], today) for r in db.q(f"SELECT id FROM equipment WHERE {' AND '.join(w)} ORDER BY code", p)], "equipment")
 
 
 def report(db, date_from=None, date_to=None):

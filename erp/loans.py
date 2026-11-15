@@ -16,6 +16,7 @@ Schedules: equal installments, equal principal, bullet (interest only, principal
 import datetime as _dt
 import json
 
+from . import customfilter
 from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
@@ -332,6 +333,7 @@ def register(db, q=None, direction=None, state=None, today=None):
         rows = [r for r in rows if r["status"] == "closed"]
     elif state == "overdue":
         rows = [r for r in rows if r["overdue"] > 0]
+    rows = customfilter.keep(rows, "loans")
     tot = {}
     for d in DIRECTIONS:
         rs = [r for r in rows if r["direction"] == d and r["status"] == "active"]

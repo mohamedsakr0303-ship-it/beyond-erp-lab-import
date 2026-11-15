@@ -6,6 +6,7 @@ the buyer awards each line to a supplier and the purchase orders are raised from
 supplier, through the same Purchase orders module, which then handles approval, receiving and posting. Nothing here
 posts to the books; the request is a record of who asked, who approved and why that supplier won.
 """
+from . import customfilter
 from . import accounting as acc
 from . import purchasing
 from .accounting import ValidationError, num, text
@@ -295,7 +296,7 @@ def listing(db, status=None, bu_id=None, q=None):
                                         "approved_by", "orders", "estimate")}
                    | {"lines": len(pr["lines"]), "quotes": len(pr["quotes"]),
                       "best": pr["comparison"]["lowest_split_total"] if pr["quotes"] else None})
-    return out
+    return customfilter.keep(out, "purchase_requests")
 
 
 def alerts(db, today=None):

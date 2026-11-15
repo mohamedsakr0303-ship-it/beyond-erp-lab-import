@@ -2199,6 +2199,8 @@ const ENTRY_RULES = () => [["date", L2("Date", "التاريخ"), "date"], ["amo
   ["project", t("bu"), "text"], ["project_group", L2("Project group", "مجموعة المشروعات"), "text"], ["cost_item", L2("Cost item", "بند التكلفة"), "text"],
   ["tag", L2("Tag", "وسم"), "text"], ["created_by", L2("Entered by", "أدخله"), "text"], ["approved_by", L2("Approved by", "اعتمده"), "text"],
   ["created", L2("Entered on", "تاريخ الإدخال"), "date"], ["attachment", L2("Has an attachment", "له مرفق"), "bool"]];
+// a list screen's fields, as the server defines them (erp/customfilter.py LISTS), in the reader's language
+const LIST_RULES = key => ((S.boot.list_rules || {})[key] || []).map(([f, en, ar, kind]) => [f, L2(en, ar), kind]);
 const rulesOf = q => { try { const r = JSON.parse(q.rules || "[]"); return Array.isArray(r) ? r : []; } catch { return []; } };
 function rulesBox(defs) {
   const ops = OP_L(), rs = S.rulesEdit || [];
@@ -3344,7 +3346,7 @@ PAGES.bus = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar">${can("business_units.units", "add") ? `<button class="btn pri" data-a="newbu">+ ${t("new")}</button>` : ""}
     ${can("business_units.allocation", "edit") ? `<button class="btn" data-a="alloc">${t("alloc_title")}</button>` : ""}<span class="spacer"></span>${can("business_units.profitability") ? exportMenu("bu_pnl", q) : ""}</div>` +
     filterBar(q, ["dates", "q", ["select", "status", t("status"), ["Tendering", "In Progress", "On Hold", "Completed", "Closed"].map(s => [s, tl(s)])],
-      ["select", "basis", t("basis"), S.boot.enums.billing_bases.map(s => [s, tl(s)])]]) +
+      ["select", "basis", t("basis"), S.boot.enums.billing_bases.map(s => [s, tl(s)])], ["rules", LIST_RULES("bus")]]) +
     `<div class="banner ${alloc > 1.0001 ? "err" : "info"}">${t("shared_pool")}: <b>${money(d.shared_overhead)}</b> · ${t("alloc_total")}: <b>${pct(alloc)}</b> — ${t("overhead_note")}</div>` +
     `<div class="card">${buTable(d.rows)}</div>`;
   bulkify(bulkTable(view, 'tr[data-href^="#/bu/"]'), BULKS.bus());
@@ -3475,14 +3477,14 @@ PAGES.payroll = voucherPage("payroll", ["Payroll Accrual"], { title: "m_payroll"
   return p.rows.length ? `<div class="card"><h2>${t("unpaid")}</h2><div class="tbl"><table><thead><tr><th>${t("worker")}</th><th class="num">${t("balance")}</th><th></th></tr></thead><tbody>${p.rows.map(r => `<tr><td>${esc(r.party)}</td><td class="num">${money(r.balance)}</td><td>${can("purchasing", "edit") ? `<button class="btn sm" data-a="paywk" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}">${t("m_payments")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""; } });
 
 PAGES.payables = async (view, parts, q) => {
-  const d = await api("GET", "/api/parties?" + qs({ kind: q.kind || "all", date_to: q.date_to }));
+  const d = await api("GET", "/api/parties?" + qs({ kind: q.kind || "all", date_to: q.date_to, rules: q.rules || "", match: q.match || "" }));
   S.H.pay = el => openDoc("payment", { party: el.dataset.p, amount: el.dataset.b, against: el.dataset.acc });
   S.H.disc = el => supplierDiscountForm(el.dataset.p, el.dataset.acc, +el.dataset.b);
   const tot = d.rows.reduce((s, r) => s + r.balance, 0);
   const owedBy = {}; d.rows.forEach(r => { owedBy[r.party] = (owedBy[r.party] || 0) + r.balance; });
   const ar = S.lang === "ar";
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/aging?side=payable">⏳ ${t("m_aging")}</a><a class="btn" href="#/statement">☰ ${t("m_statement")}</a><span class="spacer"></span>${exportMenu("payables", q)}</div>` +
-    filterBar(q, ["asof", ["select", "kind", t("type"), [["payable", t("payable")], ["payroll", t("m_payroll")]]]]) +
+    filterBar(q, ["asof", ["select", "kind", t("type"), [["payable", t("payable")], ["payroll", t("m_payroll")]]], ["rules", LIST_RULES("parties")]]) +
     `<div class="card"><h2>${t("m_payables")} — ${money(tot)}</h2>${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("party")}</th><th>${t("account")}</th><th class="num">${t("amount")}</th><th class="num">${t("paid_now")}</th><th class="num">${t("balance")}</th><th>${t("date")}</th><th></th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click" data-href="#/ledger?${qs({ party: r.party, account: r.account })}"><td>${esc(r.party || "—")}</td><td>${esc(r.account)}</td><td class="num">${money(r.owed)}</td><td class="num">${money(r.paid)}</td><td class="num ${r.balance < 0 ? "neg" : ""}"><b>${money(r.balance)}</b></td><td>${fd(r.last_date)}</td>
       <td style="white-space:nowrap">${can("purchasing.payments", "edit") && r.balance > 0 ? `<button class="btn sm" data-a="pay" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}">${t("m_payments")}</button>
@@ -3682,7 +3684,7 @@ PAGES.invoices = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar">${can("sales.invoices", "add") ? `<a class="btn pri" href="#/invoice/new">+ ${t("new")}</a>` : ""}<span class="spacer"></span>
     ${exportMenu("vouchers", { ...q, kinds: "Sales Invoice", title: t("m_invoices") })}
     <div class="dd"><button class="btn">${t("m_einv")} ▾</button><div class="dd-menu"><a href="/api/einvoice-batch?${qs({ ...q, format: "json" })}">${t("eta_batch_json")}</a><a href="/api/einvoice-batch?${qs({ ...q, format: "xlsx" })}">${t("eta_batch_xlsx")}</a></div></div></div>` +
-    filterBar(q, ["dates", "bu", ["select", "status", t("status"), [["draft", t("draft")], ["posted", t("invoiced")]]]]) +
+    filterBar(q, ["dates", "bu", ["select", "status", t("status"), [["draft", t("draft")], ["posted", t("invoiced")]]], ["rules", LIST_RULES("extracts")]]) +
     `<div class="card">${rows.length ? `<div class="tbl"><table><thead><tr><th>${t("invoice_no")}</th><th>${t("bu")}</th><th>${t("boq")}</th><th>${t("date")}</th><th class="num">${t("amount")}</th><th>${t("status")}</th></tr></thead><tbody>
     ${rows.map(x => `<tr class="click" data-href="#/invoice/${x.id}"><td><b>${esc(x.number)}</b><div class="lines">${esc(x.customer || "")}</div></td><td>${esc(x.bu_code)}</td><td>${esc(x.boq_title || t("standalone"))}</td><td>${fd(x.date)}</td><td class="num">${money(x.total)}</td><td><span class="chip ${x.status === "posted" ? "ok" : ""}">${x.status === "posted" ? t("invoiced") : t("draft")}</span> ${(x.doc_type || "I") !== "I" ? chipS("warn", ETA_TYPE()[x.doc_type]) : ""} ${x.eta_status ? etaChip(x.eta_status) : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
   bulkify(bulkTable(view, 'tr[data-href^="#/invoice/"]'), BULKS.invoices());
@@ -4146,7 +4148,7 @@ async function etaPanel(x) {
 
 PAGES.boqs = async (view, parts, q) => {
   const rows = await api("GET", "/api/boqs?" + qs(q));
-  view.innerHTML = `<div class="toolbar">${can("estimating.boqs", "add") ? `<a class="btn pri" href="#/boq/new">+ ${t("new")}</a>` : ""}</div>` + filterBar(q, ["bu", "q"]) +
+  view.innerHTML = `<div class="toolbar">${can("estimating.boqs", "add") ? `<a class="btn pri" href="#/boq/new">+ ${t("new")}</a>` : ""}</div>` + filterBar(q, ["bu", "q", ["rules", LIST_RULES("boqs")]]) +
     `<div class="card">${rows.length ? `<div class="tbl"><table><thead><tr><th>${t("title")}</th><th>${t("bu")}</th><th>${t("revision")}</th><th>${t("date")}</th><th class="num">${t("lines")}</th><th class="num">${t("budget")}</th></tr></thead><tbody>
     ${rows.map(b => `<tr class="click" data-href="#/boq/${b.id}"><td><b>${esc(b.title)}</b></td><td>${esc(b.bu_code || "")}</td><td>${esc(b.rev)}</td><td>${fd(b.date)}</td><td class="num">${b.lines}</td><td class="num">${money(b.total)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
 };
@@ -4301,7 +4303,7 @@ PAGES.stock = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar">${ed ? ["Receipt", "Issue", "Transfer", "Adjustment"].map(ty => `<button class="btn ${ty === "Receipt" ? "pri" : ""}" data-a="sm${ty}">${tl(ty)}</button>`).join("") : ""}${can("stock.balances", "add") ? `<button class="btn" data-a="itemnew">+ ${esc(L2("Item", "صنف"))}</button>` : ""}<button class="btn" data-a="itemdupes" title="${esc(L2("Find items recorded more than once under different names or codes", "البحث عن أصناف مسجلة أكثر من مرة بأسماء أو أكواد مختلفة"))}">${svg("search")} ${esc(L2("Find duplicates", "البحث عن المكرر"))}</button><a class="btn" href="#/stock-plan">↗ ${t("m_stockplan")}</a><span class="spacer"></span>${exportMenu("stock", q)}</div>` +
     (lowShown.length || q.low === "1" ? `<div class="banner ${lowShown.length ? "warn" : "info"} row" style="gap:8px">${lowShown.length ? esc(L2(`${lowShown.length} item(s) at or below their minimum quantity`, `${lowShown.length} صنف عند حده الأدنى أو أقل`)) + ": " + lowShown.slice(0, 4).map(r => `<b>${esc(r.name)}</b> (${esc(r.warehouse)}: ${numf(r.qty)} / ${numf(r.min)})`).join(" · ") + (lowShown.length > 4 ? " …" : "") : esc(L2("Showing items at or below their minimum.", "عرض الأصناف عند حدها الأدنى أو أقل."))}
       <span class="spacer"></span><button class="btn sm" data-a="stklow">${esc(q.low === "1" ? L2("Show all", "عرض الكل") : L2("Show only these", "عرض هذه فقط"))}</button><a class="btn sm" href="#/stock-plan">${esc(L2("Forecast", "التوقعات"))}</a></div>` : "") +
-    filterBar(q, ["warehouse", ["q", "stkq", L2("Name, code or category", "الاسم أو الكود أو التصنيف")]]) +
+    filterBar(q, ["warehouse", ["q", "stkq", L2("Name, code or category", "الاسم أو الكود أو التصنيف")], ["rules", LIST_RULES("stock")]]) +
     `<datalist id="stkq">${(d.items || []).map(x => { const more = [x.sku, x.category].filter(Boolean).join(" · ");
       return `<option value="${esc(x.name)}">${esc(x.name + (more ? " — " + more : ""))}</option>`; }).join("")}</datalist>` +
     `<div class="card"><h2>${t("inventory")} — ${money(tot)} ${cur()} <span class="chip" title="${esc(L2("How issues and transfers are costed (Settings → System)", "طريقة تقييم الصرف والتحويل (الإعدادات ← النظام)"))}">${esc(d.costing === "average" ? L2("Moving average", "المتوسط المتحرك") : "FIFO")}</span></h2>${d.levels.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${esc(L2("Minimum", "الحد الأدنى"))}</th><th class="num">${t("avg_cost")}</th><th class="num">${esc(L2("Last purchase price", "آخر سعر شراء"))}</th><th class="num">${t("value")}</th><th></th></tr></thead><tbody>
@@ -4461,7 +4463,7 @@ PAGES.deals = async (view, parts, q) => {
 };
 PAGES["crm-contacts"] = async (view, parts, q) => {
   const d = await api("GET", "/api/crm/contacts?" + qs(q));
-  view.innerHTML = filterBar(q, ["q", ["select", "type", t("type"), [["customer", L2("Customers", "العملاء")], ["supplier", L2("Suppliers", "الموردون")]]]]) +
+  view.innerHTML = filterBar(q, ["q", ["select", "type", t("type"), [["customer", L2("Customers", "العملاء")], ["supplier", L2("Suppliers", "الموردون")]]], ["rules", LIST_RULES("crm_contacts")]]) +
     `<div class="card"><div class="tbl"><table><thead><tr><th>${t("name")}</th><th>${esc(L2("Phone / email", "الهاتف / البريد الإلكتروني"))}</th><th>${esc(L2("Last contact", "آخر تواصل"))}</th>
       <th>${esc(L2("Next follow-up", "المتابعة القادمة"))}</th><th class="num">${esc(L2("Open deals", "صفقات مفتوحة"))}</th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click" data-href="#/contact/${encodeURIComponent(r.name)}"><td><b>${esc(r.name)}</b><div class="lines">${esc(tl(r.type))}</div></td>
@@ -5734,7 +5736,7 @@ PAGES.offers = async (view, parts, q) => {
   const add = can("sales.offers", "add");
   view.innerHTML = `<div class="toolbar">${add ? d.types.map(ty => `<a class="btn ${ty === d.types[0] ? "pri" : ""}" href="#/offer/new?type=${ty.id}">+ ${esc(ty.name)}</a>`).join("") : ""}
       <span class="spacer"></span><a class="btn" href="#/offertypes">${t("offer_types")} (${d.types.length})</a></div>` +
-    filterBar(q, ["q", ["select", "type_id", t("offer_type"), d.types.map(ty => [ty.id, ty.name])], ["select", "status", t("status"), OFFER_STATUS.map(x => [x, t("s_" + x)])]]) +
+    filterBar(q, ["q", ["select", "type_id", t("offer_type"), d.types.map(ty => [ty.id, ty.name])], ["select", "status", t("status"), OFFER_STATUS.map(x => [x, t("s_" + x)])], ["rules", LIST_RULES("offers")]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>#</th><th>${t("offer_type")}</th><th>${t("client")}</th><th>${t("date")}</th><th>${t("status")}</th><th>${t("bu")}</th><th class="num">${t("net_payable")}</th></tr></thead><tbody>
       ${d.rows.map(o => `<tr class="click" data-href="#/offer/${o.id}"><td><b>${esc(o.number)}</b></td><td>${esc(o.type_name || "—")}</td><td dir="auto">${esc(o.client)}<div class="lines" dir="auto">${esc(o.project)}</div></td>
         <td>${fd(o.date)}</td><td>${statusChip(o.status)}</td><td>${esc(o.bu_code || "")}</td><td class="num">${money(o.net)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
@@ -6286,7 +6288,7 @@ PAGES.contacts = async (view, parts, q) => {
   const chip = (c, l) => `<a class="chip${(q.category || "") === c ? " on" : ""}" href="#/contacts${c ? "?category=" + encodeURIComponent(c) : ""}">${esc(l)}</a>`;
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="cnew">+ ${L2("New contact", "جهة اتصال جديدة")}</button>` : ""}<span class="spacer"></span><a class="btn" href="#/payables">${t("m_payables")}</a></div>
     <div class="chips">${chip("", L2("All", "الكل"))}${cats.map(c => chip(c, catLabel(c))).join("")}</div>` +
-    filterBar(q, ["q"]) +
+    filterBar(q, ["q", ["rules", LIST_RULES("contacts")]]) +
     (d.rows.length ? `<div class="cgrid">${d.rows.map(p => `<div class="card ccard click" data-a="copen" data-id="${p.id}">
         <div class="row" style="gap:6px;align-items:baseline"><b>${esc(p.name)}</b>${p.category || p.type !== "other" ? `<span class="chip">${esc(p.category ? catLabel(p.category) : tl(p.type))}</span>` : ""}</div>
         <div class="muted">${esc([p.contact_person, p.specialty, p.vehicle, p.governate].filter(Boolean).join(" · ")) || "&nbsp;"}</div>
@@ -7794,7 +7796,7 @@ PAGES.loans = async (view, parts, q) => {
       ${kpiBox(L2("Receivable by the company", "مستحقات للشركة"), Lt.outstanding, "pos", `${Lt.count} ${L2("Loans", "قروض")}${Lt.accrued ? ` · ${L2("Interest receivable", "فوائد مستحقة التحصيل")} ${money(Lt.accrued)}` : ""}`)}
       ${kpiBox(L2("Due for collection", "مستحق التحصيل"), Lt.due_now, Lt.overdue ? "neg" : "", Lt.overdue ? `${L2("Overdue", "متأخر")} ${money(Lt.overdue)}` : "")}</div>` +
     filterBar(q, ["q", ["select", "direction", L2("Type", "النوع"), [["borrowed", L2("Borrowed", "اقتراض")], ["lent", L2("Lent", "إقراض")]]],
-      ["select", "state", t("status"), [["active", L2("Active", "نشط")], ["overdue", L2("Overdue", "متأخر")], ["closed", L2("Closed", "مغلق")]]]]) +
+      ["select", "state", t("status"), [["active", L2("Active", "نشط")], ["overdue", L2("Overdue", "متأخر")], ["closed", L2("Closed", "مغلق")]]], ["rules", LIST_RULES("loans")]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Counterparty", "الطرف المقابل")}</th><th>${L2("Type", "النوع")}</th><th>${L2("Start", "البداية")}</th><th>${L2("Interest", "الفائدة")}</th><th class="num">${t("amount")}</th><th class="num">${L2("Outstanding", "المتبقي")}</th><th>${L2("Next instalment", "القسط القادم")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click ${r.status === "closed" ? "void" : ""}" data-href="#/loan/${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.party)}${r.purpose ? `<div class="lines">${esc(r.purpose)}</div>` : ""}</td>
         <td><span class="chip ${r.direction === "borrowed" ? "" : "ok"}">${r.direction === "borrowed" ? L2("Borrowed", "اقتراض") : L2("Lent", "إقراض")}</span></td><td>${fd(r.start_date)}</td>
@@ -7978,7 +7980,7 @@ PAGES.custody = async (view, parts, q) => {
       ${kpiBox(L2("Overdue settlements", "تسويات متأخرة"), String(T.overdue), T.overdue ? "neg" : "")}
       ${kpiBox(L2("Due to employees", "مستحق للموظفين"), T.owed_to_holders, T.owed_to_holders ? "neg" : "", L2("Spent in excess of amounts issued", "صرفوا أكثر مما استلموا"))}</div>` +
     filterBar(q, ["q", ["select", "state", t("status"), [["open", L2("Open", "مفتوحة")], ["overdue", L2("Overdue", "متأخرة")], ["closed", L2("Closed", "مغلقة")]]],
-      ["select", "holder", L2("Custodian", "صاحب العهدة"), d.holders.map(h => [h, h])]]) +
+      ["select", "holder", L2("Custodian", "صاحب العهدة"), d.holders.map(h => [h, h])], ["rules", LIST_RULES("custody")]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Custodian", "صاحب العهدة")}</th><th>${L2("Type", "النوع")}</th><th>${L2("Issue date", "تاريخ الصرف")}</th><th class="num">${L2("Issued", "المصروف")}</th><th class="num">${L2("Spent", "المنفق")}</th><th class="num">${L2("Balance", "الرصيد")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click ${r.status === "closed" ? "void" : ""}" data-href="#/cust/${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.holder)}${r.purpose ? `<div class="lines">${esc(r.purpose)}</div>` : ""}</td>
         <td>${r.kind === "permanent" ? L2("Imprest", "مستديمة") : L2("Temporary", "مؤقتة")}</td><td>${fd(r.issued_on)}${r.due_date ? `<div class="lines">${L2("Settle by", "التسوية قبل")} ${fd(r.due_date)}</div>` : ""}</td>
@@ -8139,7 +8141,7 @@ PAGES.rentals = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar">${can("rentals.contracts", "add") ? `<button class="btn pri" data-a="rnew">+ ${L2("New quotation", "عرض سعر جديد")}</button><button class="btn" data-a="racr">${L2("Month-end accrual", "استحقاق نهاية الشهر")}</button>` : ""}<span class="spacer"></span>${exportMenu("rentals", q)}</div>
     <div class="kpis">${kpiBox(L2("On site", "بالموقع حالياً"), String(d.totals.active), "", L2("Contracts", "عقود"))}${kpiBox(L2("Monthly rent on site", "الإيجار الشهري بالموقع"), d.totals.monthly, "pos")}
       ${kpiBox(L2("Open quotations", "عروض أسعار مفتوحة"), String(d.totals.quotes))}</div>` +
-    filterBar(q, ["q", ["select", "status", t("status"), [["open", L2("Open contracts", "العقود المفتوحة")], ...["quote", "ordered", "active", "returned", "closed", "cancelled"].map(s => [s, RENT_ST(s)[1]])]]]) +
+    filterBar(q, ["q", ["select", "status", t("status"), [["open", L2("Open contracts", "العقود المفتوحة")], ...["quote", "ordered", "active", "returned", "closed", "cancelled"].map(s => [s, RENT_ST(s)[1]])]], ["rules", LIST_RULES("rentals")]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${t("client")}</th><th>${L2("Site", "الموقع")}</th><th>${t("status")}</th><th>${L2("PO", "أمر الشراء")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th><th class="num">${L2("Pieces on site", "القطع بالموقع")}</th><th>${L2("Invoiced to", "مفوتر حتى")}</th></tr></thead><tbody>
       ${d.rows.map(r => { const [c, l] = RENT_ST(r.status); return `<tr class="click ${["closed", "cancelled"].includes(r.status) ? "void" : ""}" data-href="#/rental/${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.client)}</td><td>${esc(r.site)}</td><td><span class="chip ${c}">${esc(l)}</span></td>
         <td>${esc(r.po_number || "—")}</td><td class="num">${money(r.status === "quote" ? r.monthly_quoted : r.monthly_on_site)}</td><td class="num">${numf(r.pieces_out)}</td><td>${r.billed_to ? fd(r.billed_to) : "—"}</td></tr>`; }).join("")}</tbody></table></div>`
@@ -8832,7 +8834,7 @@ PAGES.assets = async (view, parts, q) => {
   const k = (l, v) => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${money(v)}</div></div>`;
   const stat = r => r.disposed ? `<span class="chip bad">${L2("Disposed", "مستبعد")}</span>` : r.fully_depreciated ? `<span class="chip ok">${L2("Fully depreciated", "مهلك بالكامل")}</span>` : !r.life_months ? `<span class="chip">${L2("Not depreciated", "لا يُهلك")}</span>` : "";
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="fanew">+ ${L2("New asset", "أصل جديد")}</button>` : ""}${dep ? `<button class="btn" data-a="fadep">${L2("Run depreciation", "احتساب الإهلاك")}</button>` : ""}${canPolicy() ? `<button class="btn" data-a="fapol">⚙ ${L2("Depreciation settings", "إعدادات الإهلاك")}</button>` : ""}<span class="spacer"></span>${exportMenu("fixed_assets", q)}</div>` +
-    filterBar(q, ["q", ["select", "state", t("status"), [["active", L2("In use", "قيد الاستخدام")], ["disposed", L2("Disposed", "مستبعد")]]]]) +
+    filterBar(q, ["q", ["select", "state", t("status"), [["active", L2("In use", "قيد الاستخدام")], ["disposed", L2("Disposed", "مستبعد")]]], ["rules", LIST_RULES("assets")]]) +
     `<div class="kpis">${k(L2("Cost", "التكلفة"), d.totals.cost)}${k(L2("Accumulated depreciation", "مجمع الإهلاك"), d.totals.accumulated)}${k(L2("Book value", "القيمة الدفترية"), d.totals.book_value)}</div>` +
     `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Asset", "الأصل")}</th><th>${t("account")}</th><th>${L2("Acquisition date", "تاريخ الاقتناء")}</th><th class="num">${L2("Cost", "التكلفة")}</th><th class="num">${L2("Accumulated", "المجمع")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th class="num">${L2("Monthly", "شهرياً")}</th><th>${L2("Recorded to", "مسجل حتى")}</th><th></th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click ${r.disposed ? "void" : ""}" data-a="faopen" data-id="${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.name)}${r.location || r.serial ? `<div class="lines">${esc([r.location, r.serial].filter(Boolean).join(" · "))}</div>` : ""}</td>
@@ -9127,7 +9129,7 @@ PAGES.products = async (view, parts, q) => {
       ${sell ? `<a class="btn" href="#/sales">${t("m_sales_orders")}</a>` : ""}<button class="btn" data-a="pcalc">${L2("Instalment calculator", "حاسبة التقسيط")}</button>
       ${can("shop.orders", "edit") ? `<button class="btn" data-a="pset">⚙ ${L2("Sales settings", "إعدادات المبيعات")}</button>` : ""}<span class="spacer"></span>${exportMenu("products", q)}</div>` +
     filterBar(q, ["q", ["select", "kind", L2("Type", "النوع"), P_KINDS().map(([v, l]) => [v, l.split(" (")[0]])], ["select", "category", L2("Category", "التصنيف"), d.categories.map(c => [c, c])],
-      ["select", "status", t("status"), Object.keys(P_ST).map(k => [k, L2(P_ST[k][0], P_ST[k][1])])], "bu"]) +
+      ["select", "status", t("status"), Object.keys(P_ST).map(k => [k, L2(P_ST[k][0], P_ST[k][1])])], "bu", ["rules", LIST_RULES("products")]]) +
     (Object.keys(st).length ? `<div class="kpis">${["available", "reserved", "sold", "delivered"].map(k => kpiBox(L2(P_ST[k][0] + " units", "وحدات " + P_ST[k][1]), numf(st[k] || 0))).join("")}</div>` : "") +
     (d.rows.length ? `<div class="pgrid">${d.rows.map(p => `<a class="card pcard" href="#/product/${p.id}">
         <div class="pimg">${p.cover_thumb ? `<img src="${esc(p.cover_thumb)}" alt="" loading="lazy">` : `<span>${p.kind === "unit" ? "⌂" : p.kind === "service" ? "✦" : "▣"}</span>`}${p.kind === "unit" || p.status === "hidden" ? `<div class="pst">${pStatus(p.status)}</div>` : ""}</div>
@@ -9346,7 +9348,7 @@ PAGES.sales = async (view, parts, q) => {
   const T = d.totals;
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="snew">+ ${L2("New sale", "بيع جديد")}</button>` : ""}<a class="btn" href="#/products">${t("m_products")}</a><a class="btn" href="#/installments">${t("m_installments")}</a>
       ${can("shop.orders", "edit") ? `<button class="btn" data-a="pset">⚙ ${L2("Sales settings", "إعدادات المبيعات")}</button>` : ""}<span class="spacer"></span>${exportMenu("sales", q)}</div>` +
-    filterBar(q, ["q", "dates", ["select", "status", t("status"), Object.keys(S_ST).map(k => [k, L2(S_ST[k][0], S_ST[k][1])])]]) +
+    filterBar(q, ["q", "dates", ["select", "status", t("status"), Object.keys(S_ST).map(k => [k, L2(S_ST[k][0], S_ST[k][1])])], ["rules", LIST_RULES("sales")]]) +
     `<div class="kpis">${kpiBox(L2("Sales (open and delivered)", "المبيعات (المفتوحة والمسلمة)"), T.total, "", `${T.count}`)}${kpiBox(L2("Collected", "المحصل"), T.paid, "pos")}${kpiBox(L2("In cheques", "بشيكات"), T.in_cheques)}${kpiBox(L2("Outstanding", "المتبقي للتحصيل"), T.balance)}${kpiBox(L2("Overdue", "المتأخرات"), T.overdue, T.overdue > 0 ? "neg" : "")}</div>
     <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Sale", "البيع")}</th><th>${t("date")}</th><th>${L2("Customer", "العميل")}</th><th>${t("status")}</th><th class="num">${L2("Total", "الإجمالي")}</th><th class="num">${L2("Paid", "المسدد")}</th><th class="num">${L2("Balance", "الرصيد")}</th><th class="num">${L2("Overdue", "متأخر")}</th><th>${L2("Next instalment", "القسط القادم")}</th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click ${r.status === "cancelled" ? "void" : ""}" data-a="sgo" data-id="${r.id}"><td><b>${esc(r.code)}</b></td><td>${fd(r.date)}</td><td>${esc(r.customer)}</td><td>${sStatus(r.status)}</td><td class="num">${money(r.total)}</td><td class="num">${money(r.paid)}</td><td class="num">${money(r.balance)}</td><td class="num ${r.overdue ? "neg" : ""}">${r.overdue ? money(r.overdue) : ""}</td><td>${r.next_due && r.status !== "cancelled" ? `${fd(r.next_due)} · ${money(r.next_amount)}` : ""}</td></tr>`).join("")}</tbody></table></div>`
@@ -9501,7 +9503,7 @@ PAGES.installments = async (view, parts, q) => {
   const T = d.totals;
   const msg = r => encodeURIComponent(S.lang === "ar" ? `السيد/ة ${r.customer}، نذكركم بالقسط المستحق ${fd(r.due)} بقيمة ${money(r.left)} — ${r.code}. شكراً لكم.` : `Dear ${r.customer}, a reminder of the installment of ${money(r.left)} due ${fd(r.due)} on ${r.code}. Thank you.`);
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/sales">${t("m_sales_orders")}</a><span class="spacer"></span>${exportMenu("installments", lq)}</div>` +
-    filterBar(lq, ["q", "dates", ["select", "status", t("status"), [["open", L2("Unpaid", "غير مسدد")], ["overdue", L2("Overdue", "متأخر")], ["due", L2("Due", "مستحق")], ["partial", L2("Partly paid", "مسدد جزئياً")], ["cheque", L2("By cheque", "بشيك")], ["paid", L2("Paid", "مسدد")], ["all", t("all")]]]]) +
+    filterBar(lq, ["q", "dates", ["select", "status", t("status"), [["open", L2("Unpaid", "غير مسدد")], ["overdue", L2("Overdue", "متأخر")], ["due", L2("Due", "مستحق")], ["partial", L2("Partly paid", "مسدد جزئياً")], ["cheque", L2("By cheque", "بشيك")], ["paid", L2("Paid", "مسدد")], ["all", t("all")]]], ["rules", LIST_RULES("installments")]]) +
     `<div class="kpis">${kpiBox(L2("Instalments listed", "الأقساط المعروضة"), T.amount, "", `${d.rows.length}`)}${kpiBox(L2("Outstanding", "المتبقي"), T.left)}${kpiBox(L2("Overdue", "المتأخرات"), T.overdue, T.overdue > 0 ? "neg" : "")}${kpiBox(L2("Covered by cheques", "مغطاة بشيكات"), T.by_cheque)}</div>
     ${d.cheques_due.length ? `<div class="card"><h2>${L2("Cheques due for deposit", "شيكات مستحقة للإيداع")}</h2><div class="tbl stack"><table><tbody>${d.cheques_due.map(c => `<tr><td>${fd(c.due)}</td><td><a href="#/sale/${c.sale_id}">${esc(c.code)}</a> · ${esc(c.customer)}</td><td>${esc(c.number)} ${esc(c.bank)}</td><td class="num">${money(c.amount)}</td>
       <td>${coll ? `<button class="btn sm" data-a="chclr" data-id="${c.id}">${L2("Cleared", "محصَّل")}</button><button class="btn sm danger" data-a="chbnc" data-id="${c.id}">${L2("Bounced", "مرتد")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
@@ -9809,7 +9811,7 @@ PAGES.subs = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="subnew">+ ${L2("Subscription", "اشتراك")}</button>` : ""}${add && d.due ? `<button class="btn" data-a="subrun">⟳ ${L2("Invoice amounts due", "فوترة المستحق")} (${d.due})</button>` : ""}<span class="spacer"></span>${exportMenu("subscriptions", q)}</div>${tabs}
     <div class="kpis">${kpiBox(L2("Monthly recurring revenue", "الإيراد الشهري المتكرر"), d.mrr, "", `${L2("Yearly", "سنوياً")} ${money(d.arr)}`)}${kpiBox(L2("Active contracts", "عقود سارية"), numf(d.active))}${kpiBox(L2("Due for invoicing", "مستحقة الفوترة"), numf(d.due), d.due ? "warn" : "")}${kpiBox(L2("Ending within a month", "تنتهي خلال شهر"), numf(d.renew_soon), d.renew_soon ? "warn" : "")}${kpiBox(L2("Billed, not yet earned", "مفوتر وغير مكتسب"), d.deferred)}</div>
     ${filterBar(q, [["select", "status", t("status"), [["active", L2("Active", "سارية")], ["due", L2("Due for invoicing", "مستحقة الفوترة")], ["paused", L2("Paused", "موقوفة مؤقتاً")], ["cancelled", L2("Cancelled", "ملغاة")], ["ended", L2("Ended", "منتهية")]]],
-      ["select", "kind", t("type"), Object.keys(SUB_KIND).map(k => [k, kindL(k)])], "q"])}
+      ["select", "kind", t("type"), Object.keys(SUB_KIND).map(k => [k, kindL(k)])], "q", ["rules", LIST_RULES("subscriptions")]])}
     <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Contract", "العقد")}</th><th>${L2("Customer", "العميل")}</th><th>${L2("Service", "الخدمة")}</th><th class="num">${t("price")}</th><th>${L2("Next invoice", "الفاتورة القادمة")}</th><th>${L2("Visits", "الزيارات")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click" data-href="#/sub/${encodeURIComponent(r.code)}"><td><b>${esc(r.code)}</b>${r.parent_code ? `<div class="muted" style="font-size:.85em">↳ ${esc(r.parent_code)}</div>` : ""}</td><td>${esc(r.customer)}</td>
         <td>${(SUB_KIND[r.kind] || SUB_KIND.other)[2]} ${esc(r.title)}${r.covers ? `<div class="muted" style="font-size:.85em">${esc(r.covers)}</div>` : ""}</td><td class="num">${money(r.price)}<div class="muted" style="font-size:.8em">${esc(everyL(r.period_months))}</div></td>
@@ -9928,7 +9930,7 @@ PAGES.pos = async (view, parts, q) => {
     <div class="kpis">${kpiBox(L2("Open commitments", "الالتزامات القائمة"), d.open_value)}${kpiBox(L2("Awaiting approval", "بانتظار الاعتماد"), numf(d.to_approve), d.to_approve ? "warn" : "")}${kpiBox(L2("Overdue deliveries", "توريدات متأخرة"), numf(d.rows.filter(r => r.overdue).length), d.rows.some(r => r.overdue) ? "neg" : "")}</div>
     <p class="muted" style="font-size:.85em;margin:-4px 0 10px">${lim ? L2(`Orders above ${money(lim)} require a second approver.`, `تتطلب الأوامر التي تتجاوز ${money(lim)} معتمداً ثانياً.`) : L2("Any user with approval rights can approve any order.", "يمكن لأي مستخدم لديه صلاحية الاعتماد اعتماد أي أمر.")}
       ${can("settings.system", "edit") ? `<button class="btn sm" data-a="polim">${L2("Approval rule", "قاعدة الاعتماد")}</button>` : ""}</p>
-    ${filterBar(q, [["select", "status", t("status"), [["open", L2("Open (draft, approved, partly received)", "مفتوحة (مسودة، معتمدة، مستلمة جزئياً)")], ...Object.entries(PO_ST).map(([k, v]) => [k, L2(v[0], v[1])])]], "q"])}
+    ${filterBar(q, [["select", "status", t("status"), [["open", L2("Open (draft, approved, partly received)", "مفتوحة (مسودة، معتمدة، مستلمة جزئياً)")], ...Object.entries(PO_ST).map(([k, v]) => [k, L2(v[0], v[1])])]], "q", ["rules", LIST_RULES("purchase_orders")]])}
     <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Order", "الأمر")}</th><th>${t("date")}</th><th>${t("supplier")}</th><th>${t("bu")}</th><th>${L2("Delivery date", "تاريخ التسليم")}</th><th class="num">${t("total")}</th><th class="num">${L2("Received", "المستلم")}</th><th class="num">${L2("Outstanding", "المتبقي")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click" data-href="#/po/${encodeURIComponent(r.code)}"><td><b>${esc(r.code)}</b></td><td>${fd(r.date)}</td><td>${esc(r.supplier)}</td><td>${esc(r.bu_code || "")}</td><td class="${r.overdue ? "neg" : ""}">${fd(r.expected)}</td>
         <td class="num">${money(r.grand_total)}</td><td class="num">${r.received_value ? money(r.received_value) : ""}</td><td class="num">${r.open_value ? money(r.open_value) : ""}</td><td>${poChip(r.status)}</td></tr>`).join("")}</tbody></table></div>`
@@ -10468,7 +10470,7 @@ PAGES.employees = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="empnew">+ ${L2("New employee", "موظف جديد")}</button>` : ""}<a class="btn" href="#/payruns">▤ ${t("m_payruns")}</a><span class="spacer"></span></div>
     <div class="kpis">${kpiBox(L2("Active", "على رأس العمل"), String(act.length))}${kpiBox(L2("Monthly payroll (fixed pay)", "الرواتب الشهرية (الثابتة)"), act.reduce((s, r) => s + monthly(r), 0))}
       ${kpiBox(L2("Insured", "المؤمن عليهم"), String(act.filter(r => r.insured).length))}${kpiBox(L2("Daily and piece-rate workers", "عمالة يومية وبالإنتاج"), String(act.filter(r => r.emp_type !== "monthly").length))}</div>` +
-    filterBar(q, ["q", ["select", "status", t("status"), [["active", L2("Active", "على رأس العمل")], ["left", L2("Left", "منتهي الخدمة")]]]]) +
+    filterBar(q, ["q", ["select", "status", t("status"), [["active", L2("Active", "على رأس العمل")], ["left", L2("Left", "منتهي الخدمة")]]], ["rules", LIST_RULES("employees")]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Name", "الاسم")}</th><th>${L2("Job / department", "الوظيفة / القسم")}</th><th>${L2("Pay", "الأجر")}</th><th class="num">${L2("Monthly (fixed)", "شهرياً (ثابت)")}</th><th>${t("bu")}</th><th>${L2("Insurance / tax", "تأمين / ضريبة")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="${ed || add ? "click" : ""} ${r.status === "left" ? "void" : ""}" data-a="empedit" data-id="${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(S.lang === "ar" && r.name_ar ? r.name_ar : r.name)}</td>
         <td>${esc(r.job_title)}${r.department ? `<div class="lines">${esc(r.department)}</div>` : ""}</td>
@@ -12457,7 +12459,7 @@ PAGES.contracts = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="connew" data-k="client">+ ${conKind("client")}</button><button class="btn" data-a="connew" data-k="sub">+ ${conKind("sub")}</button>` : ""}<span class="spacer"></span></div>
     <div class="kpis">${kpiBox(L2("Client contracts (revised)", "عقود العملاء (المعدلة)"), tot("client"))}${kpiBox(L2("Subcontracts (revised)", "عقود الباطن (المعدلة)"), tot("sub"))}
       ${kpiBox(L2("Due to subcontractors", "المستحق لمقاولي الباطن"), rows.reduce((s, r) => s + (r.payable || 0), 0))}${kpiBox(L2("Retention held", "المحتجزات"), rows.reduce((s, r) => s + (r.retention_held || 0), 0))}</div>
-    ${filterBar(q, ["bu", ["select", "kind", t("type"), [["client", conKind("client")], ["sub", conKind("sub")]]], ["select", "status", t("status"), stOpts(CON_ST)], "q"])}
+    ${filterBar(q, ["bu", ["select", "kind", t("type"), [["client", conKind("client")], ["sub", conKind("sub")]]], ["select", "status", t("status"), stOpts(CON_ST)], "q", ["rules", LIST_RULES("contracts")]])}
     <div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Contract", "العقد")}</th><th>${L2("Party", "الطرف")}</th><th>${t("bu")}</th><th>${L2("Ends", "ينتهي")}</th><th class="num">${L2("Value", "القيمة")}</th><th class="num">${L2("Variations", "أوامر التغيير")}</th><th class="num">${L2("Revised", "المعدلة")}</th><th class="num">${L2("Certified / due", "المعتمد / المستحق")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${rows.map(r => `<tr class="click" data-href="#/contract/${r.id}"><td><b>${esc(r.code)}</b><div class="lines">${esc(conKind(r.kind))}${r.title ? " · " + esc(r.title) : ""}</div></td><td>${esc(r.party)}</td><td>${esc(r.bu_code || "")}</td>
         <td class="${r.expired ? "neg" : r.ending_soon ? "warn" : ""}">${fd(r.revised_finish)}</td><td class="num">${money(r.value)}</td><td class="num">${r.variations_total ? money(r.variations_total) : ""}${r.pending_vos ? ` <span class="chip warn">${r.pending_vos}</span>` : ""}</td>
@@ -12643,7 +12645,7 @@ PAGES["purchase-requests"] = async (view, parts, q) => {
   const rows = await api("GET", "/api/purchase-requests?" + qs(q));
   S.H.prnew = () => prForm();
   view.innerHTML = `<div class="toolbar">${can("purchasing.requests", "add") ? `<button class="btn pri" data-a="prnew">+ ${L2("Purchase request", "طلب شراء")}</button>` : ""}<span class="spacer"></span></div>
-    ${filterBar(q, ["bu", ["select", "status", t("status"), stOpts(PR_ST)], "q"])}
+    ${filterBar(q, ["bu", ["select", "status", t("status"), stOpts(PR_ST)], "q", ["rules", LIST_RULES("purchase_requests")]])}
     <div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Request", "الطلب")}</th><th>${t("date")}</th><th>${L2("Requested by", "مقدم الطلب")}</th><th>${t("bu")}</th><th>${L2("Required by", "مطلوب بحلول")}</th><th class="num">${L2("Estimate", "التقدير")}</th><th class="num">${L2("Quotes", "العروض")}</th><th class="num">${L2("Best quote", "أفضل عرض")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${rows.map(r => `<tr class="click" data-href="#/purchase-request/${r.id}"><td><b>${esc(r.code)}</b><div class="lines">${r.lines} ${L2("Lines", "بند")}${r.orders ? " → " + esc(r.orders) : ""}</div></td><td>${fd(r.date)}</td><td>${esc(r.requested_by)}</td><td>${esc(r.bu_code || r.warehouse || "")}</td><td>${fd(r.needed_by)}</td>
         <td class="num">${money(r.estimate)}</td><td class="num">${r.quotes || ""}</td><td class="num">${r.best != null ? money(r.best) : ""}</td><td>${chipS(PR_ST[r.status][0], L2(PR_ST[r.status][1], PR_ST[r.status][2]))}</td></tr>`).join("")}</tbody></table></div>`
@@ -12874,7 +12876,7 @@ PAGES.equipment = async (view, parts, q) => {
   S.H.eqnew = () => eqForm();
   view.innerHTML = `<div class="toolbar">${can("equipment.register", "add") ? `<button class="btn pri" data-a="eqnew">+ ${L2("Equipment", "معدة")}</button>` : ""}<span class="spacer"></span>
       ${can("equipment.usage") ? `<a class="btn" href="#/equipment-usage">${t("m_equsage")}</a>` : ""}${can("equipment.maintenance") ? `<a class="btn" href="#/maintenance">${t("m_maint")}</a>` : ""}</div>
-    ${filterBar(q, [["select", "status", t("status"), stOpts(EQ_ST)], "q"])}
+    ${filterBar(q, [["select", "status", t("status"), stOpts(EQ_ST)], "q", ["rules", LIST_RULES("equipment")]])}
     <div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Equipment", "المعدة")}</th><th>${L2("Location", "المكان")}</th><th class="num">${L2("Hour meter", "العداد")}</th><th class="num">${L2("Hourly rate", "فئة الساعة")}</th><th class="num">${L2("Charged to projects", "المحمل على المشروعات")}</th><th class="num">${L2("Maintenance", "الصيانة")}</th><th>${L2("Next service", "الصيانة القادمة")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${rows.map(e => `<tr class="click" data-href="#/machine/${e.id}"><td><b>${esc(e.code)}</b> ${esc(e.name)}<div class="lines">${esc([e.category, e.serial].filter(Boolean).join(" · "))}</div></td><td>${esc(e.bu_code || "")}</td><td class="num">${numf(e.meter)}</td><td class="num">${money(e.hourly_rate)}</td>
         <td class="num">${money(e.charged)}</td><td class="num">${e.maintenance_cost ? money(e.maintenance_cost) : ""}</td><td>${e.due.length ? chipS(e.due.some(p => p.state === "overdue") ? "bad" : "warn", e.due.map(p => p.title).join(", ")) : fd(e.next_due)}</td>

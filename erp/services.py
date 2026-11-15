@@ -10,6 +10,7 @@ insurance on a device, software support or extra modules (add-ons) — anything 
   that goes on the next invoice."""
 import datetime as _dt
 
+from . import customfilter
 from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
@@ -190,6 +191,7 @@ def listing(db, q=None, status=None, kind=None, customer=None):
     rows = [_row(db, get(db, r["id"])) for r in db.q(
         f"SELECT s.id FROM subscriptions s LEFT JOIN service_plans p ON p.id=s.plan_id WHERE {' AND '.join(w)} "
         "ORDER BY s.status='active' DESC, s.next_bill, s.id", p)]
+    rows = customfilter.keep(rows, "subscriptions")
     live = [r for r in db.q("SELECT id FROM subscriptions WHERE status='active'")]
     mrr = round(sum(_row(db, get(db, r["id"]))["monthly"] for r in live), 2)
     return {"rows": rows, "mrr": mrr, "arr": round(mrr * 12, 2), "active": len(live),

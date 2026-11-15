@@ -6,6 +6,7 @@ owed to the supplier (accounts payable) unless something is paid on the spot, an
 reference. Status: draft -> approved -> partial -> received; or closed (rest not needed) / cancelled."""
 import json
 
+from . import customfilter
 from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import tax_of, to_major, to_minor
@@ -297,6 +298,7 @@ def listing(db, q=None, status=None, supplier=None, bu_id=None):
         rows.append({k: po[k] for k in ("id", "code", "date", "supplier", "bu_code", "bu_name", "expected", "status", "total",
                                          "vat", "grand_total", "open_value", "received_value", "created_by", "approved_by", "pr_code")}
                     | {"overdue": bool(po["expected"] and po["expected"] < acc.today() and po["status"] in ("approved", "partial"))})
+    rows = customfilter.keep(rows, "purchase_orders")
     commit = {}
     for r in rows:
         if r["open_value"]:

@@ -26,6 +26,7 @@ import math
 import re
 from decimal import ROUND_HALF_UP, Decimal
 
+from . import customfilter
 from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
@@ -266,7 +267,7 @@ def list_employees(db, q=None, status=None):
     if status:
         w.append("status=?")
         p.append(status)
-    return [_emp_row(db, e) for e in db.q("SELECT * FROM employees" + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY status, code", p)]
+    return customfilter.keep([_emp_row(db, e) for e in db.q("SELECT * FROM employees" + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY status, code", p)], "employees")
 
 
 def get_employee(db, eid):

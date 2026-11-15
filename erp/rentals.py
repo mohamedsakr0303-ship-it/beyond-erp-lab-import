@@ -18,6 +18,7 @@ import datetime as _dt
 import json
 import math
 
+from . import customfilter
 from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
@@ -1357,6 +1358,7 @@ def list_rentals(db, q=None, status=None):
         last = db.one("SELECT MAX(period_to) AS d FROM rental_invoices WHERE rental_id=?", (r["id"],))["d"]
         rows.append({**r, "monthly_on_site": to_major(int(round(monthly))), "monthly_quoted": to_major(int(round(quoted))),
                      "billed_to": last or "", "pieces_out": round(sum(h["qty"] for h in _held(db, r["id"])), 2)})
+    rows = customfilter.keep(rows, "rentals")
     live = [x for x in rows if x["status"] in ("active", "returned")]
     return {"rows": rows, "totals": {"active": sum(1 for x in rows if x["status"] == "active"),
                                      "quotes": sum(1 for x in rows if x["status"] == "quote"),

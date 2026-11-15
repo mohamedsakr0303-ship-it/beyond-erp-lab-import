@@ -14,6 +14,7 @@ A negative balance means the holder spent more than they were given: the company
 import datetime as _dt
 import json
 
+from . import customfilter
 from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
@@ -125,6 +126,7 @@ def register(db, q=None, state=None, holder=None, today=None):
         rows = [r for r in rows if r["status"] == state]
     elif state == "overdue":
         rows = [r for r in rows if r["overdue"]]
+    rows = customfilter.keep(rows, "custody")
     live = [r for r in rows if r["status"] == "open"]
     holders = {}
     for r in live:
