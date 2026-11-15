@@ -1145,6 +1145,12 @@ def rows_from_table(sheet, headers, raw_rows):
     return out
 
 
+class SheetData(dict):
+    """Rows read from a spreadsheet someone filled in (Excel / CSV): a word in a choice column must be one of its
+    choices, or the row is refused. (A JSON backup keeps whatever the books held, so restoring it never fails.)"""
+    strict = True
+
+
 def read_xlsx(path):
     try:
         import openpyxl
@@ -1183,7 +1189,7 @@ def read_xlsx(path):
         hi = -best[1]
         data[sheet["name"]] = rows_from_table(sheet, rows[hi], rows[hi + 1:])
     wb.close()
-    return data
+    return SheetData(data)
 
 
 def read_csv(sheet_name, content: bytes):
@@ -1220,7 +1226,7 @@ def read_json(content: bytes):
         data[name] = clean
     if isinstance(obj, dict) and isinstance(obj.get("extras"), dict):
         data["_extras"] = obj["extras"]
-    return data
+    return SheetData(data)
 
 
 def _site_sheets(db, out):
@@ -2292,11 +2298,13 @@ def _import_data(db, data, mode="append", dry_run=False, user=""):
         raise acc.ValidationError("mode must be append, new or replace")
     errors, counts, stats = [], {}, {}
     skipped = None
+    strict = getattr(data, "strict", False)
     _choice_words_to_codes(data)
     doc_notes = docs_to_rows(db, data)       # invoice / BOQ sheets in the client's own layout
     asked = mode
     if mode == "new":
         data, skipped = only_new(db, data)
+        data = SheetData(data) if strict else data      # (still a spreadsheet someone filled in)
         mode = "append"
 
     def run(name, fn):
@@ -2307,6 +2315,13 @@ def _import_data(db, data, mode="append", dry_run=False, user=""):
             missing = [c["en"] for c in sheet["cols"] if c["required"] and row.get(c["key"]) in ("", None)]
             if missing:
                 errors.append({"sheet": name, "row": i, "error": "missing " + ", ".join(missing)})
+                continue
+            odd = [c for c in sheet["cols"] if strict and c.get("choices") and isinstance(row.get(c["key"]), str)
+                   and row[c["key"]].strip() and row[c["key"]] not in c["choices"]]
+            if odd:       # a word that is none of the column's choices: never stored as typed, never replaced by a guess
+                c = odd[0]
+                errors.append({"sheet": name, "row": i, "error": f"{c['en']}: '{row[c['key']]}' is not one of the choices "
+                                                                 f"({', '.join(str(x) for x in c['choices'] if x != '')})"})
                 continue
             try:
                 fn(row)
@@ -2746,6 +2761,7 @@ def _imp_boqs(db, rows, errors, counts, stats):
 
 
 def _imp_invoices(db, data, errors, counts, user, stats):
+    strict = getattr(data, "strict", False)
     lines, first_row = {}, {}
     for i, r in enumerate(data.get("Invoice Lines") or [], start=FIRST_DATA_ROW):
         lines.setdefault(acc.text(r.get("number")), []).append(r)
@@ -2781,6 +2797,12 @@ def _imp_invoices(db, data, errors, counts, user, stats):
                      "status": "Posted" if old["status"] == "posted" else "Draft", "_boq_id": old["boq_id"],
                      "prev_paid": None if old["prev_paid"] is None else acc.to_major(old["prev_paid"]),
                      "deductions": acc.to_major(old["deductions"] or 0)}
+            if not old and not r.get("_lines_only"):    # a new invoice: its date and project come from the file, never a guess
+                miss = [lbl for k, lbl in (("date", "Date"), ("bu_code", "Business Unit")) if r.get(k) in ("", None)]
+                if miss:
+                    raise acc.ValidationError("missing " + ", ".join(miss))
+            if strict and str(r.get("status") or "").strip() and r.get("status") not in YES_NO:
+                raise acc.ValidationError(f"Status: '{r.get('status')}' is not one of the choices ({', '.join(YES_NO)})")
             boq_id = r.get("_boq_id")
             if r.get("boq_title"):
                 b = db.one("SELECT id FROM boqs WHERE title=? ORDER BY id DESC", (acc.text(r.get("boq_title")),))

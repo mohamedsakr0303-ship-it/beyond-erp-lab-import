@@ -928,6 +928,8 @@ MESSAGES = {
     '{}. The books are read-only; viewing, printing and exporting remain available. Enter a licence key in Settings → System → Licence.': '{1}. الدفاتر للقراءة فقط، ويبقى العرض والطباعة والتصدير متاحاً. أدخل مفتاح الترخيص من الإعدادات ← النظام ← الترخيص.',
     'Enable two-step sign-in first (profile → Two-step sign-in).': 'فعّل التحقق بخطوتين أولاً (الملف الشخصي ← التحقق بخطوتين).',
     'Type must be one of: {}': 'النوع يجب أن يكون واحداً من: {1}',
+    'Status must be one of: {}': 'الحالة يجب أن تكون واحدة من: {1}',
+    "{}: '{}' is not one of the choices ({})": "{1}: «{2}» ليس من الاختيارات المتاحة ({3})",
     'Bill every 1, 2, 3, 4, 6, 12, 24 or 36 months': 'الفوترة كل 1 أو 2 أو 3 أو 4 أو 6 أو 12 أو 24 أو 36 شهراً',
     'Plan not found: {}': 'الخطة غير موجودة: {1}',
     'Enter the price per period': 'اكتب السعر لكل فترة',

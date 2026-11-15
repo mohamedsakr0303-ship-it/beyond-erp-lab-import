@@ -69,6 +69,32 @@ class ImportChoices(unittest.TestCase):
         out, _ = importkit.read(self.db, "Chart of Accounts", buf.getvalue(), "coa.xlsx", table=a["table"], header_row=a["header_row"])
         self.assertEqual({k: out[0][k] for k in ("type", "subtype", "active")}, {"type": "Asset", "subtype": "other_current_asset", "active": "Yes"})
 
+    def test_a_word_that_is_no_choice_is_refused_from_a_spreadsheet_but_a_backup_keeps_its_own(self):
+        import copy
+        from erp import textl10n
+        data = interchange.export_data(self.db)
+        bus = data["Business Units"]
+        bus[0]["status"] = "Maybe"
+        for sheet in (interchange.SheetData(copy.deepcopy(data)),):        # filled in by someone: refused, nothing kept
+            with self.assertRaises(interchange.ImportErrors) as cm:
+                interchange.import_data(Database(":memory:"), sheet, mode="replace")
+            msg = next(e["error"] for e in cm.exception.errors if e["sheet"] == "Business Units")
+            self.assertIn("Status: 'Maybe' is not one of the choices (Tendering, In Progress", msg)
+            ar = textl10n.import_row_error(msg, "Business Units", "ar")
+            self.assertIn("الحالة", ar)
+            self.assertIn("ليس من الاختيارات المتاحة", ar)
+        good = interchange.SheetData(copy.deepcopy(data))
+        good["Business Units"][0]["status"] = choices.label("Business Units", "status", "In Progress", ar=True)   # its Arabic word: the code
+        db2 = Database(":memory:")
+        try:
+            interchange.import_data(db2, good, mode="replace")
+        except interchange.ImportErrors as e:
+            self.fail(str(e.errors[:4]))
+        self.assertEqual(db2.one("SELECT status FROM business_units WHERE code=?", (bus[0]["code"],))["status"], "In Progress")
+        db3 = Database(":memory:")                                          # a backup restores whatever the books held
+        interchange.import_data(db3, copy.deepcopy(data), mode="replace")
+        self.assertEqual(db3.one("SELECT status FROM business_units WHERE code=?", (bus[0]["code"],))["status"], "Maybe")
+
     def test_the_import_screen_shows_formats_and_allowed_values_in_both_languages(self):
         cols = {c["key"]: c for c in importkit.describe("Chart of Accounts")["columns"]}
         self.assertIn(["Yes", "نعم"], cols["active"]["choice_words"])

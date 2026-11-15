@@ -29,6 +29,16 @@ KINDS = ("client", "sub")
 STATUSES = ("draft", "active", "completed", "terminated")
 
 
+def _status_in(v):
+    """A contract's status as given: blank is active; anything else must be one of STATUSES (never replaced by a guess)."""
+    v = str(v or "").strip().lower()
+    if not v:
+        return "active"
+    if v not in STATUSES:
+        raise ValidationError(f"Status must be one of: {', '.join(STATUSES)}")
+    return v
+
+
 def _role(db, role, fallback=None):
     try:
         return db.acct(role)
@@ -82,7 +92,7 @@ def save(db, d, cid=None):
                 payment_terms=text(d.get("payment_terms"), maxlen=2000), scope=text(d.get("scope"), maxlen=4000),
                 vat_code=acc.tax_code(db, d.get("vat_code"), "vat")[0] if d.get("vat_code") else "",
                 wht_code=acc.tax_code(db, d.get("wht_code"), "wht")[0] if d.get("wht_code") else "",
-                status=d.get("status") if d.get("status") in STATUSES else "active", notes=text(d.get("notes"), maxlen=4000))
+                status=_status_in(d.get("status")), notes=text(d.get("notes"), maxlen=4000))
     from . import fx            # a contract in a foreign currency: its value, certificates and payments are in it
     cur = fx.code(d.get("currency")) if "currency" in d else ((db.one("SELECT currency FROM contracts WHERE id=?", (cid,)) or {}).get("currency") or "" if cid else "")
     vals["currency"] = "" if cur == fx.base(db) else cur
