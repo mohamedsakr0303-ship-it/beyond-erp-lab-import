@@ -1017,6 +1017,22 @@ MESSAGES = {
 }
 
 FIELDS = {
+    # statuses named inside a message ("… is submitted: approve it …")
+    'submitted': 'مُقدَّم (بانتظار الاعتماد)',
+    'draft': 'مسودة',
+    'approved': 'معتمد',
+    'ordered': 'صدر له أمر شراء',
+    'cancelled': 'ملغى',
+    'closed': 'مغلق',
+    'posted': 'مُرحّل',
+    'void': 'ملغى',
+    'pending': 'معلّق',
+    'confirmed': 'مؤكد',
+    'delivered': 'مُسلَّم',
+    'returned': 'مُرتجع',
+    'open': 'مفتوح',
+    'done': 'منتهٍ',
+    'completed': 'مكتمل',
     'Coverage': 'التغطية',
     'PO date': 'تاريخ أمر الشراء',
     'Provider share': 'حصة مقدم الخدمة',
