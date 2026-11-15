@@ -764,7 +764,7 @@ def del_bu(ctx, bid):
 
 
 # ================================================================== journal
-def journal_filters(q):
+def journal_filters(q, db=None):
     w, p = ["1=1"], []
     if q.get("status") in ("posted", "void"):
         w.append("e.status=?")
@@ -840,12 +840,17 @@ def journal_filters(q):
     if q.get("max_amount"):
         w.append("(SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) <= ?")
         p.append(to_minor(acc.num(q["max_amount"])))
+    if db is not None and q.get("rules"):     # the person's own conditions (erp/customfilter.py)
+        from . import customfilter
+        cw, cp = customfilter.entry_where(db, q.get("rules"), q.get("match") or "all")
+        w.append(cw[len(" AND "):])
+        p += cp
     return " AND ".join(w), p
 
 
 @route("GET", "/api/journal", "accounting.journal")
 def journal(ctx):
-    w, p = journal_filters(ctx.q)
+    w, p = journal_filters(ctx.q, ctx.db)
     if getattr(ctx, "scope", None):         # only the person's projects (counts and pages too)
         w += f" AND e.bu_id IN ({','.join('?' * len(ctx.scope.ids)) or 'NULL'})"
         p = p + sorted(ctx.scope.ids)
@@ -1947,7 +1952,7 @@ def list_docs(ctx, dtype):
     if dtype not in kinds:
         return ok({"error": "Unknown document"}, 404)
     ctx.require(DOCS[dtype][1], "view")
-    w, p = journal_filters({k: v for k, v in ctx.q.items() if k != "kind"})
+    w, p = journal_filters({k: v for k, v in ctx.q.items() if k != "kind"}, ctx.db)
     if ctx.q.get("kind") in kinds[dtype]:
         w += " AND e.kind=?"
         p.append(ctx.q["kind"])
@@ -1989,7 +1994,7 @@ def _vouchers_report(ctx):
         (ctx.q.get("bu_id") and ctx.can("business_units.units"))
     if not allowed:
         raise PermissionError()
-    w, p = journal_filters(ctx.q)
+    w, p = journal_filters(ctx.q, ctx.db)
     if kinds:
         w += f" AND e.kind IN ({','.join('?' * len(kinds))})"
         p += kinds

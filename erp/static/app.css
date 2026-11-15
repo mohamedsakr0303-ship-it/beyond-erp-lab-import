@@ -85,6 +85,15 @@ tr.void td{opacity:.5;text-decoration:line-through}
 /* the Apply / Clear row: room for its buttons; when it wraps, the extra line (saved views) goes above, so Apply and Clear
    stay level with the fields */
 .filters>.row{grid-column:span 2;flex-wrap:wrap-reverse;row-gap:6px}
+/* custom filter: a full-width block of conditions, each one row (field · condition · value · ✕) */
+.filters>#frules{grid-column:1/-1;border-top:1px dashed var(--line);padding-top:8px}
+#frules select,#frules input{width:auto!important;min-width:0;flex:none}
+#frules .rule-row [data-change=rfield]{width:190px!important}
+#frules .rule-row [data-change=rop]{width:170px!important}
+#frules .rule-row input,#frules .rule-row [data-change=rset]{width:160px!important}
+#frules .pick-w{display:inline-block;width:190px!important;flex:none}   /* the searchable picker keeps the row on one line */
+#frules .pick-w input{width:100%!important}
+@media (max-width:560px){#frules .rule-row>select,#frules .rule-row>input,#frules .pick-w{width:calc(50% - 6px)!important}}
 .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:8px;font-size:.85em;color:var(--muted)}
 .banner{border-radius:8px;padding:9px 12px;margin-bottom:12px;border:1px solid;font-size:.9em}

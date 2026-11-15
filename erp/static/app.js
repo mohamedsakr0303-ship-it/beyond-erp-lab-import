@@ -2178,8 +2178,86 @@ function fillSearchLists() {
 }
 // filled when the box is entered (before its picker reads the list), so rows loaded after the bar are included
 document.addEventListener("focus", e => { const el = e.target; if (el instanceof HTMLInputElement && el.closest("#fbar") && /^fb(q|party)$/.test(el.getAttribute("list") || el.dataset.listId || "")) fillSearchLists(); }, true);
+// ------------------------------------------------------------------- custom filters
+// Conditions a person builds ("amount more than 50,000 AND account in group 122"), kept in the address as ?rules=…&match=
+// so they survive paging, saved views and links, and exports apply them too. Lists the server pages through are
+// filtered by the server (erp/customfilter.py, every record); the chart, loaded whole, filters here (ruleMatch).
+const RULE_OPS = { text: ["contains", "not_contains", "eq", "ne", "starts", "ends", "empty", "not_empty"],
+  money: ["gt", "gte", "lt", "lte", "eq", "ne", "between"], date: ["between", "eq", "before", "after", "last_days", "this_month", "this_year"],
+  choice: ["eq", "ne"], bool: ["yes", "no"], account: ["in_group", "not_in_group", "eq", "ne", "starts"] };
+const RULE_NOVAL = new Set(["empty", "not_empty", "this_month", "this_year", "yes", "no"]);
+const OP_L = () => ({ contains: L2("contains", "يحتوي"), not_contains: L2("does not contain", "لا يحتوي"), eq: L2("is", "يساوي"), ne: L2("is not", "لا يساوي"),
+  starts: L2("starts with", "يبدأ بـ"), ends: L2("ends with", "ينتهي بـ"), empty: L2("is empty", "فارغ"), not_empty: L2("is not empty", "غير فارغ"),
+  gt: L2("more than", "أكبر من"), gte: L2("at least", "لا يقل عن"), lt: L2("less than", "أقل من"), lte: L2("at most", "لا يزيد عن"), between: L2("between", "بين"),
+  before: L2("before", "قبل"), after: L2("after", "بعد"), last_days: L2("in the last … days", "خلال آخر … يوم"), this_month: L2("this month", "هذا الشهر"),
+  this_year: L2("this year", "هذا العام"), yes: L2("yes", "نعم"), no: L2("no", "لا"), in_group: L2("is in group", "ضمن المجموعة"), not_in_group: L2("is not in group", "خارج المجموعة") });
+// the fields of a journal entry the server can filter on (erp/customfilter.py ENTRY_FIELDS)
+const ENTRY_RULES = () => [["date", L2("Date", "التاريخ"), "date"], ["amount", L2("Amount", "المبلغ"), "money"], ["line_amount", L2("A line's amount", "مبلغ أحد البنود"), "money"],
+  ["party", t("party"), "text"], ["account", t("account"), "account"], ["account_name", L2("Account name", "اسم الحساب"), "text"],
+  ["memo", L2("Description", "البيان"), "text"], ["line_memo", L2("A line's note", "ملاحظة أحد البنود"), "text"], ["ref", L2("Reference", "المرجع"), "text"],
+  ["kind", t("kind"), "choice", (S.boot.enums.entry_kinds || []).map(k => [k, tl(k)])], ["status", t("status"), "choice", [["posted", L2("Posted", "مُرحّل")], ["void", t("void")]]],
+  ["project", t("bu"), "text"], ["project_group", L2("Project group", "مجموعة المشروعات"), "text"], ["cost_item", L2("Cost item", "بند التكلفة"), "text"],
+  ["tag", L2("Tag", "وسم"), "text"], ["created_by", L2("Entered by", "أدخله"), "text"], ["approved_by", L2("Approved by", "اعتمده"), "text"],
+  ["created", L2("Entered on", "تاريخ الإدخال"), "date"], ["attachment", L2("Has an attachment", "له مرفق"), "bool"]];
+const rulesOf = q => { try { const r = JSON.parse(q.rules || "[]"); return Array.isArray(r) ? r : []; } catch { return []; } };
+function rulesBox(defs) {
+  const ops = OP_L(), rs = S.rulesEdit || [];
+  const def = f => defs.find(d => d[0] === f) || defs[0];
+  const val = (r, i, k) => { const d = def(r.f), kind = d[2], op = r.op, v = r[k] ?? "";
+    if (kind === "choice") return `<select data-change="rset" data-i="${i}" data-k="${k}" aria-label="${esc(d[1])}"><option value=""></option>${(d[3] || []).map(([x, l]) => `<option value="${esc(x)}" ${String(v) === String(x) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+    const type = kind === "date" && op !== "last_days" ? "date" : (kind === "money" || op === "last_days") ? "number" : "text";
+    return `<input type="${type}" ${type === "number" ? 'step="any"' : ""} value="${esc(v)}" data-input="rset" data-i="${i}" data-k="${k}" ${kind === "account" ? 'list="ruleacct" dir="ltr"' : ""}
+      placeholder="${esc(kind === "account" ? (op.includes("group") ? L2("Group code", "كود المجموعة") : L2("Account code", "كود الحساب")) : op === "last_days" ? L2("days", "أيام") : "")}" style="width:${type === "date" ? 150 : 140}px">`; };
+  const row = (r, i) => { const d = def(r.f), kind = d[2];
+    return `<div class="rule-row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0">
+      ${i ? `<span class="chip">${esc(S.rulesMatch === "any" ? L2("or", "أو") : L2("and", "و"))}</span>` : ""}
+      <select data-change="rfield" data-i="${i}" aria-label="${esc(L2("Field", "الحقل"))}">${defs.map(x => `<option value="${x[0]}" ${x[0] === d[0] ? "selected" : ""}>${esc(x[1])}</option>`).join("")}</select>
+      <select data-change="rop" data-i="${i}" aria-label="${esc(L2("Condition", "الشرط"))}">${RULE_OPS[kind].map(o => `<option value="${o}" ${o === r.op ? "selected" : ""}>${esc(ops[o])}</option>`).join("")}</select>
+      ${RULE_NOVAL.has(r.op) ? "" : val(r, i, "v")}${r.op === "between" ? `<span>${esc(L2("and", "و"))}</span>${val(r, i, "v2")}` : ""}
+      <button type="button" class="btn sm ghost" data-a="rdel" data-i="${i}" title="${esc(L2("Remove this condition", "حذف هذا الشرط"))}">✕</button></div>`; };
+  const accts = (S.boot.accounts || []).map(a => `<option value="${esc(a.code)}">${esc(aname(a))}</option>`).join("") +
+    (S.boot.account_groups || []).map(g => `<option value="${esc(g.code)}">${esc(L2("Group", "مجموعة"))}: ${esc(grpName(g))}</option>`).join("");
+  return `<div id="frules"><datalist id="ruleacct">${accts}</datalist>
+    <div class="row" style="gap:8px;align-items:center"><b>${esc(L2("Custom filter", "فلتر مخصص"))}</b>
+      ${rs.length > 1 ? `<select data-change="rmatch" aria-label="${esc(L2("Match", "المطابقة"))}"><option value="all">${esc(L2("All conditions", "كل الشروط"))}</option><option value="any" ${S.rulesMatch === "any" ? "selected" : ""}>${esc(L2("Any condition", "أي شرط"))}</option></select>` : ""}
+      <button type="button" class="btn sm" data-a="radd">+ ${esc(L2("Add condition", "إضافة شرط"))}</button></div>
+    ${rs.map(row).join("")}</div>`;
+}
+// a rule a person left half-filled: the filter is not applied until it is complete (never silently dropped)
+const ruleDone = (r, defs) => { const d = defs.find(x => x[0] === r.f); if (!d || !RULE_OPS[d[2]].includes(r.op)) return false;
+  if (RULE_NOVAL.has(r.op)) return true; return String(r.v ?? "").trim() !== "" && (r.op !== "between" || String(r.v2 ?? "").trim() !== ""); };
+// the same rules on rows already on the page (the chart): get(row, field) gives the value; groups use grpChain
+function ruleMatch(row, rules, match, get, defs) {
+  if (!rules.length) return true;
+  const today = new Date().toISOString().slice(0, 10), low = x => String(x ?? "").toLowerCase();
+  const one = r => { const d = defs.find(x => x[0] === r.f); if (!d) return false; const kind = d[2], x = get(row, r.f), v = r.v, v2 = r.v2;
+    if (kind === "bool") return r.op === "yes" ? !!x : !x;
+    if (kind === "money") { const n = +x || 0, a = +String(v).replace(/,/g, ""), b = +String(v2 ?? "").replace(/,/g, "");
+      return { gt: n > a, gte: n >= a, lt: n < a, lte: n <= a, eq: Math.abs(n - a) < 0.005, ne: Math.abs(n - a) >= 0.005, between: n >= Math.min(a, b) && n <= Math.max(a, b) }[r.op]; }
+    if (kind === "date") { const s = String(x || "").slice(0, 10);
+      if (r.op === "this_month") return s >= today.slice(0, 8) + "01" && s <= today; if (r.op === "this_year") return s >= today.slice(0, 5) + "01-01" && s <= today;
+      if (r.op === "last_days") { const from = new Date(Date.now() - (Math.max(1, +v) - 1) * 864e5).toISOString().slice(0, 10); return s >= from && s <= today; }
+      return { eq: s === v, before: s < v, after: s > v, between: s >= (v < v2 ? v : v2) && s <= (v < v2 ? v2 : v) }[r.op]; }
+    if (kind === "account") { const code = String(x || ""), want = String(v).trim();
+      if (r.op === "in_group" || r.op === "not_in_group") { const inside = get(row, "_chain").includes(want); return r.op === "in_group" ? inside : !inside; }
+      return { eq: code === want, ne: code !== want, starts: code.startsWith(want) }[r.op]; }
+    const s = low(x), w = low(v).trim();
+    return { contains: s.includes(w), not_contains: !s.includes(w), eq: s === w, ne: s !== w, starts: s.startsWith(w), ends: s.endsWith(w), empty: !s.trim(), not_empty: !!s.trim() }[r.op]; };
+  return match === "any" ? rules.some(one) : rules.every(one);
+}
 function filterBar(q, fields, extra = "") {
   const parts = [];
+  const ruleDefs = (fields.find(f => Array.isArray(f) && f[0] === "rules") || [])[1];
+  if (ruleDefs) {      // the conditions being edited: from the address the first time, then as changed here
+    if (S.rulesKey !== location.hash) { S.rulesKey = location.hash; S.rulesEdit = rulesOf(q).map(r => ({ ...r })); S.rulesMatch = q.match === "any" ? "any" : "all"; }
+    const redraw = () => { const b = $("#frules"); if (b) b.outerHTML = rulesBox(ruleDefs); };
+    S.H.radd = () => { const d = ruleDefs[0]; S.rulesEdit.push({ f: d[0], op: RULE_OPS[d[2]][0], v: "" }); redraw(); };
+    S.H.rdel = el => { S.rulesEdit.splice(+el.dataset.i, 1); redraw(); };
+    S.H.rfield = el => { const r = S.rulesEdit[+el.dataset.i], d = ruleDefs.find(x => x[0] === el.value); r.f = d[0]; r.op = RULE_OPS[d[2]][0]; r.v = ""; delete r.v2; redraw(); };
+    S.H.rop = el => { const r = S.rulesEdit[+el.dataset.i]; r.op = el.value; if (RULE_NOVAL.has(r.op)) { r.v = ""; delete r.v2; } redraw(); };
+    S.H.rset = el => { S.rulesEdit[+el.dataset.i][el.dataset.k] = el.value; };
+    S.H.rmatch = el => { S.rulesMatch = el.value; redraw(); };
+  }
   for (const f of fields) {
     if (f === "dates") parts.push(`<label class="f">${t("from")}<input type="date" name="date_from" value="${esc(q.date_from || "")}"></label>`,
       `<label class="f">${t("to")}<input type="date" name="date_to" value="${esc(q.date_to || "")}"></label>`);
@@ -2214,14 +2292,21 @@ function filterBar(q, fields, extra = "") {
     else if (f === "compare") parts.push(`<label class="f">${t("compare")}<select name="compare">${["none", "month", "quarter", "year"].map(c => `<option value="${c}" ${(q.compare || "none") === c ? "selected" : ""}>${t("c_" + c)}</option>`).join("")}</select></label>`);
     else if (f === "detail") parts.push(`<label class="f chk"><input type="checkbox" name="detail" ${q.detail !== "0" ? "checked" : ""}>${t("detail")}</label>`);
     else if (f === "allocate") parts.push(`<label class="f chk"><input type="checkbox" name="allocate" ${q.allocate !== "0" ? "checked" : ""}>${t("allocate")}</label>`);
+    else if (Array.isArray(f) && f[0] === "rules") parts.push(rulesBox(f[1]));
     else if (f === "lang") parts.push(`<label class="f">${t("report_lang")}<select name="lang"><option value="en">English</option><option value="ar" ${(q.lang || S.lang) === "ar" ? "selected" : ""}>العربية</option></select></label>`);
   }
   S.H.fapply = () => {
     const box = $("#fbar"); const v = {};
     $$("[name]", box).forEach(el => { v[el.name] = el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value; });
+    if (ruleDefs) {
+      const rs = S.rulesEdit || [];
+      if (rs.some(r => !ruleDone(r, ruleDefs))) { toast(L2("Complete or remove the unfinished condition first.", "أكمل الشرط غير المكتمل أو احذفه أولاً."), true); return; }
+      if (rs.length) { v.rules = JSON.stringify(rs.map(r => ({ f: r.f, op: r.op, ...(RULE_NOVAL.has(r.op) ? {} : { v: r.v }), ...(r.op === "between" ? { v2: r.v2 } : {}) }))); if (rs.length > 1) v.match = S.rulesMatch; }
+    }
+    S.rulesKey = null;
     setQ(v);
   };
-  S.H.fclear = () => setQ({});
+  S.H.fclear = () => { S.rulesKey = null; setQ({}); };
   S.H.ftoggle = () => $("#fbar").classList.toggle("open");
   // saved views: this person's named sets of filters for this screen
   const vkey = parseHash().parts.join("/"), myViews = () => ((((S.boot.profile || {}).prefs || {}).views || {})[vkey]) || [];
@@ -3361,7 +3446,7 @@ PAGES.bu = async (view, parts, q) => {
       ${k(t("net_profit"), b.net_profit, b.net_profit < 0 ? "neg" : "pos")}${k(t("receivable"), b.receivable)}${k(t("expected_billing"), b.expected_billing)}${k(t("to_collect"), b.to_collect)}
       ${b.savings ? `<a class="kpi" href="#/negotiations?bu_id=${b.id}" style="text-decoration:none;color:inherit"><div class="l">${esc(t("m_nego"))}</div><div class="v pos">${money(b.savings_kept)}</div><div class="muted" style="font-size:.78em">${L2("of", "من")} ${money(b.savings)} ${L2("Negotiated", "خصومات التفاوض")}</div></a>` : ""}</div>` +
     (b.basis === LIVE_FEE ? liveFeeCard(b) : "") +
-    filterBar(q, ["dates", ["kind", S.boot.enums.entry_kinds], "qv", "party", "account", "status"]) +
+    filterBar(q, ["dates", ["kind", S.boot.enums.entry_kinds], "qv", "party", "account", "status", ["rules", ENTRY_RULES()]]) +
     `<div class="card"><h2>${t("transactions")}</h2>${voucherRows(tx.rows)}${pager(tx.total, { ...q, limit: Math.min(100, +(q.limit || pageSize())) })}</div>`;
   bulkify($("table.vtbl", view), BULKS.entries("accounting.journal"));
 };
@@ -3375,7 +3460,7 @@ function voucherPage(dtype, kinds, opts = {}) {
     const top = opts.top ? await opts.top(q) : "";
     view.innerHTML = `<div class="toolbar">${can(mod, "add") ? `<button class="btn pri" data-a="newdoc">+ ${t("new")}</button>` : ""}${opts.buttons || ""}<span class="spacer"></span>
       ${exportMenu("vouchers", { ...q, kinds: kinds.join(","), title: t(opts.title) })}</div>${top}` +
-      filterBar(q, ["dates", "bu", "qv", "party", ...(kinds.length > 1 ? [["kind", kinds]] : []), "status"]) +
+      filterBar(q, ["dates", "bu", "qv", "party", ...(kinds.length > 1 ? [["kind", kinds]] : []), "status", ["rules", ENTRY_RULES()]]) +
       `<div class="card">${voucherRows(d.rows)}${pager(d.total, lq)}</div>`;
     bulkify($("table.vtbl", view), BULKS.entries(mod));
   };
@@ -4297,7 +4382,7 @@ PAGES.journal = async (view, parts, q) => {
     ${d.drafts && !drafts ? `<a class="chip warn" href="#/journal?status=pending" title="${esc(L2("Entered, not posted: awaiting approval", "مُدخلة وغير مرحّلة: بانتظار الاعتماد"))}">${esc(L2(`Drafts awaiting approval: ${d.drafts}`, `مسودات بانتظار الاعتماد: ${d.drafts}`))}</a>` : ""}
     ${drafts ? `<span class="chip">${ad.rows.length}</span>` : `<span class="chip">${d.total}</span><span class="chip">${money(d.posted_amount)} ${cur()}</span>${exportMenu("vouchers", { ...q, title: t("m_journal") })}`}</div>` +
     filterBar(q, ["dates", "bu", ["kind", S.boot.enums.entry_kinds], "account", "qv", "party", "jstatus", ["select", "created_by", L2("Entered by", "أدخله"), (d.people || []).map(u => [u, u])],
-      ["select", "approved_by", L2("Approved by", "اعتمده"), (d.people || []).map(u => [u, u])], "amount", "attach", "created", ["tag", d.tags || []], ["bugroup", d.bu_groups || []]]) +
+      ["select", "approved_by", L2("Approved by", "اعتمده"), (d.people || []).map(u => [u, u])], "amount", "attach", "created", ["tag", d.tags || []], ["bugroup", d.bu_groups || []], ["rules", ENTRY_RULES()]]) +
     `<div class="card">${drafts ? approvalRows(ad.rows) : voucherRows(d.rows) + pager(d.total, lq)}</div>`;
   if (!drafts) bulkify($("table.vtbl", view), BULKS.entries("accounting.journal"));
 };
@@ -5542,6 +5627,21 @@ PAGES.coa = async (view, parts, q) => {
   const [rows, groups] = await Promise.all([api("GET", "/api/accounts?" + qs(q)), api("GET", "/api/account-groups?" + qs(q)).catch(() => [])]);
   S.coaFind = "";
   const types = Object.keys(S.boot.enums.subtypes);
+  // the chart's filters (all accounts are on the page, so they are complete): a group's whole branch, type, statement
+  // line, which accounts to show, and the person's own conditions
+  const chainOf = a => a.parent ? [a.parent, ...grpChain(groups, a.parent)] : [];
+  const COA_RULES = () => [["code", t("code"), "text"], ["name", t("name"), "text"], ["type", t("type"), "choice", types.map(x => [x, tl(x)])],
+    ["subtype", t("statement_line"), "choice", types.flatMap(x => S.boot.enums.subtypes[x]).map(x => [x, sub(x)])],
+    ["group", L2("Group", "المجموعة"), "account"], ["balance", t("balance"), "money"], ["used", L2("Has entries", "عليه قيود"), "bool"],
+    ["system", L2("System account", "حساب نظامي"), "bool"], ["active", t("active"), "bool"]];
+  const coaGet = (a, f) => f === "name" ? `${a.name} ${a.name_ar || ""}` : f === "group" ? (a.parent || "") : f === "_chain" ? chainOf(a)
+    : f === "system" ? !!a.role : f === "active" ? !!a.active : a[f];
+  const coaRules = rulesOf(q), coaDefs = COA_RULES();
+  const pass = a => (a.active || q.inactive) &&
+    (!q.grp || (q.grp === "_none" ? !a.parent : chainOf(a).includes(q.grp))) && (!q.ty || a.type === q.ty) && (!q.line || a.subtype === q.line) &&
+    (!q.show || (q.show === "balance" ? Math.abs(a.balance || 0) >= 0.005 : q.show === "used" ? a.used : q.show === "unused" ? !a.used : q.show === "system" ? !!a.role : true)) &&
+    ruleMatch(a, coaRules, q.match, coaGet, coaDefs);
+  const filtering = !!(q.grp || q.ty || q.line || q.show || coaRules.length);
   // groups an account (or group) of a type may go under: no type, or the same type, all the way up
   const grpOk = (code, ty) => grpChain(groups, code).every(c => { const g = groups.find(x => x.code === c); return !g.type || !ty || g.type === ty; });
   const grpOpts = (ty, not) => [["", L2("— None (top level)", "— بدون (المستوى الأول)")], ...groups.filter(g => !(not || []).includes(g.code) && grpOk(g.code, ty))
@@ -5587,26 +5687,32 @@ PAGES.coa = async (view, parts, q) => {
   const drawTree = () => { const box = $("#coatree", view); if (!box) return;
     const find = S.coaFind || "", hit = a => !find || [a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase().includes(find);
     const gHit = g => [g.code, g.name, g.name_ar].join(" ").toLowerCase().includes(find);
-    const kids = c => groups.filter(g => (g.parent || "") === c), accs = c => rows.filter(a => (a.parent || "") === c && (a.active || q.inactive) && hit(a));
-    // while searching: only the groups with a matching account or name, all of them open
-    const has = c => !find || accs(c).length > 0 || kids(c).some(g => gHit(g) || has(g.code));
-    const open = c => !!find || !shut.has(c);
-    const branch = (c, depth) => kids(c).filter(g => !find || gHit(g) || has(g.code)).map(g => `<tr class="coa-grp" data-gid="${esc(g.code)}"><td style="padding-inline-start:${10 + depth * 18}px">
+    const kids = c => groups.filter(g => (g.parent || "") === c), accs = c => rows.filter(a => (a.parent || "") === c && pass(a) && hit(a));
+    // while searching or filtering: only the groups with a matching account (or, searching, a matching name), all open
+    const narrow = !!find || filtering;
+    const has = c => !narrow || accs(c).length > 0 || kids(c).some(g => (find && !filtering && gHit(g)) || has(g.code));
+    const open = c => narrow || !shut.has(c);
+    const branch = (c, depth) => kids(c).filter(g => !narrow || (find && !filtering && gHit(g)) || has(g.code)).map(g => `<tr class="coa-grp" data-gid="${esc(g.code)}"><td style="padding-inline-start:${10 + depth * 18}px">
         <button type="button" class="btn sm ghost" data-a="gtoggle" data-id="${esc(g.code)}" aria-label="${esc(L2("Open or close", "فتح أو إغلاق"))}">${open(g.code) ? "▾" : "▸"}</button> <b>${esc(g.code)}</b></td>
         <td><b>${esc(grpName(g))}</b> <span class="muted small">(${g.accounts})</span>${ed ? ` <button type="button" class="btn sm ghost" data-a="gedit" data-id="${esc(g.code)}">${esc(L2("Edit", "تعديل"))}</button>` : ""}</td>
         <td>${g.type ? esc(tl(g.type)) : ""}</td><td class="num"><b>${g.total == null ? "" : money(g.total)}</b></td></tr>` + (open(g.code) ? accs(g.code).map(a => rowHtml(a, depth + 1)).join("") + branch(g.code, depth + 1) : "")).join("");
     const loose = accs("");
     box.innerHTML = `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>${branch("", 0)}
-      ${loose.length ? `<tr class="coa-grp"><td colspan="4"><b>${esc(L2("Not in a group", "خارج المجموعات"))}</b></td></tr>${loose.map(a => rowHtml(a, 1)).join("")}` : ""}</tbody></table></div>`; };
+      ${loose.length ? `<tr class="coa-grp"><td colspan="4"><b>${esc(L2("Not in a group", "خارج المجموعات"))}</b></td></tr>${loose.map(a => rowHtml(a, 1)).join("")}` : ""}</tbody></table></div>`;
+    if (narrow && !$(".coa-row", box)) box.insertAdjacentHTML("beforeend", `<div class="empty">${esc(L2("No account matches.", "لا يوجد حساب مطابق."))}</div>`); };
   const inactive = rows.filter(a => !a.active).length;
   S.H.coainact = el => setQ({ ...q, inactive: el.checked ? "1" : "" });
   const add = can("accounting.coa", "add");
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="anew">+ ${L2("Add account", "إضافة حساب")}</button><button class="btn" data-a="gnew">+ ${L2("Add group", "إضافة مجموعة")}</button>` : ""}
     ${groups.length ? `<span class="seg"><button class="btn sm ${treeView ? "pri" : ""}" data-a="coaview" data-v="tree">${esc(L2("Tree", "الشجرة"))}</button><button class="btn sm ${treeView ? "" : "pri"}" data-a="coaview" data-v="types">${esc(L2("By type", "حسب النوع"))}</button></span>` : ""}
     <input type="search" class="coa-q" placeholder="${L2("Search by account code or name", "البحث برقم الحساب أو اسمه")}" data-input="coaq" style="min-width:220px;flex:1;max-width:360px">
-    ${inactive ? `<label class="f chk"><input type="checkbox" data-change="coainact" ${q.inactive ? "checked" : ""}>${S.lang === "ar" ? "إظهار الحسابات غير النشطة" : "Show inactive accounts"} (${inactive})</label>` : ""}<span class="muted" style="white-space:nowrap">${groups.length ? `${groups.length} ${L2("groups", "مجموعة")} · ` : ""}${rows.filter(a => a.active || q.inactive).length} ${L2("accounts", "حساب")}</span><span class="spacer"></span>${exportMenu("chart_of_accounts", { date_to: q.date_to || "", inactive: q.inactive ? 1 : "" })}</div>` +
-    filterBar(q, ["asof"]) + (treeView ? `<div class="card coa-card" id="coatree"></div>` : types.map(ty => `<div class="card coa-card"><div class="row" style="justify-content:space-between;align-items:center"><h2>${esc(tl(ty))}</h2>${add ? `<button class="btn sm" data-a="anew" data-type="${ty}">+ ${L2("Add", "إضافة")} ${esc(tl(ty))}</button>` : ""}</div><div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th>${t("normal")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
-    ${rows.filter(a => a.type === ty && (a.active || q.inactive)).map(a => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))} ${a.role ? `<span class="chip" title="${esc(L2("System account: the app posts to it by itself", "حساب نظام: يرحّل عليه البرنامج تلقائياً"))}">${esc(L2("System account", "حساب نظامي"))}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join(""));
+    ${inactive ? `<label class="f chk"><input type="checkbox" data-change="coainact" ${q.inactive ? "checked" : ""}>${S.lang === "ar" ? "إظهار الحسابات غير النشطة" : "Show inactive accounts"} (${inactive})</label>` : ""}<span class="muted" style="white-space:nowrap">${groups.length ? `${groups.length} ${L2("groups", "مجموعة")} · ` : ""}${filtering ? `${rows.filter(pass).length} ${L2("of", "من")} ` : ""}${rows.filter(a => a.active || q.inactive).length} ${L2("accounts", "حساب")}</span><span class="spacer"></span>${exportMenu("chart_of_accounts", { date_to: q.date_to || "", inactive: q.inactive ? 1 : "" })}</div>` +
+    filterBar(q, ["asof", ...(groups.length ? [["select", "grp", L2("Group", "المجموعة"), [["_none", L2("Not in a group", "خارج المجموعات")],
+        ...groups.slice().sort((x, y) => x.code.localeCompare(y.code)).map(g => [g.code, `${"\u00a0\u00a0".repeat(grpChain(groups, g.code).length)}${g.code} ${grpName(g)}`])]]] : []),
+      ["select", "ty", t("type"), types.map(x => [x, tl(x)])], ["select", "line", t("statement_line"), (q.ty ? S.boot.enums.subtypes[q.ty] : types.flatMap(x => S.boot.enums.subtypes[x])).map(x => [x, sub(x)])],
+      ["select", "show", L2("Show", "العرض"), [["balance", L2("With a balance", "لها رصيد")], ["used", L2("Used (has entries)", "مستخدمة (عليها قيود)")], ["unused", L2("Not used yet", "غير مستخدمة")], ["system", L2("System accounts", "الحسابات النظامية")]]],
+      ["rules", COA_RULES()]]) + (treeView ? `<div class="card coa-card" id="coatree"></div>` : types.map(ty => `<div class="card coa-card"><div class="row" style="justify-content:space-between;align-items:center"><h2>${esc(tl(ty))}</h2>${add ? `<button class="btn sm" data-a="anew" data-type="${ty}">+ ${L2("Add", "إضافة")} ${esc(tl(ty))}</button>` : ""}</div><div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th>${t("normal")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
+    ${rows.filter(a => a.type === ty && pass(a)).map(a => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))} ${a.role ? `<span class="chip" title="${esc(L2("System account: the app posts to it by itself", "حساب نظام: يرحّل عليه البرنامج تلقائياً"))}">${esc(L2("System account", "حساب نظامي"))}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join(""));
   if (treeView) drawTree();
 };
 
