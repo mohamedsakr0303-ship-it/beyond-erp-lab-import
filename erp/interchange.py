@@ -1397,7 +1397,7 @@ def _pack(o):
         return [_pack(x) for x in o]
     if type(o) is tuple:
         return {_TAG + "u": [_pack(x) for x in o]}
-    if type(o) is dict:
+    if type(o) is dict or type(o) is SheetData:
         if all(type(k) is str and not k.startswith(_TAG) for k in o):
             return {k: _pack(v) for k, v in o.items()}
         return {_TAG + "k": [[_pack(k), _pack(v)] for k, v in o.items()]}
@@ -1438,7 +1438,8 @@ def _unpack(o):
 def pack_read(data, source):
     """(source format, data as read) → gzip bytes; raises NotPackable for a type it cannot carry exactly."""
     import gzip
-    body = json.dumps({"beyond_import": 1, "source": source, "data": _pack(data)}, ensure_ascii=False, separators=(",", ":"))
+    body = json.dumps({"beyond_import": 1, "source": source, "data": _pack(data),       # strict: read from a spreadsheet
+                       **({"strict": 1} if getattr(data, "strict", False) else {})}, ensure_ascii=False, separators=(",", ":"))
     return gzip.compress(body.encode("utf-8"), 6)
 
 
@@ -1454,7 +1455,7 @@ def read_parsed(raw):
     for k, v in data.items():
         if not isinstance(k, str) or not (isinstance(v, list) or k.startswith("_")):
             raise acc.ValidationError("Not a packed import")
-    return str(obj.get("source") or ""), data
+    return str(obj.get("source") or ""), (SheetData(data) if obj.get("strict") else data)
 
 
 def gunzip_if(raw):

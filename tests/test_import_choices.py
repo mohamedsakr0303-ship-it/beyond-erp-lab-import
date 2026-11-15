@@ -95,6 +95,15 @@ class ImportChoices(unittest.TestCase):
         interchange.import_data(db3, copy.deepcopy(data), mode="replace")
         self.assertEqual(db3.one("SELECT status FROM business_units WHERE code=?", (bus[0]["code"],))["status"], "Maybe")
 
+    def test_a_spreadsheet_stays_one_through_the_shared_workspace(self):
+        import gzip
+        d = interchange.SheetData({"Business Units": [{"code": "X1", "name": "X", "status": "Maybe"}]})
+        src, back = interchange.read_parsed(gzip.decompress(interchange.pack_read(d, "xlsx")))
+        self.assertEqual(src, "xlsx")
+        self.assertTrue(getattr(back, "strict", False))                     # every device refuses the same rows
+        src, back = interchange.read_parsed(gzip.decompress(interchange.pack_read(dict(d), "json")))
+        self.assertFalse(getattr(back, "strict", False))                    # a backup stays a backup
+
     def test_the_import_screen_shows_formats_and_allowed_values_in_both_languages(self):
         cols = {c["key"]: c for c in importkit.describe("Chart of Accounts")["columns"]}
         self.assertIn(["Yes", "نعم"], cols["active"]["choice_words"])
