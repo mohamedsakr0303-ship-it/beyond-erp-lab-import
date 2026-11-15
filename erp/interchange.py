@@ -462,12 +462,17 @@ SHEETS = [
               C("eta_submitted_at", "E-Invoice Sent At", "تاريخ الإرسال", width=12, note="filled in by the app"),
               C("eta_checked_at", "E-Invoice Checked At", "تاريخ آخر تحقق", width=12, note="filled in by the app"),
               C("eta_signed", "Signed E-Invoice", "الفاتورة الموقّعة", width=10, note="filled in by the app (the signed document)"),
+              C("currency", "Currency", "العملة", width=8, note="An invoice in a foreign currency: its code (e.g. USD); its lines are priced in it. Blank = the company's"),
+              C("fx_rate", "Exchange Rate", "سعر الصرف", kind="num", note="Company currency per 1 unit, as the invoice was posted"),
+              C("from_unbilled", "Billed From Unbilled Revenue", "مفوتر من الإيرادات غير المفوترة", kind="money",
+                note="filled in by the app: the part of the invoice that bills work already booked as done, not yet invoiced"),
               C("x_sign", "credit note: −1", "إشعار دائن: −1", kind="calc", width=6, calc='=IF(LEFT({doc_type}&"",1)="C",-1,1)'),
+              C("x_fx", "rate used", "السعر المستخدم", kind="calc", width=6, calc='=IF(AND({currency}&""<>"",N({fx_rate})>0),N({fx_rate}),1)'),
               C("amount", "Net Amount", "صافي المبلغ", kind="calc",
                 calc="=SUMIFS([[Invoice Lines.amount]],[[Invoice Lines.number]],{number})"),
-              C("posted_amount", "Posted Amount", "المبلغ المرحّل", kind="calc", calc='=IF({status}="Draft",0,{x_sign}*{amount})'),
+              C("posted_amount", "Posted Amount", "المبلغ المرحّل", kind="calc", calc='=IF({status}="Draft",0,ROUND({x_sign}*{amount}*{x_fx},2))'),
               C("x_rest", "to the invoice's revenue account", "لحساب إيراد الفاتورة", kind="calc", width=10,
-                calc="={posted_amount}-SUMIFS([[Invoice Lines.x_own]],[[Invoice Lines.number]],{number})"),
+                calc="={posted_amount}-ROUND(SUMIFS([[Invoice Lines.x_own]],[[Invoice Lines.number]],{number})*{x_fx},2)"),
               C("vat_amt", "Output VAT", "ض.ق.م المخرجات", kind="calc", calc="=ROUND({posted_amount}*" + TAXRATE("{vat_code}") + ",2)"),
               C("wht_amt", "WHT by Client", "خصم وتحصيل العميل", kind="calc", calc="=ROUND({posted_amount}*" + TAXRATE("{wht_code}") + ",2)"),
               C("ar_amt", "Receivable", "المستحق من العميل", kind="calc", calc="={posted_amount}+{vat_amt}-{wht_amt}"),
@@ -537,6 +542,9 @@ SHEETS = [
               C("payable_account", "Payable Account", "حساب الدائنين", kind="acct", role="ap"),
               C("account", "Cost Account (issues)", "حساب التكلفة", kind="acct", role="materials"),
               C("note", "Note", "ملاحظة", width=16), C("vat_code", "VAT Code", "كود ض.ق.م", kind="tax", width=10), C("wht_code", "WHT Code", "كود خصم وتحصيل", kind="tax", width=10),
+              C("currency", "Bought In", "عملة الشراء", width=8,
+                note="A receipt bought in a foreign currency: its code. Unit Cost and Paid stay in the company's currency"),
+              C("fx_rate", "Exchange Rate", "سعر الصرف", kind="num", note="Company currency per 1 unit, as the receipt was posted"),
               C("x_rqty", "received qty", "الكمية المستلمة", kind="calc", width=8, calc='=IF({type}="Receipt",N({qty}),0)'),
               C("x_rval", "received value", "قيمة الاستلام", kind="calc", width=8, calc='=IF({type}="Receipt",ROUND(N({qty})*N({rate}),2),0)'),
               # FIFO (or moving average) per warehouse, in row order: the rows are kept in date order (receipts and count
@@ -805,7 +813,10 @@ def export_data(db):
                                       "reason": x.get("eta_reason") or "", "einv_template": x.get("einv_template") or "",
                                       "eta_uuid": x.get("eta_uuid") or "", "eta_status": x.get("eta_status") or "", "eta_long_id": x.get("eta_long_id") or "",
                                       **{k: x.get(k) or "" for k in ("eta_submission", "eta_submitted_at", "eta_checked_at")},
-                                      "eta_signed": x.get("eta_signed") if len(x.get("eta_signed") or "") < 30000 else ""})
+                                      "eta_signed": x.get("eta_signed") if len(x.get("eta_signed") or "") < 30000 else "",
+                                      "currency": x.get("currency") or "", "fx_rate": (x.get("fx_rate") or "") if x.get("currency") else "",
+                                      "from_unbilled": (json.loads((db.one("SELECT meta FROM journal_entries WHERE id=?", (x["entry_id"],)) or {}).get("meta") or "{}")
+                                                        .get("billed_from_unbilled", "") if x.get("entry_id") and x["status"] == "posted" else "")})
         for ln in db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (x["id"],)):
             pct = ln.get("pct")
             out["Invoice Lines"].append({"number": x["number"], "category": ln["category"], "sub": ln["sub"],
@@ -844,6 +855,9 @@ def export_data(db):
                     else:
                         row["payable_account"] = ln["account"]
             row["vat_code"], row["wht_code"] = e["meta"].get("vat_code", ""), e["meta"].get("wht_code", "")
+            fxl = next((ln for ln in e["lines"] if ln.get("currency") and ln.get("fx_rate")), None)
+            if fxl:                    # bought in a foreign currency: what the supplier is owed stays in it on import
+                row["currency"], row["fx_rate"] = fxl["currency"], fxl["fx_rate"]
             row["rate"] = round(inv_line["debit"] / m["qty"], 6) if m["qty"] else row["rate"]
         elif m["kind"] == "Issue" and e:
             row["qty"] = -m["qty"]
@@ -2763,7 +2777,9 @@ def _imp_invoices(db, data, errors, counts, user, stats):
                  "customer": r.get("customer"), "vat_code": r.get("vat_code"), "wht_code": r.get("wht_code"), "seq_no": r.get("extract_no"),
                  "project": r.get("project"), "work": r.get("work"), "prev_paid": r.get("prev_paid"), "deductions": r.get("deductions"),
                  "final": r.get("final"), "notes": r.get("notes"),
-                 "fees": r.get("fees") if r.get("fees") not in (None, "") else (old or {}).get("fees") or ""}
+                 "fees": r.get("fees") if r.get("fees") not in (None, "") else (old or {}).get("fees") or "",
+                 # an invoice in a foreign currency keeps it, and the rate it was posted at
+                 **({"currency": acc.text(r.get("currency")).upper(), "fx_rate": r.get("fx_rate") or 0} if acc.text(r.get("currency")) else {})}
             dt = _doc_type(r.get("doc_type"))
             if dt in ("C", "D") or (old and (old.get("doc_type") or "I") != "I"):
                 d.update(doc_type=dt or old["doc_type"], eta_reason=r.get("reason") or (old or {}).get("eta_reason") or "")
@@ -2804,7 +2820,8 @@ def _imp_invoices(db, data, errors, counts, user, stats):
                 xid = acc.save_extract(db, d)
             if want_posted:
                 acc.post_extract(db, xid, user=user, ar_account=r.get("ar_account") or None,
-                                 revenue_account=r.get("revenue_account") or None)
+                                 revenue_account=r.get("revenue_account") or None,
+                                 from_unbilled=r.get("from_unbilled") if r.get("from_unbilled") not in (None, "") else None)
             eta = {k: acc.text(r.get(k), maxlen=60 if k != "eta_long_id" else 120) for k in ("eta_uuid", "eta_status", "eta_long_id", "eta_submission", "eta_submitted_at", "eta_checked_at") if r.get(k)}
             if r.get("eta_signed"):
                 eta["eta_signed"] = str(r["eta_signed"])[:30000]
@@ -2819,6 +2836,11 @@ def _imp_invoices(db, data, errors, counts, user, stats):
 
 def _imp_stock(db, r, user):
     d = dict(r)
+    if acc.text(r.get("currency")) and r.get("type") == "Receipt" and acc.num(r.get("fx_rate") or 0) > 0:
+        # the sheet's amounts are in the company's currency: back to the currency it was bought in, at its rate
+        k = acc.num(r["fx_rate"])
+        d.update(currency=acc.text(r["currency"]).upper(), fx_rate=k, rate=acc.num(r.get("rate") or 0) / k,
+                 paid=acc.num(r.get("paid") or 0) / k if r.get("paid") not in (None, "") else r.get("paid"))
     if r.get("type") == "Adjustment":          # the sheet gives the difference (counted − books) of that day
         d["diff"] = acc.num(r.get("qty"), "qty", allow_negative=True)
     acc.stock_move(db, d, user)

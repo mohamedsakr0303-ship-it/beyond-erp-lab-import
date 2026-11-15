@@ -170,6 +170,10 @@ class Revaluation(unittest.TestCase):
         self.assertEqual(fx.carried(db, ar, "Globex", "USD", "2026-02-01"), (100000, 5000000))
         with self.assertRaisesRegex(acc.ValidationError, "already revalued on 2026-01-31"):
             fx.revalue(db, "2026-01-31", "t")
+        acc.void_entry(db, r["entry"], "wrong rate", "t")                  # undone together with its reversal…
+        self.assertEqual({x["status"] for x in db.q("SELECT status FROM journal_entries WHERE id IN (?,?)", (r["entry"], r["reversal"]))}, {"void"})
+        r = fx.revalue(db, "2026-01-31", "t")                                # …so it can be done again
+        self.assertTrue(r["entry"])
         # paid in February at 51: the gain / loss is against what it cost, not the restated value
         eid = acc.record_collection(db, {"date": "2026-02-11", "bu_code": "P1", "party": "Globex", "mode": "invoice", "amount": 1000,
                                          "received_into": "1015", "currency": "USD"}, "t")
@@ -489,7 +493,18 @@ class Files(unittest.TestCase):
                                 "lines": [{"account": ar, "debit": 1000}, {"account": rev, "credit": 1000}]}, "t")
         acc.record_collection(db, {"date": "2026-01-21", "bu_code": "P1", "party": "Globex", "mode": "invoice", "amount": 400,
                                    "received_into": "1015", "currency": "USD"}, "t")
+        # a USD invoice partly billed out of work booked as done (unbilled revenue), and stock bought in USD
+        acc.record_journal(db, {"date": "2026-01-10", "bu_code": "P1", "lines": [{"account": db.acct("unbilled_revenue"), "debit": 10400},
+                                                                                {"account": rev, "credit": 10400}]}, "t")
+        xid = acc.save_extract(db, {"bu_code": "P1", "number": "INV-USD", "date": "2026-01-21", "customer": "Globex", "currency": "USD",
+                                    "lines": [{"description": "Works", "qty": 1, "price": 500}]})
+        acc.post_extract(db, xid)
+        wh = db.one("SELECT id FROM warehouses LIMIT 1")["id"]
+        acc.stock_move(db, {"type": "Receipt", "date": "2026-01-21", "warehouse_id": wh, "item": "Steel", "qty": 2, "rate": 100,
+                            "vendor": "Initech", "paid": 0, "currency": "USD"}, "t")
         out = interchange.export_data(db)
+        self.assertEqual(next(r for r in out["Sales Invoices"] if r["number"] == "INV-USD")["from_unbilled"], 200.0)   # 10,400 at 52
+        self.assertEqual(next(r for r in out["Stock Moves"] if r["item"] == "Steel")["currency"], "USD")
         self.assertEqual(next(a for a in out["Chart of Accounts"] if a["code"] == "1015")["currency"], "USD")
         self.assertEqual(next(p for p in out["Parties"] if p["name"] == "Globex")["currency"], "USD")
         self.assertEqual(len(out["Exchange Rates"]), 4)
@@ -508,6 +523,7 @@ class Files(unittest.TestCase):
                 self.assertEqual(fx.carried(db2, ar, "Globex", "USD", "2026-12-31"), fx.carried(db, ar, "Globex", "USD", "2026-12-31"))
                 self.assertEqual(db2.one("SELECT currency FROM accounts WHERE code='1015'")["currency"], "USD")
                 self.assertEqual(db2.one("SELECT COUNT(*) n FROM fx_rates")["n"], 4)
+                self.assertEqual(db2.one("SELECT value FROM stock_moves WHERE kind='Receipt'")["value"], 1040000)
 
 
 if __name__ == "__main__":

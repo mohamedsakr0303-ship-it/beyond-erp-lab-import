@@ -889,6 +889,15 @@ def void_entry(db, eid, reason="", user="", payroll_run=False):
             raise ValidationError(Note("This entry belongs to a posted payroll run. Open the run and Unpost it instead.",
                                        "هذا القيد جزء من مسير رواتب مُرحَّل. افتح المسير واستخدم «إلغاء الترحيل» بدلاً من ذلك."))
         check_open(db, e["date"])
+        # a month-end revaluation and its next-day reversal (erp/fx.py) are undone together, so it can be done again
+        pair = e["reversal_of"] or e["reversed_by"]
+        if pair and "FX Revaluation" in (e["kind"], (db.one("SELECT kind FROM journal_entries WHERE id=?", (pair,)) or {}).get("kind")):
+            check_open(db, db.one("SELECT date FROM journal_entries WHERE id=?", (pair,))["date"])
+            for x in (eid, pair):
+                m = json.loads((db.one("SELECT meta FROM journal_entries WHERE id=?", (x,)) or {}).get("meta") or "{}")
+                m.update(void_reason=text(reason), voided_by=user)
+                db.conn.execute("UPDATE journal_entries SET status='void', meta=? WHERE id=?", (json.dumps(m, ensure_ascii=False), x))
+            return
         if e["reversed_by"] or e["reversal_of"]:
             raise ValidationError("This entry is part of a reversal pair and cannot be voided")
         _stock_undo_guard(db, eid)
@@ -1809,7 +1818,7 @@ def _extract_fx(db, x, date=None):
     return {"currency": x["currency"], "rate": rate}
 
 
-def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=None):
+def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=None, from_unbilled=None):
     """Invoice executed work: Dr Receivables / Cr Revenue."""
     x = get_extract(db, xid)
     if not x:
@@ -1845,12 +1854,15 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
     managed = wip.managed(db, x["bu_id"])          # kept up to date automatically: it adjusts once this is posted
     unbilled_acc, billed_from = db.acct("unbilled_revenue") if x["bu_id"] and not managed else None, 0
     if unbilled_acc:
-        bal = db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-                     f"WHERE {LIVE} AND l.account=? AND e.bu_id=?", (unbilled_acc, x["bu_id"]))["n"]
-        if xfx:                                    # the invoice is in a foreign currency: that balance in it
-            bal = int(bal / xfx["rate"])
         total = sum(by_acc.values())
-        billed_from = max(0, min(bal, total))
+        if from_unbilled is not None:              # restored from a file: exactly the share it was billed from before
+            billed_from = max(0, min(to_minor(num(from_unbilled)), total))
+        else:
+            bal = db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                         f"WHERE {LIVE} AND l.account=? AND e.bu_id=?", (unbilled_acc, x["bu_id"]))["n"]
+            if xfx:                                # the invoice is in a foreign currency: that balance in it
+                bal = int(bal / xfx["rate"])
+            billed_from = max(0, min(bal, total))
         if billed_from:
             keep = total - billed_from
             scaled = {a: (v * keep) // total for a, v in by_acc.items()}
