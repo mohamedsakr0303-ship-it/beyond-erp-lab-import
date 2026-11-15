@@ -367,6 +367,65 @@ class Documents(unittest.TestCase):
         self.assertTrue(balanced(db))
 
 
+    def test_a_dollar_custody_is_followed_in_dollars(self):
+        from erp import custody
+        db = books()
+        cid = custody.save(db, {"holder": "Samir", "account": "1015", "issued_on": "2026-01-05", "bu_code": "P1", "booking": "none"}, user="t")
+        custody.post(db, cid, "issue", {"date": "2026-01-05", "amount": 500, "paid_from": db.acct("bank")}, "t")      # 500 USD from the pound bank
+        custody.post(db, cid, "settle", {"date": "2026-01-21", "report_no": "R-1", "lines": [
+            {"date": "2026-01-20", "description": "Taxi", "account": db.acct("other_overhead"), "amount": 100}]}, "t")
+        st = custody.status(db, custody.get(db, cid))
+        self.assertEqual(st["balance"], 400.0)                                     # 400 USD left with Samir, not pounds
+        self.assertEqual(bal(db, "1015"), 20000)                                   # 400 USD at the 50 they were given at
+        self.assertEqual(custody.statement(db, cid)["rows"][-1]["balance"], 400.0)
+        self.assertTrue(balanced(db))
+
+    def test_maintenance_paid_in_dollars_keeps_the_machine_cost_in_pounds(self):
+        from erp import equipment
+        db = books()
+        e = equipment.save(db, {"name": "Mixer", "hourly_rate": 100, "meter_start": 50})
+        lid = equipment.log_maintenance(db, {"equipment_id": e, "cost": 100, "date": "2026-01-21", "paid_from": "1015", "currency": "USD"}, "t")
+        self.assertEqual(db.one("SELECT cost FROM maintenance_logs WHERE id=?", (lid,))["cost"], 520000)     # 100 USD × 52
+        self.assertTrue(balanced(db))
+
+    def test_a_patient_and_an_insurer_who_deal_in_dollars_owe_in_dollars(self):
+        from erp import care, industries
+        db = Database(":memory:")
+        industries.apply(db, "healthcare")
+        db.set_setting("fx_currencies", "USD")
+        fx.set_rate(db, "2026-01-01", "USD", 50)
+        db.x("INSERT INTO business_units(code,name) VALUES ('CL1','Clinic 1')")
+        bu = db.one("SELECT id FROM business_units WHERE code='CL1'")["id"]
+        gp = care.save_service(db, {"name": "GP", "category": "consultation", "price": 400, "insurer_price": 300, "provider_pct": 40})
+        pid = care.save_patient(db, {"name": "Tourist Tom", "payer": "insurer", "insurer": "Global TPA", "coverage_pct": 80, "currency": "USD"})
+        db.x("UPDATE parties SET currency='USD' WHERE name='Global TPA'")
+        vid = care.save_visit(db, {"date": "2026-02-01", "patient_id": pid, "provider": "Dr. A", "bu_id": bu, "lines": [{"service_id": gp, "qty": 1}]}, "boss")
+        care.set_status(db, vid, "arrived", {"time": "10:00"})
+        care.set_status(db, vid, "done", {"time": "10:30"})
+        care.bill_visit(db, vid, {"paid": 0}, "boss")
+        ins = care.INS
+        self.assertEqual(fx.carried(db, ins, "Global TPA", "USD", "2026-12-31"), (480, 24000))          # 240 EGP = 4.80 USD
+        self.assertEqual(fx.carried(db, care.AR, "Tourist Tom", "USD", "2026-12-31"), (120, 6000))
+        cl = care.make_claim(db, "Global TPA", "2026-01-01", "2026-12-31", "boss")
+        care.settle_claim(db, cl["id"] if isinstance(cl, dict) else cl, {"date": "2026-02-10", "paid": 240, "rejected": 0}, "boss")
+        self.assertEqual(fx.carried(db, ins, "Global TPA", "USD", "2026-12-31"), (0, 0))
+        self.assertTrue(balanced(db))
+
+    def test_an_employee_paid_in_dollars_is_owed_the_net_in_dollars(self):
+        from erp import payroll as P
+        db = books()
+        e = P.save_employee(db, {"name": "Expat Eng", "basic": 10400, "insured": "No", "taxed": "No", "bu_code": "P1"})
+        db.x("INSERT INTO parties(name,type,currency) VALUES ('Expat Eng','employee','USD')")
+        r = P.create_run(db, {"period": "2026-01", "date": "2026-01-21"})
+        db.x("UPDATE payroll_runs SET date='2026-01-21' WHERE id=?", (r,))
+        P.post_run(db, r)
+        acr = db.acct("accrued_payroll")
+        self.assertEqual(fx.carried(db, acr, "Expat Eng", "USD", "2026-12-31"), (-20000, -1040000))     # 10,400 EGP = 200 USD
+        acc.record_payment(db, {"date": "2026-01-31", "against": acr, "party": "Expat Eng", "amount": 200, "paid_from": "1015", "currency": "USD"}, "t")
+        self.assertEqual(fx.carried(db, acr, "Expat Eng", "USD", "2026-12-31"), (0, 0))
+        self.assertTrue(balanced(db))
+
+
 class App:
     pass
 

@@ -2202,7 +2202,7 @@ class Database:
         self._add_cols("parties", [("currency", "TEXT NOT NULL DEFAULT ''")])
         self._add_cols("extracts", [("currency", "TEXT NOT NULL DEFAULT ''"), ("fx_rate", "REAL NOT NULL DEFAULT 0")])
         # documents kept in a foreign currency (erp/fx.py): their amounts, schedules and balances are in it
-        for t in ("loans", "sales_orders", "rentals", "contracts", "subscriptions", "purchase_orders"):
+        for t in ("loans", "sales_orders", "rentals", "contracts", "subscriptions", "purchase_orders", "care_patients"):
             self._add_cols(t, [("currency", "TEXT NOT NULL DEFAULT ''")])
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])

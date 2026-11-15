@@ -317,3 +317,35 @@ def fetch_now(db):
     except (OSError, ValueError) as e:
         raise acc.ValidationError(f"Could not fetch today's rates ({e}). Enter them by hand, or try again later.") from None
     return store_fetched(db, payload)
+
+
+# ------------------------------------------------------------------ amounts priced in the company's currency, owed in another
+def party_currency(db, party):
+    cur = (db.one("SELECT currency FROM parties WHERE name=?", (party or "",)) or {}).get("currency") or "" \
+        or (db.one("SELECT currency FROM care_patients WHERE name=? AND currency<>''", (party or "",)) or {}).get("currency") or ""
+    return "" if cur == base(db) or cur not in enabled(db) else cur
+
+
+def owed_line(db, line, party, date):
+    """A receivable / payable line priced in the company's currency for a contact who deals in a foreign one (their
+    usual currency): it keeps its value and is owed in that currency, at the day's rate."""
+    cur = party_currency(db, party)
+    amt = acc.num(line.get("debit") or line.get("credit") or 0)
+    if not cur or not amt:
+        return line
+    r = rate_on(db, cur, date)
+    return {**line, "currency": cur, "fx_amount": to_major(round(to_minor(amt) / r)), "fx_rate": r}
+
+
+def settle_line(db, account, party, home_minor, date, side="credit"):
+    """Clearing part of what a contact owes on an account kept in their currency: the same share of the foreign
+    balance it clears at home, so nothing is left behind in either currency."""
+    cur = party_currency(db, party)
+    line = {"account": account, side: to_major(home_minor), "party": party}
+    if not cur or not home_minor:
+        return line
+    fxb, homeb = carried(db, account, party, cur, acc.clean_date(date))
+    if not homeb:
+        return owed_line(db, line, party, date)
+    part = round(abs(fxb) * home_minor / abs(homeb))
+    return {**line, "currency": cur, "fx_amount": to_major(part), "fx_rate": round(home_minor / part, 6) if part else 0}

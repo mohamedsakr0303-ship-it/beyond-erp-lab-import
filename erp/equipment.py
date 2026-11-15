@@ -227,7 +227,10 @@ def log_maintenance(db, d, user=""):
                   else {"account": acc.money_account(db, d.get("method"), d.get("paid_from")), "credit": to_major(cost)})
             eid = acc._insert_entry(db, date=date, kind="Equipment Maintenance", party=vendor, user=user, ref=e["code"],
                                     memo=f"{kind.title()} — {e['name']} ({e['code']}): {desc}",
-                                    lines=[{"account": pool, "debit": to_major(cost)}, cr], meta={"equipment": e["code"], "hours_at": hours_at})
+                                    lines=[{"account": pool, "debit": to_major(cost)}, cr], meta={"equipment": e["code"], "hours_at": hours_at},
+                                    **acc.fx_of(d))
+            if acc.fx_of(d) or acc.DOC_FX.get():   # paid in a foreign currency: the machine's running cost is kept in the company's
+                cost = db.one("SELECT COALESCE(SUM(debit),0) n FROM journal_lines WHERE entry_id=? AND account=?", (eid, pool))["n"] or cost
         lid = db.conn.execute("INSERT INTO maintenance_logs(equipment_id,plan_id,date,kind,description,hours_at,cost,vendor,entry_id) "
                               "VALUES (?,?,?,?,?,?,?,?,?)", (e["id"], plan, date, kind, desc, hours_at, cost, vendor, eid)).lastrowid
         if d.get("back_in_service") and e["status"] == "maintenance":

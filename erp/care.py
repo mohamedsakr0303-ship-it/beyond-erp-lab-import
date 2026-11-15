@@ -86,12 +86,23 @@ def save_patient(db, d, pid=None):
             raise ValidationError("Patient not found")
         db.x("UPDATE care_patients SET name=?, national_id=?, phone=?, phone2=?, dob=?, gender=?, address=?, zone=?, payer=?, insurer=?, "
              "policy_no=?, coverage_pct=?, alerts=?, notes=?, active=? WHERE id=?", vals + (int(pid),))
+        _patient_currency(db, int(pid), d)
         return int(pid)
     code = text(d.get("code"), maxlen=30) or _next(db, "care_patients", "P-")
     if db.one("SELECT 1 FROM care_patients WHERE code=?", (code,)):
         raise ValidationError(f"Patient file number {code} is already used")
-    return db.x("INSERT INTO care_patients(code,name,national_id,phone,phone2,dob,gender,address,zone,payer,insurer,policy_no,coverage_pct,"
-                "alerts,notes,active,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (code,) + vals + (now_iso(),)).lastrowid
+    pid = db.x("INSERT INTO care_patients(code,name,national_id,phone,phone2,dob,gender,address,zone,payer,insurer,policy_no,coverage_pct,"
+               "alerts,notes,active,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (code,) + vals + (now_iso(),)).lastrowid
+    _patient_currency(db, pid, d)
+    return pid
+
+
+def _patient_currency(db, pid, d):
+    """The currency a patient pays in (a visitor from abroad): what they owe is kept in it; prices stay in the company's."""
+    if "currency" in d:
+        from . import fx
+        cur = fx.code(d.get("currency"))
+        db.x("UPDATE care_patients SET currency=? WHERE id=?", ("" if cur == fx.base(db) else cur, pid))
 
 
 def patients(db, q=None, payer=None, insurer=None, active=None):
@@ -298,10 +309,11 @@ def bill_visit(db, vid, d, user):
     jl = []
     if paid:
         jl.append({"account": cash, "debit": to_major(paid)})
+    from . import fx     # a patient / insurer who deals in a foreign currency owes in it (prices stay in the company's)
     if v["patient_amt"] - paid:
-        jl.append({"account": AR, "debit": to_major(v["patient_amt"] - paid), "party": pat["name"]})
+        jl.append(fx.owed_line(db, {"account": AR, "debit": to_major(v["patient_amt"] - paid), "party": pat["name"]}, pat["name"], date))
     if v["insurer_amt"]:
-        jl.append({"account": INS, "debit": to_major(v["insurer_amt"]), "party": pat["insurer"]})
+        jl.append(fx.owed_line(db, {"account": INS, "debit": to_major(v["insurer_amt"]), "party": pat["insurer"]}, pat["insurer"], date))
     if pkg_val:
         jl.append({"account": PREPAID, "debit": to_major(pkg_val), "party": pat["name"]})
     services_total = v["patient_amt"] + v["insurer_amt"] - v["travel_fee"]
@@ -419,7 +431,8 @@ def sell_package(db, d, user):
     if paid:
         jl.append({"account": acc.money_account(db, d.get("method") or "Cash"), "debit": to_major(paid)})
     if price - paid:
-        jl.append({"account": AR, "debit": to_major(price - paid), "party": pat["name"]})
+        from . import fx
+        jl.append(fx.owed_line(db, {"account": AR, "debit": to_major(price - paid), "party": pat["name"]}, pat["name"], date))
     jl.append({"account": PREPAID, "credit": to_major(price), "party": pat["name"]})
     name = text(d.get("name"), maxlen=200) or f"{sessions} × {svc['name']}"
     with db.tx():
@@ -483,7 +496,8 @@ def settle_claim(db, cid, d, user):
         jl.append({"account": acc.money_account(db, d.get("method") or "Bank Transfer"), "debit": to_major(paid)})
     if rejected:
         jl.append({"account": REJECT, "debit": to_major(rejected)})
-    jl.append({"account": INS, "credit": to_major(c["claimed"]), "party": c["insurer"]})
+    from . import fx     # an insurer owing in a foreign currency: the claim clears its share of that balance
+    jl.append(fx.settle_line(db, INS, c["insurer"], c["claimed"], clean_date(d.get("date"))))
     with db.tx():
         eid = acc._insert_entry(db, date=clean_date(d.get("date")), kind="Insurance Claim", party=c["insurer"], ref=c["number"],
                                 memo=f"{c['number']} — {c['insurer']} settled" + (f" ({to_major(rejected):,.2f} rejected)" if rejected else ""),

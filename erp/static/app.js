@@ -4697,6 +4697,9 @@ function carePatientForm(p) {
     { k: "payer", l: L2("Payer", "جهة الدفع"), type: "select", v: p.payer || "self", change: "cppay", opts: [["self", L2("Patient (self-pay)", "المريض (دفع ذاتي)")], ["insurer", L2("Insurer, TPA or corporate contract", "تأمين أو شركة إدارة أو تعاقد شركة")]] },
     { k: "insurer", l: L2("Insurer / TPA", "شركة التأمين / شركة الإدارة"), v: p.insurer || "", list: "careins" }, { k: "policy_no", l: L2("Card / policy no.", "رقم البطاقة / الوثيقة"), v: p.policy_no || "" },
     { k: "coverage_pct", l: L2("Insurer coverage %", "نسبة تغطية التأمين %"), type: "number", v: p.coverage_pct ?? 80, help: L2("The patient pays the remainder (co-payment).", "يدفع المريض الباقي (نسبة التحمل).") },
+    ...(fxOn() || p.currency ? [{ k: "currency", l: L2("Pays in", "يدفع بعملة"), type: "select", v: p.currency || "",
+      opts: [["", fxBase()], ...[...new Set([...(S.boot.fx.currencies || []), ...(p.currency ? [p.currency] : [])])].map(c => [c, c])],
+      help: L2("Prices stay in the clinic's currency; what the patient owes is kept in this one", "تبقى الأسعار بعملة العيادة؛ ويُسجل المستحق على المريض بهذه العملة") }] : []),
     { k: "zone", l: L2("Area", "المنطقة"), v: p.zone || "" }, { k: "address", l: t("address") || L2("Address", "العنوان"), v: p.address || "", span: "spanall" },
     { k: "alerts", l: L2("Medical alerts (allergies, chronic conditions)", "تنبيهات طبية (حساسية، أمراض مزمنة)"), v: p.alerts || "", span: "spanall" },
     { k: "notes", l: t("notes"), type: "textarea", v: p.notes || "", span: "spanall" },
@@ -8135,8 +8138,11 @@ async function custodyAction(C, action) {
       ...(C.kind === "permanent" ? [{ k: "replenish", l: L2("Replenish by the same amount", "استكمال العهدة بنفس المبلغ"), type: "checkbox", v: true, span: "spanall" },
         { k: "paid_from", l: L2("Replenish from", "الاستكمال من"), type: "select", opts: moneyAccts(false), v: defMoney("cash") }] : [])],
   }[action];
+  // a custody on an account kept in a foreign currency is in it: its amounts are, and the cash side is converted
+  const cCur = (S.boot.accounts.find(a => a.code === C.account) || {}).currency || "";
+  if (cCur) fields.push({ k: "fx_rate", l: L2(`Exchange rate (${fxBase()} per 1 ${cCur})`, `سعر الصرف (${fxBase()} لكل 1 ${cCur})`), type: "number", help: L2("Blank = the day's rate", "فارغ = سعر اليوم") });
   const collect = f => ({ ...readForm(f), id: C.id, lines: action === "settle" ? rows : undefined });
-  drawer(`${titles[action]} — ${C.code} · ${C.holder}`, form(fields) + `<h4 style="margin:12px 0 0">${L2("Entry", "القيد")}</h4><div id="lpv" class="muted">—</div>`,
+  drawer(`${titles[action]} — ${C.code} · ${C.holder}${cCur ? ` · ${cCur}` : ""}`, form(fields) + `<h4 style="margin:12px 0 0">${L2("Entry", "القيد")}</h4><div id="lpv" class="muted">—</div>`,
     async (v, f) => {
       if (action === "settle") lineGaps(rows, r => !isBlank(r.description) && !(+r.amount), "enter the amount paid, or clear the line.", "أدخل المبلغ المدفوع أو امسح السطر.");
       await api("POST", `/api/custody/${C.id}/${action}`, collect(f)); toast(t("posted")); },
@@ -12917,7 +12923,8 @@ function maintForm(e, plan) {
     { k: "date", l: t("date"), type: "date", v: today() }, { k: "description", l: t("description"), span: "spanall" },
     { k: "hours_at", l: L2("Current hour meter", "قراءة العداد الحالية"), type: "number", ph: e ? String(e.meter) : "" }, { k: "cost", l: L2("Cost", "التكلفة"), type: "number" },
     { k: "vendor", l: L2("Workshop / supplier", "الورشة / المورد"), list: "mtven" }, { k: "paid_from", l: L2("Paid from", "الدفع من"), type: "select", opts: moneyAccts(), v: defMoney("cash") },
-    { k: "on_credit", l: L2("On credit (payable to workshop)", "آجل (مستحق للورشة)"), type: "checkbox" }, { k: "back_in_service", l: L2("Returned to service", "عادت للخدمة"), type: "checkbox", v: 1 }]) + partyList("mtven"),
+    { k: "on_credit", l: L2("On credit (payable to workshop)", "آجل (مستحق للورشة)"), type: "checkbox" }, ...fxFields(),
+    { k: "back_in_service", l: L2("Returned to service", "عادت للخدمة"), type: "checkbox", v: 1 }]) + partyList("mtven"),
     async v => { await api("POST", "/api/maintenance-logs", v); toast(t("saved")); });
 }
 function mplanForm(e, p) {

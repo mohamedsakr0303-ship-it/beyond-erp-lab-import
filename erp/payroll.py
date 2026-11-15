@@ -543,7 +543,8 @@ def post_run(db, rid, user=""):
             if paid:
                 L.append({"account": acc.money_account(db, inp["method"] or emp["method"]), "credit": paid})
             if round(c["net"] - paid, 2):
-                L.append({"account": accrued, "credit": round(c["net"] - paid, 2), "party": name})
+                from . import fx       # an employee paid in a foreign currency (their contact's usual one) is owed the net in it
+                L.append(fx.owed_line(db, {"account": accrued, "credit": round(c["net"] - paid, 2), "party": name}, name, r["date"]))
             L = [x for x in L if x.get("debit") or x.get("credit")]
             eid = acc._insert_entry(db, date=r["date"], kind=KIND, memo=f"Payroll {r['period']} — {name}" + (f" — {emp['job_title']}" if emp["job_title"] else ""),
                                     bu_id=bu, party=name, ref=f"PR:{r['period']}:{emp['code']}", lines=L,

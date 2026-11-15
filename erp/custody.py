@@ -73,6 +73,17 @@ def _entries(db, code):
                 (f"CU:{code}", acc.ref_prefix(f"CU:{code}:"), code))
 
 
+def _cur(db, c):
+    """A custody held in a foreign currency is one on an account kept in it (erp/fx.py): followed in that currency."""
+    return (db.one("SELECT currency FROM accounts WHERE code=?", (c["account"],)) or {}).get("currency") or ""
+
+
+def _net(db, c):
+    cur = _cur(db, c)
+    return ("(CASE WHEN l.currency=? THEN (CASE WHEN l.debit>0 THEN l.fx_amount ELSE -l.fx_amount END) ELSE 0 END)", [cur]) if cur \
+        else ("(l.debit-l.credit)", [])
+
+
 def _moves(db, c, tag=None):
     """Signed movement on the custody account (+ = more money with the holder). tag PAY: payments made from it elsewhere."""
     w, p = [LIVE_REF, "l.account=?"], [c["account"]]
@@ -85,8 +96,9 @@ def _moves(db, c, tag=None):
     else:
         w.append(f"(e.ref=? OR e.ref GLOB ? OR {PAID_BY}=?)")
         p += [f"CU:{c['code']}", acc.ref_prefix(f"CU:{c['code']}:"), c["code"]]
-    return db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e "
-                  f"ON e.id=l.entry_id WHERE {' AND '.join(w)}", p)["n"]
+    ex, xp = _net(db, c)
+    return db.one(f"SELECT COALESCE(SUM({ex}),0) AS n FROM journal_lines l JOIN journal_entries e "
+                  f"ON e.id=l.entry_id WHERE {' AND '.join(w)}", xp + p)["n"]
 
 
 def status(db, c, today=None):
@@ -148,8 +160,9 @@ def statement(db, cid):
         rows.append({"date": c["issued_on"], "kind": "Opening balance", "memo": "", "in": to_major(bal), "out": 0,
                      "balance": to_major(bal), "id": None, "lines": []})
     for e in _entries(db, c["code"]):
-        n = db.one("SELECT COALESCE(SUM(debit-credit),0) AS n FROM journal_lines WHERE entry_id=? AND account=?",
-                   (e["id"], c["account"]))["n"]
+        ex, xp = _net(db, c)
+        n = db.one(f"SELECT COALESCE(SUM({ex}),0) AS n FROM journal_lines l WHERE l.entry_id=? AND l.account=?",
+                   (*xp, e["id"], c["account"]))["n"]
         bal += n
         meta = json.loads(e["meta"] or "{}")
         rows.append({"id": e["id"], "date": e["date"], "kind": e["kind"], "memo": e["memo"], "ref": e["ref"],
@@ -339,8 +352,10 @@ def plan(db, cid, action, d):
 def post(db, cid, action, d, user=""):
     with db.tx():
         pl = plan(db, cid, action, d)
+        cur = _cur(db, pl["custody"])
         ids = [acc._insert_entry(db, date=pl["date"], kind=e["kind"], memo=e["memo"], bu_id=e["bu_id"],
-                                 party=pl["custody"]["holder"], ref=e["ref"], lines=e["lines"], meta=e["meta"], user=user)
+                                 party=pl["custody"]["holder"], ref=e["ref"], lines=e["lines"], meta=e["meta"], user=user,
+                                 currency=cur, rate=d.get("fx_rate") or None)
                for e in pl["entries"]]
         return ids
 
