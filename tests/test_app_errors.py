@@ -98,6 +98,45 @@ class AppErrors(unittest.TestCase):
         with self.assertRaises(pgtest.SQLError):
             self.lead.rpc("support_access_ask", p_ticket=t["id"], p_mode="all", p_note="")
 
+    def test_a_spike_and_a_new_error_reach_the_teams_notifications(self):
+        c3 = self.ws.as_user("boss@three.test"); three = c3.rpc("create_company", p_name="Three")["id"]
+        for who, cid in ((self.a, self.one), (self.b, self.two), (c3, three)):
+            self.report(who, cid, message="Spike: totals fail")
+        self.report(self.a, self.one, message="Only here once")
+        kinds = {(a["kind"], a["title"]) for a in self.lead.rpc("console_alerts")}
+        self.assertIn(("error_spike", "Spike: totals fail"), kinds)
+        self.assertIn(("new_error", "Only here once"), kinds)
+        self.assertNotIn("error_spike", {a["kind"] for a in self.sales.rpc("console_alerts")})     # not on the desk
+        key = next(a["key"] for a in self.lead.rpc("console_alerts") if a["kind"] == "error_spike")
+        self.lead.rpc("console_alert_mark", p_keys=[key], p_state="dismissed")
+        self.assertNotIn(key, [a["key"] for a in self.lead.rpc("console_alerts")])
+        self.assertIn("new_company", {a["kind"] for a in self.owner.rpc("console_alerts")})           # the others still there
+
+    def test_the_last_day_at_a_glance(self):
+        self.report(self.a, self.one, message="Digest error")
+        d = self.owner.rpc("console_digest")
+        for k in ("errors_new", "tickets_unread", "orders_waiting", "companies_new", "trials_ending", "active_companies"):
+            self.assertIn(k, d)
+        self.assertGreaterEqual(d["errors_new"], 1)
+        s = self.sales.rpc("console_digest")
+        self.assertIn("companies_new", s)
+        self.assertNotIn("errors_new", s)
+        self.assertNotIn("orders_waiting", s)
+        with self.assertRaises(pgtest.SQLError):
+            self.a.rpc("console_digest")
+
+    def test_a_companys_recent_changes_without_figures(self):
+        for i in range(1, 4):
+            self.b.rpc("append_op", p_company=self.two, p_seq=i, p_version="2.5.0", p_device="pc", p_body='{"amount": 5000}',
+                       **{**OP, "p_path": f"/api/journal/{i}?x=secret"})
+        ch = self.lead.rpc("console_company_changes", p_company=self.two, p_limit=2)
+        self.assertEqual([c["seq"] for c in ch], [3, 2])
+        self.assertEqual(ch[0]["path"], "/api/journal/3")
+        self.assertNotIn("5000", str(ch))
+        self.assertEqual(len(self.sales.rpc("console_company_changes", p_company=self.two, p_limit=50)), 3)
+        with self.assertRaises(pgtest.SQLError):
+            self.b.rpc("console_company_changes", p_company=self.two, p_limit=5)
+
 
 if __name__ == "__main__":
     unittest.main()

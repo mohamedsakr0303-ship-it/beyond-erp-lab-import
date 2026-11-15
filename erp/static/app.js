@@ -15573,6 +15573,13 @@ const chatEvt = m => { const b = String(m.body || ""), until = b.includes(":") ?
     : b.startsWith("access_asked_") ? (b.startsWith("access_asked_fix") ? L2("Support asks to view and fix your books", "يطلب الدعم عرض دفاترك وإصلاحها")
       : L2("Support asks to view your books", "يطلب الدعم عرض دفاترك")) + (b.slice(b.indexOf(":") + 1) ? ` — ${b.slice(b.indexOf(":") + 1)}` : "") : b;
   return `${what}${m.name ? " · " + m.name : ""} · ${dt16(m.created_at)}`; };
+// a link support put in a message ("#/ledger") becomes a button to that screen, named as in the menu
+const screenName = h => { const r = String(h).slice(2).split(/[/?]/)[0];
+  for (const [, items] of window.MENU || []) for (const it of items) if (it[1] === r) return t(it[0]);
+  return h; };
+const supMsgHtml = (body, staff) => { const e = esc(body || ""); if (!staff) return e;
+  return e.replace(/(^|\s)(#\/[A-Za-z0-9_\-/?=&;.%]+)/g, (_, sp, h) => `${sp}<a class="btn sm" href="${h}" data-a="chatgo">↗ ${esc(screenName(h.replace(/&amp;/g, "&")))}</a>`); };
+S.GLOBAL_H.chatgo = el => { if (SCH.open && innerWidth < 700) chatClose(); location.hash = el.getAttribute("href"); };
 // support asked to be let in: the company's administrator gets the button that does it, on the request itself
 const askBtn = (m, tk) => String(m.body || "").startsWith("access_asked_") && myCompanyTicket(tk)
   ? ` <button class="btn sm pri" data-a="supletin" data-id="${tk.id}" data-mode="${String(m.body).startsWith("access_asked_fix") ? "fix" : "view"}">🔑 ${esc(L2("Let support in…", "السماح للدعم بالدخول…"))}</button>` : "";
@@ -15619,7 +15626,7 @@ function chatDraw(keep) {
   const agent = [...(tk.messages || [])].reverse().find(m => m.staff && m.kind !== "event"), live = tk.chat === "live";
   const box = $(".schat-m", w), atEnd = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   const msg = m => m.kind === "event" ? `<div class="schat-e">${esc(chatEvt(m))}${askBtn(m, tk)}</div>`
-    : `<div class="schat-x ${m.staff ? "them" : "me"}">${m.staff ? `<small>${esc(m.name || "BeyondERP")}</small>` : ""}${m.body ? `<div dir="auto">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}<time>${esc(String(m.created_at).slice(11, 16))}</time></div>`;
+    : `<div class="schat-x ${m.staff ? "them" : "me"}">${m.staff ? `<small>${esc(m.name || "BeyondERP")}</small>` : ""}${m.body ? `<div dir="auto">${supMsgHtml(m.body, m.staff)}</div>` : ""}${fileList("support-files", m.files)}<time>${esc(String(m.created_at).slice(11, 16))}</time></div>`;
   w.innerHTML = `<header><span class="schat-av">${esc((agent && agent.name || "B")[0].toUpperCase())}</span><div style="flex:1;min-width:0"><b>${esc(agent && agent.name || "BeyondERP")} · ${esc(L2("Support", "الدعم"))}</b>
       <small>${esc(tk.ref)} — ${esc(tk.subject)}</small></div>
       ${SCH.list.length > 1 ? `<select data-change="chatpick" aria-label="${esc(L2("Conversations", "المحادثات"))}">${SCH.list.map(c => `<option value="${c.id}" ${c.id === tk.id ? "selected" : ""}>${esc(c.ref)}${c.unread ? ` (${c.unread})` : ""}</option>`).join("")}</select>` : ""}
@@ -15690,7 +15697,7 @@ async function supportTicket(view, id, staff) {
   const who = m => m.staff ? (staff ? m.email : `${m.name || "BeyondERP"} · ${L2("BeyondERP support", "دعم BeyondERP")}`) : (tk.app_user && m.email === tk.email ? tk.app_user : m.email);
   const bubble = (m, first) => m.kind === "event" ? `<div class="muted" style="text-align:center;font-size:.85em;margin:8px 0">— ${esc(chatEvt(m))} —${askBtn(m, tk)}</div>` : `<div class="tk-msg ${m.staff ? "staff" : "cust"} ${m.internal ? "internal" : ""} ${(m.staff === staff) ? "mine" : ""}">
       <div class="tk-h"><b>${esc(who(m))}</b>${m.internal ? ` <span class="chip warn">${esc(L2("Internal note", "ملاحظة داخلية"))}</span>` : ""}<span class="muted">${dt16(m.created_at)}</span></div>
-      ${m.body ? `<div class="tk-b" dir="auto">${esc(m.body)}</div>` : ""}${fileList("support-files", m.files)}${first || ""}</div>`;
+      ${m.body ? `<div class="tk-b" dir="auto">${supMsgHtml(m.body, m.staff)}</div>` : ""}${fileList("support-files", m.files)}${first || ""}</div>`;
   const diag = Object.entries(tk.diag || {}).filter(([, v]) => v);
   const log = (tk.log || []).slice().reverse();
   view.innerHTML = `<div class="toolbar"><a class="btn" href="${staff ? "#/console/support" : "#/support"}">← ${esc(staff ? L2("Support inbox", "صندوق الدعم") : L2("Help and support", "المساعدة والدعم"))}</a>${ticketChip(tk.status)}

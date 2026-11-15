@@ -389,7 +389,8 @@ const AL_KIND = () => ({
   payment_due: [L("Payment due (grace days)", "دفعة مستحقة (فترة سماح)"), "!"], lapsed: [L("Stopped paying", "توقف عن الدفع"), "✗"],
   renewal_soon: [L("Renewal coming up", "تجديد قريب"), "↻"], cancel: [L("Asked not to renew", "طلب عدم التجديد"), "✗"],
   new_company: [L("New company", "شركة جديدة"), "＋"], unpaid_company: [L("New company not subscribed", "شركة جديدة غير مشتركة"), "○"],
-  over_limit: [L("More people than the plan allows", "أفراد أكثر مما تسمح الباقة"), "☺"] });
+  over_limit: [L("More people than the plan allows", "أفراد أكثر مما تسمح الباقة"), "☺"],
+  new_error: [L("New app error", "خطأ جديد في التطبيق"), "⚠"], error_spike: [L("App error hitting several companies", "خطأ يصيب عدة شركات"), "🔥"] });
 const alertLink = a => "#/" + a.link;
 const alertHtml = a => { const k = AL_KIND()[a.kind] || [a.kind, "•"];
   return `<a class="al ${a.read ? "" : "unread"}" href="${alertLink(a)}" data-a="alopen" data-key="${esc(a.key)}"><span class="dot ${a.level}"></span><span class="b"><b>${k[1]} ${esc(k[0])}</b>
@@ -786,6 +787,7 @@ PAGES.overview = async (view, parts, q) => {
         <div id="insight">${insightEmpty()}</div></div>
         <div class="card"><h2>${esc(L("Waiting for you", "بانتظارك"))}</h2><div class="list">${S.alerts.filter(a => !a.read).slice(0, 6).map(a => alertHtml(a)).join("") || `<div class="empty">${esc(L("All caught up.", "لا جديد."))}</div>`}</div></div></div></div>`;
   afterHooks.push(chartTips);
+  afterHooks.push(v => digestCard(v));
 };
 const insightEmpty = () => `<div class="empty">📊<br><b>${esc(L("Select a company", "اختر شركة"))}</b><br>${esc(L("See where it stands, its use and its support.", "اعرف وضعها واستخدامها ودعمها."))}</div>`;
 const insight = (x, cur) => `<div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">${kpi(L("Status", "الحالة"), stChip(x.state.status))}${kpi(L("Next due", "الاستحقاق التالي"), esc(day(x.state.ends)))}
@@ -986,12 +988,54 @@ PAGES.company = async (view, parts) => {
       <div><div class="card"><h2>${esc(L("Orders", "الطلبات"))}</h2>${x.orders.length ? `<div class="list">${x.orders.map(o => `<a class="li" href="#/payments?ref=${esc(o.ref)}">${mapChip(ORDER_ST(), o.status)}<span class="who"><b dir="ltr">${esc(o.ref)}</b><small class="muted">${esc(day(o.created_at))}</small></span><span class="amt"><b>${money(o.amount)}</b></span></a>`).join("")}</div>` : `<div class="empty">${esc(L("No orders.", "لا طلبات."))}</div>`}</div>
       <div class="card"><h2>${esc(L("Support", "الدعم"))}</h2>${x.tickets.length ? `<div class="list">${x.tickets.map(t => `<a class="li" href="#/ticket/${t.id}">${mapChip(TK_ST(), t.status)}<span class="who"><b>${esc(t.ref)}</b><small class="muted">${esc(t.subject)}</small></span><span class="amt"><small class="muted">${esc(ago(t.updated_at))}</small></span></a>`).join("")}</div>` : `<div class="empty">${esc(L("No tickets.", "لا بلاغات."))}</div>`}
         ${visits.length ? `<h3 style="margin-top:12px">${esc(L("Visits", "الزيارات"))}</h3><div class="list">${visits.map(v => `<a class="li" href="#/visit/${v.id}">${mapChip(VIS_ST(), v.status)}<span class="who"><b>${esc(v.ref)}</b><small class="muted">${esc(v.reason)}</small></span><span class="amt"><b>${v.price != null ? money(v.price) : "—"}</b></span></a>`).join("")}</div>` : ""}</div></div></div>`;
-  afterHooks.push(v => healthCard(v, id));
+  afterHooks.push(v => healthCard(v, id).then(() => changesCard(v, id, L("Recent changes", "آخر التعديلات"))));
   afterHooks.push(v => table($("#cpay", v), "cpay", x.payments, { sort: "created_at", dir: "desc", search: ["reference", "plan"],
     cols: [{ k: "created_at", l: L("Date", "التاريخ"), date: true, h: p => esc(day(p.paid_at || p.created_at)) }, { k: "plan", l: L("Plan", "الباقة") },
       { k: "period", l: L("Period", "المدة"), v: p => `${day(p.period_start)} → ${day(p.period_end)}` }, { k: "amount", l: L("Amount", "المبلغ"), num: true, h: p => `${money(p.amount)} ${esc(p.currency)}` },
       { k: "reference", l: L("Reference", "المرجع"), h: p => `<span dir="ltr">${esc(p.reference || "")}</span>` }, { k: "status", l: L("Status", "الحالة") }] }));
 };
+// ERP screens support can link to in a reply: the customer's chat shows each as a button that opens it
+const ERP_SCREENS = () => [["#/dashboard", L("Dashboard", "لوحة التحكم")], ["#/journal", L("Journal entries", "قيود اليومية")], ["#/ledger", L("General ledger", "دفتر الأستاذ")],
+  ["#/coa", L("Chart of accounts", "دليل الحسابات")], ["#/receipts", L("Receipts", "سندات القبض")], ["#/payments", L("Payments", "سندات الصرف")],
+  ["#/invoices", L("Client invoices", "فواتير العملاء")], ["#/aging", L("Receivables & payables aging", "أعمار الديون")], ["#/statement", L("Statement of account", "كشف حساب")],
+  ["#/payables", L("Payables", "المستحق للموردين")], ["#/stock", L("Inventory", "المخزون")], ["#/fx", L("Exchange rates", "أسعار الصرف")],
+  ["#/reports", L("Reports", "التقارير")], ["#/import", L("Import & export", "الاستيراد والتصدير")], ["#/users", L("Users & permissions", "المستخدمون والصلاحيات")],
+  ["#/settings", L("Settings", "الإعدادات")], ["#/support", L("Help & support", "المساعدة والدعم")]];
+// the last 24 hours at a glance (each figure only for those allowed to see it)
+async function digestCard(view) {
+  let d; try { d = await rpc("console_digest"); } catch { return; }
+  const k = [];
+  if ("errors_new" in d) k.push(kpi(L("New app errors", "أخطاء جديدة"), num(d.errors_new), d.errors_spiking ? "bad" : d.errors_new ? "warn" : "ok",
+    esc(d.errors_spiking ? L(`${d.errors_spiking} hitting several companies`, `${d.errors_spiking} تصيب عدة شركات`) : L(`${d.companies_with_errors} companies affected`, `${d.companies_with_errors} شركة متأثرة`)), "#/errors"));
+  if ("tickets_new" in d) k.push(kpi(L("Tickets", "البلاغات"), num(d.tickets_new), d.tickets_unread ? "warn" : "", esc(L(`new · ${d.tickets_unread} waiting · ${d.tickets_closed} closed`, `جديدة · ${d.tickets_unread} بانتظارنا · ${d.tickets_closed} أُغلقت`)), "#/queue"));
+  if ("orders_waiting" in d) k.push(kpi(L("Received", "المحصّل"), num(d.received), "ok", esc(L(`${d.currency || ""} · ${d.orders_waiting} payment(s) to verify`, `${d.currency || ""} · ${d.orders_waiting} دفعة للتحقق`)), "#/payments"));
+  if ("companies_new" in d) k.push(kpi(L("New companies", "شركات جديدة"), num(d.companies_new), "", esc(L(`${d.active_companies} active · ${d.trials_ending} trials end in 3 days`, `${d.active_companies} نشطة · ${d.trials_ending} تجربة تنتهي خلال 3 أيام`)), "#/customers"));
+  if (!k.length) return;
+  const box = document.createElement("div"); box.className = "card digest";
+  box.innerHTML = `<h2 style="margin-top:0">${esc(L("Last 24 hours", "آخر 24 ساعة"))}</h2><div class="kpis">${k.join("")}</div>`;
+  const at = $(".hello", view); if (at) at.after(box); else view.prepend(box);
+}
+// who changed what in a company's online books, and when (the screen or call only, never the figures)
+const OP_NAMES = () => [[/^\/api\/journal/, L("Journal entry", "قيد يومية")], [/^\/api\/docs\/receipt/, L("Receipt", "سند قبض")], [/^\/api\/docs\/payment/, L("Payment", "سند صرف")],
+  [/^\/api\/docs\//, L("Voucher", "سند")], [/^\/api\/extracts/, L("Client invoice", "فاتورة عميل")], [/^\/api\/import/, L("Import", "استيراد")],
+  [/^\/api\/settings/, L("Settings", "الإعدادات")], [/^\/api\/users/, L("Users", "المستخدمون")], [/^\/api\/accounts/, L("Chart of accounts", "دليل الحسابات")],
+  [/^\/api\/sales/, L("Sale", "بيع")], [/^\/api\/purchase/, L("Purchasing", "المشتريات")], [/^\/api\/fx/, L("Exchange rates", "أسعار الصرف")],
+  [/^\/api\/items|^\/api\/stock/, L("Inventory", "المخزون")], [/^\/api\/payroll|^\/api\/employees/, L("Payroll", "الرواتب")]];
+const opName = p => (OP_NAMES().find(([rx]) => rx.test(p)) || [0, ""])[1];
+const OP_VERB = () => ({ POST: L("added", "إضافة"), PUT: L("changed", "تعديل"), PATCH: L("changed", "تعديل"), DELETE: L("deleted", "حذف") });
+async function changesCard(view, id, title) {
+  if (!id || !(can("customers") || can("support"))) return;
+  let rows; try { rows = await rpc("console_company_changes", { p_company: id, p_limit: 40 }); } catch { return; }
+  const box = document.createElement("div"); box.className = "card"; view.appendChild(box);
+  box.innerHTML = `<h2 style="margin-top:0">${esc(title || L("Recent changes in their books", "آخر التعديلات في دفاترهم"))}</h2>
+    <p class="muted small">${esc(L("What was done, by whom and when — the screen or call only, never the figures.", "ما الذي تم ومن قام به ومتى — الشاشة أو العملية فقط، دون الأرقام."))}</p>
+    ${rows.length ? `<div class="tbl"><table><thead><tr><th>${esc(L("When", "متى"))}</th><th>${esc(L("Who", "من"))}</th><th>${esc(L("What", "ماذا"))}</th><th>${esc(L("Device · version", "الجهاز · الإصدار"))}</th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td class="small">${esc(dt(r.at))}</td><td class="small">${esc(r.app_user || "")}<span class="sub" dir="ltr">${esc(r.who || "")}</span></td>
+        <td class="small"><b>${esc(OP_VERB()[r.method] || r.method)}</b> ${esc(opName(r.path))} <span class="muted" dir="ltr">${esc(r.path)}</span></td>
+        <td class="small" dir="ltr">${esc((r.device || "—").slice(0, 12))} · ${esc(r.version || "")}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${esc(L("No changes in its online books yet.", "لا تعديلات في دفاترها على الإنترنت بعد."))}</div>`}`;
+}
+
 // A company's devices (app version on each, who used it last, when it last synced) and the app errors it ran into
 async function healthCard(view, id) {
   if (!(can("customers") || dcan("bugs"))) return;
@@ -1249,6 +1293,7 @@ PAGES.queue = async view => {
   const d = await rpc("console_queue"), rows = d.rows.map((r, i) => ({ ...r, qi: i + 1 })), now = Date.now();
   S.replies = d.replies; S.team = d.team;
   const team = rows.filter(r => r.turn === "team"), late = rows.filter(r => r.due_at && new Date(r.due_at) < now && !r.first_reply_at);
+  afterHooks.push(v => digestCard(v));
   if (!DT.queue) DT.queue = { f: { view: "team" }, q: "" };
   view.innerHTML = `<div class="kpis">${kpi(L("Waiting for us", "بانتظارنا"), num(team.length), team.length ? "warn" : "ok")}${kpi(L("Live chats", "محادثات مباشرة"), num(rows.filter(r => r.chat === "live").length))}
       ${kpi(L("Past the reply target", "تجاوزت موعد الرد"), num(late.length), late.length ? "bad" : "")}${kpi(L("Nobody assigned", "بلا مسؤول"), num(rows.filter(r => !r.assignee).length))}</div>
@@ -1302,6 +1347,8 @@ PAGES.ticket = async (view, parts) => {
       if (!body.trim() && !files.length) return toast(L("Write a reply or add a file.", "اكتب رداً أو أضف ملفاً."), true);
       el.disabled = true; try { await send(body, files, internal); $("#rbody").value = ""; $("#rfiles").value = ""; } finally { el.disabled = false; } },
     voice: el => recordVoice(el, f => send("", [f], $("#rint").checked).catch(fail)),
+    scrlink: el => { const h = el.value; el.value = ""; if (!h) return; const t = $("#rbody"), at = t.selectionStart ?? t.value.length;
+      const ins = (at && !/\s$/.test(t.value.slice(0, at)) ? " " : "") + h + " "; t.value = t.value.slice(0, at) + ins + t.value.slice(at); t.focus(); t.selectionStart = t.selectionEnd = at + ins.length; },
     canned: el => { const r = (S.replies || [])[+el.value]; el.value = ""; if (!r) return; const t = $("#rbody"); t.value = (t.value ? t.value + "\n" : "") + String(r.body || "").replace(/\{name\}/g, first); t.focus(); },
     tset: async el => { tk = await rpc("console_ticket_set", { p_ticket: id, p: { [el.name]: el.value } }); toast(L("Saved.", "تم الحفظ.")); draw(); },
     mine: async () => { tk = await rpc("console_ticket_set", { p_ticket: id, p: { assignee: myEmail() } }); draw(); },
@@ -1353,6 +1400,9 @@ PAGES.ticket = async (view, parts) => {
     <div class="split"><div><div class="card thread" id="thr" style="max-height:62vh;overflow:auto">${thread()}</div>
       <div class="card"><div class="row" style="gap:8px;margin-bottom:6px"><h3 style="margin:0">${esc(L("Reply", "رد"))}</h3><span class="sp"></span>
         ${(S.replies || []).length ? `<select data-change="canned" style="max-width:260px"><option value="">💬 ${esc(L("Saved replies…", "الردود المحفوظة…"))}</option>${S.replies.map((r, i) => `<option value="${i}">${esc(r.title)}</option>`).join("")}</select>` : dcan("replies") ? `<a class="small" href="#/replies">💬 ${esc(L("Add saved replies", "إضافة ردود محفوظة"))}</a>` : ""}</div>
+        <select data-change="scrlink" style="max-width:220px" aria-label="${esc(L("Link to a screen", "رابط إلى شاشة"))}"><option value="">🔗 ${esc(L("Link to a screen…", "رابط إلى شاشة…"))}</option>
+          ${(tk.diag || {}).screen ? `<option value="${esc(String(tk.diag.screen).split(" ")[0])}">${esc(L("Their last screen", "آخر شاشة لديهم"))}: ${esc(String(tk.diag.screen).slice(0, 40))}</option>` : ""}
+          ${ERP_SCREENS().map(([h, l]) => `<option value="${h}">${esc(l)}</option>`).join("")}</select>
         <textarea id="rbody" rows="4" dir="auto" placeholder="${esc(L("Write to the customer… (Ctrl + Enter sends)", "اكتب للعميل… (Ctrl + Enter للإرسال)"))}"></textarea>
         <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><input type="file" id="rfiles" multiple accept="image/*,video/*,audio/*,application/pdf,.txt,.xlsx,.zip">
           ${navigator.mediaDevices && window.MediaRecorder ? `<button type="button" class="btn" data-a="voice">🎤 ${esc(L("Voice note", "رسالة صوتية"))}</button>` : ""}</div>
@@ -1386,6 +1436,7 @@ PAGES.ticket = async (view, parts) => {
     if (ri && !dcan("reply") && !dcan("notes")) { const c = ri.closest(".card"); if (c) c.innerHTML = `<p class="muted" style="margin:0">👁 ${esc(L("You can read this ticket. Replying is not part of your access.", "يمكنك قراءة هذا البلاغ. الرد ليس ضمن صلاحياتك."))}</p>`; }
     const t = $("#thr", v); if (t) t.scrollTop = t.scrollHeight;
     const ta = $("#rbody", v); if (ta) ta.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("[data-a=reply]").click(); } }); });
+  if (tk.company_id) afterHooks.push(v => changesCard($(".split > div:last-child", v) || v, tk.company_id));
   // new messages appear by themselves while the ticket is open
   S.live = setInterval(async () => { if (document.hidden || parse().parts[0] !== "ticket" || +parse().parts[1] !== id) return;
     try { const n = await rpc("support_get", { p_ticket: id }); if (n.messages.length !== tk.messages.length || n.status !== tk.status || n.chat !== tk.chat) {
