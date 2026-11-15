@@ -88,7 +88,7 @@ VALUES = {
     "Profit Distribution": "توزيع أرباح", "Reserve Transfer": "تكوين احتياطي", "Asset Purchase": "شراء أصل",
     "Depreciation": "إهلاك", "Asset Disposal": "استبعاد أصل", "Journal Voucher": "قيد يومية",
     "Goods Receipt": "استلام بضاعة", "Material Issue": "صرف مواد", "Stock Transfer": "تحويل مخزني",
-    "Stock Adjustment": "تسوية جرد", "Stock Cost Adjustment": "تسوية تكلفة مخزون", "Reversing Entry": "قيد عكسي", "Loan Received": "استلام قرض",
+    "Stock Adjustment": "تسوية جرد", "Stock Cost Adjustment": "تسوية تكلفة مخزون", "Reversing Entry": "قيد عكسي", "FX Revaluation": "إعادة تقييم العملات", "Loan Received": "استلام قرض",
     "Loan Repayment": "سداد قرض", "Loan Given": "صرف قرض ممنوح", "Loan Collection": "تحصيل قرض",
     "Loan Interest": "فوائد قرض", "Loan Charges": "مصاريف قرض", "Loan Forgiven": "إعفاء من قرض",
     "Loan Written Off": "إعدام قرض", "Custody Issued": "صرف عهدة", "Custody Settlement": "تسوية عهدة",

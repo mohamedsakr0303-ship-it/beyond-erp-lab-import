@@ -230,7 +230,7 @@ window.MENU = [
   ["g_fin", [["m_loans", "loans", "accounting.loans", "⇋"], ["m_custody", "custody", "purchasing.custody", "◈"]]],
   ["g_equity", [["m_partners", "partners", "partners", "◑"], ["m_pexit", "partner-exit", "partners.equity", "⇥"], ["m_fundsched", "funding-schedule", "partners.equity", "⇣"]]],
   ["g_tax", [["m_taxcodes", "taxcodes", "tax.codes", "%"], ["m_taxrep", "report/tax", "tax.report", "◵"], ["m_einv", "einvoice", "tax.einvoice", "⎙"], ["m_ereceipts", "ereceipts", "tax.ereceipt", "🧾"]]],
-  ["g_acc", [["m_journal", "journal", "accounting.journal", "✎"], ["m_approvals", "approvals", "accounting.journal|accounting.approvals", "✓"], ["m_ledger", "ledger", "accounting.ledger", "≣"], ["m_coa", "coa", "accounting.coa", "⌗"], ["m_bankrec", "bankrec", "accounting.bankrec", "⇌"], ["m_recurring", "recurring", "accounting.recurring", "↻"], ["m_budgets", "budgets", "accounting.budgets", "◎"], ["m_yearend", "year-end", "accounting.yearend", "⊠"]]],
+  ["g_acc", [["m_journal", "journal", "accounting.journal", "✎"], ["m_approvals", "approvals", "accounting.journal|accounting.approvals", "✓"], ["m_ledger", "ledger", "accounting.ledger", "≣"], ["m_coa", "coa", "accounting.coa", "⌗"], ["m_bankrec", "bankrec", "accounting.bankrec", "⇌"], ["m_recurring", "recurring", "accounting.recurring", "↻"], ["m_budgets", "budgets", "accounting.budgets", "◎"], ["m_yearend", "year-end", "accounting.yearend", "⊠"], ["m_fx", "fx", "accounting.fx", "¤"]]],
   ["g_rep", [["m_insights", "insights", "reports.income_statement|sales.invoices|sales.receivables|sales.receipts|shop.orders|purchasing.costs|purchasing.expenses|purchasing.payables|purchasing.bills|crm.deals|business_units.profitability|rentals.contracts|equipment.register|equipment.usage|payroll.runs|payroll.attendance|payroll.employees", "📈"], ["m_ppack", "report/partner_pack", "reports.partner_pack", "▣"], ["m_forecast", "forecast", "reports.forecast", "◷"], ["m_is", "report/income_statement", "reports.income_statement", "◰"], ["m_bs", "report/balance_sheet", "reports.balance_sheet", "◱"], ["m_cf", "report/cash_flow", "reports.cash_flow", "◲"], ["m_cashplan", "cash-forecast", "reports.cashplan", "⛃"], ["m_maudit", "model-audit", "reports.audit", "✓"],
              ["m_tb", "report/trial_balance", "reports.trial_balance", "◳"], ["m_bup", "report/bu_pnl", "business_units.profitability", "◴"], ["m_pcat", "report/profit_categories", "reports.income_statement", "◔"],
              ["m_budget_rep", "budget-report", "reports.budget", "◎"], ["m_aging", "aging", "reports.aging", "⏳"], ["m_statement", "statement", "reports.statement", "☰"]]],
@@ -256,11 +256,11 @@ window.SUBPERM = {
   "import_export.export": "p_export", "import_export.import": "p_import",
   "settings.company": "p_company", "settings.branding": "p_branding", "settings.menus": "menu_names", "settings.layout": "p_layout", "settings.system": "p_system", "settings.dashboards": "p_dashboards",
   "users.users": "m_users", "users.audit": "m_audit",
-  "settings.api": "m_api", "team.kb": "m_kb", "team.alerts": "m_alerts", "purchasing.bills": "m_bills", "team.myday": "m_myday", "settings.workspace": "tab_workspace", "reports.forecast": "m_forecast", "reports.cashplan": "m_cashplan", "reports.audit": "m_maudit", "accounting.yearend": "m_yearend",
+  "settings.api": "m_api", "team.kb": "m_kb", "team.alerts": "m_alerts", "purchasing.bills": "m_bills", "team.myday": "m_myday", "settings.workspace": "tab_workspace", "reports.forecast": "m_forecast", "reports.cashplan": "m_cashplan", "reports.audit": "m_maudit", "accounting.yearend": "m_yearend", "accounting.fx": "m_fx",
 };
 
 Object.assign(window.I18N, {
-  m_cashplan: ["Cash Forecast (30/60/90 days)", "توقعات السيولة (30/60/90 يوماً)"], m_yearend: ["Year-End Close", "إقفال السنة المالية"],
+  m_cashplan: ["Cash Forecast (30/60/90 days)", "توقعات السيولة (30/60/90 يوماً)"], m_yearend: ["Year-End Close", "إقفال السنة المالية"], m_fx: ["Exchange Rates", "أسعار الصرف"],
   m_offers: ["Quotations", "عروض الأسعار"], offer: ["Offer", "عرض"], offer_types: ["Offer types", "أنواع العروض"], offer_type: ["Offer type", "نوع العرض"],
   new_offer_type: ["New offer type", "نوع عرض جديد"], doc_lang: ["Document language", "لغة المستند"], doc_title: ["Document title", "عنوان المستند"],
   opening: ["Opening", "الافتتاحية"], closing: ["Closing", "الختام"], sections: ["Sections", "الأقسام"], heading: ["Heading", "العنوان"],

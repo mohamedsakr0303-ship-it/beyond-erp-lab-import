@@ -447,7 +447,7 @@ const ROUTE_IC = { bills: "repeat", alerts: "bell", deals: "target", "crm-contac
   payments: "out", payables: "wallet", contacts: "phone", negotiations: "scale", stock: "boxes", moves: "swap", warehouses: "store", rentals: "building",
   rentfleet: "layers", rentcalc: "calc", payruns: "cash", employees: "user", crew: "ruler", payroll: "pen", payset: "gear", "assets-overview": "pie",
   cash: "wallet", assets: "truck", depreciation: "down", loans: "bank", custody: "coins", partners: "hands", taxcodes: "pct", "report/tax": "chart", extracts: "clip",
-  einvoice: "send", journal: "book", approvals: "check", ledger: "bookopen", coa: "tree", bankrec: "compare", recurring: "repeat", budgets: "target",
+  einvoice: "send", journal: "book", approvals: "check", ledger: "bookopen", coa: "tree", bankrec: "compare", recurring: "repeat", budgets: "target", fx: "swap",
   "report/partner_pack": "pack", "report/income_statement": "chart", "report/balance_sheet": "layers", "report/cash_flow": "swap",
   "report/trial_balance": "list", "report/bu_pnl": "pie", "report/profit_categories": "pie", "funding-schedule": "down", "budget-report": "target", aging: "hour", statement: "file", data: "updown",
   settings: "gear", industry: "store", users: "users", audit: "history",
@@ -1201,7 +1201,7 @@ function renderShell() {
   const items = newMenuItems().filter(i => i.show && i.ok);
   const html = items.map(i => `<button data-a="quicknew" data-doc="${esc(i.key)}">${esc(i.label)}</button>`).join("") || `<div class="muted" style="padding:8px">${t("view_only")}</div>`;
   $("#newmenu").innerHTML = html; $("#newmenu2").innerHTML = html;
-  S.alertsAt = 0; loadAlerts(); Clock.start();
+  S.alertsAt = 0; loadAlerts(); Clock.start(); fxAutoFetch();
 }
 function userMenu() {
   return `<button data-a="theme">${esc(themeTitle())}</button>
@@ -1944,6 +1944,7 @@ function drawer(title, html, onSubmit, opts = {}) {
   // with a mouse, start typing at once; on a phone that would pop the keyboard over half the form
   const first = $("input:not([type=hidden]),select", f); if (first && window.matchMedia && matchMedia("(pointer: fine)").matches) first.focus();
   if (opts.onOpen) opts.onOpen(f);
+  fxWire(f);
   if (onSubmit && !opts.readOnly) Hist.attach(f);
   return f;
 }
@@ -1973,6 +1974,33 @@ const inLang = (en, ar, l, extra = {}) => S.lang === "ar"
   ? [{ ...extra, k: ar[0], l, v: ar[1] || en[1] || "" }, { k: en[0], v: en[1], hidden: 1 }]
   : [{ ...extra, k: en[0], l, v: en[1] }, { k: ar[0], v: ar[1], hidden: 1 }];
 // field: {k,l,type,opts:[[v,label]],v,span,req,list,step,ph,help,change,input}
+// ---------------------------------------------------------- foreign currencies (Settings → Currencies, erp/fx.py)
+// A money form gets a Currency and a Rate only once the company works in a foreign currency. The rate left blank is the
+// day's rate (the last one on or before the form's date); a rate typed in is used as it is.
+const fxOn = () => !!(S.boot.fx && (S.boot.fx.currencies || []).length);
+const fxBase = () => (S.boot.fx && S.boot.fx.base) || "EGP";
+function fxFields(cur = "", rate = "", rateKey = "fx_rate") {
+  if (!fxOn() && !cur) return [];
+  const list = [...new Set([...(S.boot.fx.currencies || []), ...(cur ? [cur] : [])])];
+  return [{ k: "currency", l: L2("Currency", "العملة"), type: "select", opts: [["", fxBase()], ...list.map(c => [c, c])], v: cur || "", change: "fxcur" },
+          { k: rateKey, l: L2(`Exchange rate (${fxBase()} per 1)`, `سعر الصرف (${fxBase()} لكل 1)`), type: "number", v: rate || "", input: "fxrate",
+            help: L2("Blank = the day's rate", "فارغ = سعر اليوم") }];
+}
+function fxWire(f) {
+  const cur = $('[name="currency"][data-change="fxcur"]', f); if (!cur) return;
+  const rateEl = $('[data-input="fxrate"]', f), lab = rateEl && rateEl.closest("label"), dateEl = $('[name="date"]', f);
+  const upd = async () => {
+    if (lab) lab.style.display = cur.value ? "" : "none";
+    if (!cur.value || !rateEl) return;
+    const d = (dateEl && dateEl.value) || today();
+    try { const r = await api("GET", "/api/fx/rate?" + qs({ currency: cur.value, date: d }));
+      rateEl.placeholder = String(r.rate); lab.querySelector(".muted").textContent = L2(`Blank = ${r.rate} (the rate on ${d})`, `فارغ = ${r.rate} (سعر ${d})`); }
+    catch (x) { rateEl.placeholder = ""; lab.querySelector(".muted").textContent = x.message; }
+  };
+  cur.addEventListener("change", upd); if (dateEl) dateEl.addEventListener("change", upd);
+  upd();
+}
+S.H.fxcur = () => {};
 function form(fields, cols = 2) {
   fields = customFields(fields);
   return `<div class="grid g${cols}">` + fields.map(f => {
@@ -2454,15 +2482,16 @@ async function openVoucher(id) {
   const drafting = !!(S.boot.user && S.boot.user.needs_approval);     // their corrections wait for approval
   const full = can("accounting.journal", "edit") || (e.doc && can(DOC_MOD[e.doc], "edit"));
   const edit = full || (drafting && (can("accounting.journal", "add") || (e.doc && can(DOC_MOD[e.doc], "add"))));
+  const vFx = e.lines.some(l => l.currency);             // lines in a foreign currency: their amount in it and the rate
   const html = `<div class="row" style="margin-bottom:10px"><span class="chip">${esc(tl(e.kind))}</span><span class="chip">#${e.id}</span><span class="chip">${fd(e.date)}</span>${e.bu_code ? `<span class="chip">${esc(e.bu_code)}</span>` : ""}${e.created_by ? `<span class="chip">${t("created_by")} ${esc(e.created_by)}</span>` : ""}</div>
     <p><b>${esc(e.memo)}</b>${e.party ? ` — ${esc(e.party)}` : ""}${e.ref ? ` · ${esc(e.ref)}` : ""}</p>
     ${e.meta && (e.meta.loan || e.meta.custody) ? `<p><a class="btn sm" href="#/${e.meta.loan ? "loan" : "cust"}/${encodeURIComponent(e.meta.loan || e.meta.custody)}" data-a="vgo">${e.meta.loan ? L2("Open the loan", "فتح القرض") : L2("Open the custody", "فتح العهدة")} ${esc(e.meta.loan || e.meta.custody)} →</a></p>` : ""}
     ${(e.meta && e.meta.paid_by_custody) || /^PO-\d+/.test(e.ref || "") ? `<p class="row" style="gap:6px;flex-wrap:wrap">${e.meta && e.meta.paid_by_custody ? `<a class="btn sm" href="#/cust/${encodeURIComponent(e.meta.paid_by_custody)}" data-a="vgo">💵 ${esc(L2(`Paid from custody ${e.meta.paid_by_custody}`, `مدفوع من العهدة ${e.meta.paid_by_custody}`))}</a>` : ""}
       ${/^PO-\d+/.test(e.ref || "") ? `<a class="btn sm" href="#/po/${encodeURIComponent((e.ref.match(/^PO-\d+/) || [""])[0])}" data-a="vgo">🧾 ${esc(L2("Open the purchase order", "فتح أمر الشراء"))} ${esc((e.ref.match(/^PO-\d+/) || [""])[0])}</a>` : ""}</p>` : ""}
     ${e.meta && e.meta.savings ? `<p class="muted">${t("savings")}: <b>${money(e.meta.savings)}</b>${e.meta.quoted ? ` ${L2("of", "من")} ${money(e.meta.quoted)}` : ""} — ${e.meta.negotiation === "keep" ? L2("company income", "إيراد للشركة") : L2("cost reduction", "تخفيض للتكلفة")}${e.meta.deal_status ? ` · ${esc(tl(e.meta.deal_status))}` : ""}</p>` : ""}
-    <div class="tbl"><table><thead><tr><th>${t("account")}</th><th class="num">${t("debit")}</th><th class="num">${t("credit")}</th></tr></thead><tbody>
-    ${e.lines.map(l => `<tr><td>${esc(l.account)} ${esc(aname(l))}</td><td class="num">${l.debit ? money(l.debit) : ""}</td><td class="num">${l.credit ? money(l.credit) : ""}</td></tr>`).join("")}
-    <tr class="total"><td>${t("total")}</td><td class="num">${money(e.amount)}</td><td class="num">${money(e.amount)}</td></tr></tbody></table></div>
+    <div class="tbl"><table><thead><tr><th>${t("account")}</th><th class="num">${t("debit")}</th><th class="num">${t("credit")}</th>${vFx ? `<th class="num">${esc(L2("Foreign amount", "بالعملة"))}</th>` : ""}</tr></thead><tbody>
+    ${e.lines.map(l => `<tr><td>${esc(l.account)} ${esc(aname(l))}${l.memo && vFx ? ` <span class="muted">${esc(l.memo)}</span>` : ""}</td><td class="num">${l.debit ? money(l.debit) : ""}</td><td class="num">${l.credit ? money(l.credit) : ""}</td>${vFx ? `<td class="num" dir="ltr">${l.currency ? `${esc(l.currency)} ${l.fx_amount ? money(l.fx_amount) : "—"} <span class="muted">@ ${esc(l.fx_rate)}</span>` : ""}</td>` : ""}</tr>`).join("")}
+    <tr class="total"><td>${t("total")}</td><td class="num">${money(e.amount)}</td><td class="num">${money(e.amount)}</td>${vFx ? "<td></td>" : ""}</tr></tbody></table></div>
     ${e.meta && e.meta.void_reason ? `<div class="banner err" style="margin-top:10px">${t("void")}: ${esc(e.meta.void_reason)}</div>` : ""}
     ${e.history && e.history.length ? `<h4>${t("history")}</h4>${e.history.map(h => `<div class="lines">${esc(h.edited_at)} ${esc(h.edited_by || "")}: ${esc(h.memo)} — ${h.lines.map(l => `${l.account} ${l.debit || ""}/${l.credit || ""}`).join(", ")}</div>`).join("")}` : ""}
     <div class="vtags"><h4 class="fsec">🏷 ${esc(L2("Tags", "الوسوم"))}</h4><div class="row" style="gap:6px;flex-wrap:wrap">${(e.tags || []).map(x => `<span class="chip tagchip">#${esc(x)}${edit || can(DOC_MOD[e.doc] || "accounting.journal", "add") ? ` <a href="#" data-a="vtagrm" data-t="${esc(x)}" aria-label="${esc(t("remove"))}">×</a>` : ""}</span>`).join("")}
@@ -2656,7 +2685,7 @@ const DOCS = {
     { k: "negotiation", l: L2("Negotiation discount treatment", "معالجة خصم التفاوض"), type: "select", opts: NEGO_OPTS(), change: "calc" },
     { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), change: "calc" }, { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), change: "calc" },
     { k: "paid", l: t("paid_now"), type: "number", input: "calc", help: paidSplitHelp() }, { k: "method", l: t("method"), type: "select", opts: payMethodOpts() },
-    { html: `<div class="banner info" id="calc"></div>`, span: "spanall" }],
+    ...fxFields(), { html: `<div class="banner info" id="calc"></div>`, span: "spanall" }],
     calc: f => { const g = n => Number($(`[name=${n}]`, f).value) || 0; const quoted = g("qty") * g("rate"), tot = quoted - g("savings");
       const vat = Math.round(tot * rateOf($("[name=vat_code]", f).value) * 100) / 100, wht = Math.round(tot * rateOf($("[name=wht_code]", f).value) * 100) / 100;
       const keep = $("[name=negotiation]", f).value === "keep" && g("savings") > 0;
@@ -2679,7 +2708,7 @@ const DOCS = {
     { k: "description", l: t("description"), req: 1 }, { k: "vendor", l: t("supplier"), list: "parties" },
     { k: "amount", l: t("amount"), type: "number", req: 1, input: "calc" }, { k: "paid", l: t("paid_now"), type: "number", ph: S.lang === "ar" ? "فارغ: مدفوع بالكامل" : "Blank: paid in full", help: paidSplitHelp(), input: "calc" },
     { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), change: "calc" }, { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), change: "calc" },
-    { k: "method", l: t("method"), type: "select", opts: payMethodOpts() }, { html: `<div class="banner info" id="calc"></div>`, span: "spanall" }],
+    { k: "method", l: t("method"), type: "select", opts: payMethodOpts() }, ...fxFields(), { html: `<div class="banner info" id="calc"></div>`, span: "spanall" }],
     calc: f => { const g = n => Number($(`[name=${n}]`, f).value) || 0; const a = g("amount");
       const vat = Math.round(a * rateOf($("[name=vat_code]", f).value) * 100) / 100, wht = Math.round(a * rateOf($("[name=wht_code]", f).value) * 100) / 100;
       $("#calc", f).innerHTML = `${t("vat_amt")}: ${money(vat)} · ${t("wht_amt")}: (${money(wht)}) · ${S.lang === "ar" ? "المستحق للمورد" : "Due to supplier"}: <b>${money(a + vat - wht)}</b>`; },
@@ -2695,13 +2724,13 @@ const DOCS = {
     calc: f => { const g = n => Number($(`[name=${n}]`, f).value) || 0; $("#calc", f).innerHTML = `${t("gross_pay")}: <b>${money(g("qty") * g("rate"))}</b> · ${t("unpaid")}: <b>${money(g("qty") * g("rate") - g("paid"))}</b>`; } },
   payment: { title: "m_payments", fields: pre => [
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "against", l: t("pay_against"), type: "select", opts: accts(["Liability"]), v: (pre && pre.against) || accByRole("ap") },
-    { k: "party", l: t("payee"), list: "parties", req: 1, v: pre && pre.party }, { k: "amount", l: t("amount"), type: "number", req: 1, v: pre && pre.amount },
+    { k: "party", l: t("payee"), list: "parties", req: 1, v: pre && pre.party }, { k: "amount", l: t("amount"), type: "number", req: 1, v: pre && pre.amount }, ...fxFields(pre && pre.currency),
     { k: "method", l: t("method"), type: "select", opts: payMethodOpts() }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—") },
     { k: "deal_ref", l: t("deal_ref"), v: pre && pre.deal_ref, help: L2("The deal this payment settles", "الاتفاق الذي يسدده هذا السند") },
     { k: "ref", l: t("ref") }, { k: "memo", l: t("memo") }, { k: "allow_overpay", l: t("allow_over"), type: "checkbox", span: "spanall" }] },
   receipt: { title: "m_receipts", fields: () => [
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts(), req: 1 },
-    { k: "amount", l: t("amount"), type: "number", req: 1 }, { k: "method", l: t("method"), type: "select", opts: payMethodOpts() },
+    { k: "amount", l: t("amount"), type: "number", req: 1 }, { k: "method", l: t("method"), type: "select", opts: payMethodOpts() }, ...fxFields(),
     // settling an invoice is the usual case: revenue was booked by the invoice, so a receipt booked as revenue again counts it twice
     { k: "credit_account", l: t("credit_account"), type: "select", v: accByRole("ar"), opts: [[accByRole("ar"), t("cr_ar")], [accByRole("revenue"), t("cr_revenue")], [accByRole("client_advances"), t("cr_adv")], ...accts(["Revenue", "Liability"]).filter(a => ![accByRole("revenue"), accByRole("client_advances")].includes(a[0]))],
       help: S.lang === "ar" ? "تسوية مديونية لعميل صدرت له فاتورة؛ إيراد (أساس نقدي) فقط لبيع بلا فاتورة؛ دفعة مقدمة لمال يُستلم قبل تنفيذ العمل"
@@ -2815,7 +2844,7 @@ function fillForm(f, vals) {
 }
 function journalLinesEditor(lines) {
   const opts = S.boot.accounts.filter(a => a.active).map(a => `<option value="${esc(a.code)}">${esc(a.code)} ${esc(aname(a))}</option>`).join("");
-  const row = l => `<tr><td><select data-skip="1" class="ja"><option value="">—</option>${l.account ? opts.replace(`value="${l.account}"`, `value="${l.account}" selected`) : opts}</select></td>
+  const row = l => `<tr${l.currency && l.fx_amount && !l._fxin ? ` data-cur="${esc(l.currency)}" data-fx="${esc(l.fx_amount)}" title="${esc(`${l.currency} ${money(l.fx_amount)} @ ${l.fx_rate}`)}"` : ""}><td><select data-skip="1" class="ja"><option value="">—</option>${l.account ? opts.replace(`value="${l.account}"`, `value="${l.account}" selected`) : opts}</select></td>
       <td><input data-skip="1" class="jd num" type="number" step="any" value="${l.debit || ""}" data-input="jbal"></td><td><input data-skip="1" class="jc num" type="number" step="any" value="${l.credit || ""}" data-input="jbal"></td>
       <td><input data-skip="1" class="jp" value="${esc(l.party || "")}" list="jparties" style="min-width:90px"></td>
       <td><button type="button" class="btn sm danger" data-a="jrm">✕</button></td></tr>`;
@@ -2866,6 +2895,10 @@ async function sendEntry(method, path, body, via, okMsg) {
 }
 function journalForm(e, copy, via) {
   let lines = e ? e.lines : [{ account: "", debit: "", credit: "" }, { account: "", debit: "", credit: "" }];
+  // an entry in one foreign currency opens in it: its lines show their foreign amounts (the exchange difference is made again)
+  const curs = e ? [...new Set(e.lines.filter(l => l.currency && l.fx_amount).map(l => l.currency))] : [];
+  const jCur = curs.length === 1 && e.lines.every(l => l.currency === curs[0] || (S.boot.fx && l.account === (S.boot.accounts.find(a => a.role === "fx_diff") || {}).code)) ? curs[0] : "";
+  if (jCur) lines = e.lines.filter(l => l.currency).map(l => ({ ...l, _fxin: 1, debit: l.debit ? l.fx_amount : "", credit: l.credit ? l.fx_amount : "" }));
   if (copy && e && e.meta && e.meta.items) {   // the item lines make their own debits again
     lines = e.lines.filter(l => !(l.debit && e.meta.items.some(x => x.account === l.account)));
     while (lines.length < 2) lines.push({ account: "", debit: "", credit: "" });
@@ -2875,12 +2908,16 @@ function journalForm(e, copy, via) {
     { k: "date", l: t("date"), type: "date", v: e ? e.date : today(), req: 1 },
     ...(e ? [] : [{ k: "template", l: t("template"), type: "select", opts: [["", "—"], ...Object.values(tpl).map(x => [x.id, (S.lang === "ar" && x.name_ar) || x.name])], change: "jtpl", help: t("template_help") }]),
     { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: e ? e.bu_id : "" }, { k: "party", l: t("party"), v: e ? e.party : "" },
-    { k: "ref", l: t("ref"), v: e ? e.ref : "" },
+    { k: "ref", l: t("ref"), v: e ? e.ref : "" }, ...fxFields(jCur),
     ...(e && (e.kind === "Direct Cost" || e.kind === "Supplier Discount" || (e.meta && e.meta.deal_ref)) ? [{ k: "deal_ref", l: t("deal_ref"), v: e.meta.deal_ref || "" },
       { k: "deal_status", l: t("deal_status"), type: "select", opts: [["", "—"], "Open", "Settled"], v: e.meta.deal_status || "" }] : []),
     { k: "memo", l: t("memo"), v: e ? e.memo : "", span: "spanall" }]) + (e && !copy ? "" : jItemsEditor(copy && e && e.meta && e.meta.items)) + `<div style="margin-top:12px">${journalLinesEditor(lines)}</div>` + `<div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button type="button" class="btn sm" data-a="jmsave">💾 ${esc(L2("Save as a model", "حفظ كنموذج"))}</button>${e ? "" : `<button type="button" class="btn sm danger" data-a="jmdel" id="jmdel" hidden>🗑 ${esc(L2("Delete this model", "حذف هذا النموذج"))}</button>`}</div>`
     + (via ? "" : `<div style="margin-top:12px">${form([ATTACH_FIELD()], 1)}</div>`);
-  const collect = f => $$("#jl tbody tr", f).map(tr => ({ account: $(".ja", tr).value, debit: $(".jd", tr).value, credit: $(".jc", tr).value, party: $(".jp", tr).value }));
+  // a line kept in a foreign currency (an entry in several currencies, edited in the company's) keeps its currency and amount
+  const collect = f => $$("#jl tbody tr", f).map(tr => { const l = { account: $(".ja", tr).value, debit: $(".jd", tr).value, credit: $(".jc", tr).value, party: $(".jp", tr).value };
+    const fc = $("[name=currency]", f);
+    if (tr.dataset.cur && (+l.debit || +l.credit) && !(fc && fc.value)) Object.assign(l, { currency: tr.dataset.cur, fx_amount: +tr.dataset.fx, fx_rate: (+l.debit || +l.credit) / +tr.dataset.fx });
+    return l; });
   const allItems = f => $$("#ji tbody tr", f).map(tr => ({ item: $(".ji-n", tr).value.trim(), unit: $(".ji-u", tr).value.trim(), qty: $(".ji-q", tr).value, rate: $(".ji-p", tr).value, warehouse_id: $(".ji-w", tr).value }));
   const items = f => allItems(f).filter(x => x.item && +x.qty && +x.rate);
   drawer((via ? `${L2("Draft", "مسودة")} #${via.aid}` : e && !copy ? t("edit") : t("new")) + " — " + t("m_journal"), html, async (v, f) => {
@@ -3942,6 +3979,7 @@ PAGES.invoice = async (view, parts, q) => {
         { k: "date", l: t("date"), type: "date", v: x.date, dis: locked }, { k: "boq_id", l: t("boq"), type: "select", opts: [["", t("standalone")], ...boqs.map(b => [b.id, `${b.title} (${b.bu_code || ""})`])], v: x.boq_id, dis: locked, change: "xboq" },
         { k: "customer", l: t("customer"), v: x.customer, list: "custs", dis: locked, change: "xcust" }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: x.vat_code, dis: locked, change: "letot" },
         { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), v: x.wht_code, dis: locked, change: "letot" },
+        ...fxFields(x.currency, x.fx_rate || "").map(fl => ({ ...fl, dis: locked || ((x.doc_type || "I") !== "I" && fl.k === "currency") })),
         { k: "doc_type", l: L2("Document", "المستند"), type: "select", opts: Object.entries(ETA_TYPE()), v: x.doc_type || "I", dis: locked, change: "xdtype" },
         ...((x.doc_type || "I") !== "I" ? [{ k: "ref_number", l: L2("Original invoice", "الفاتورة الأصلية"), v: x.ref_number || "", list: "postinv", dis: locked, req: 1 },
           { k: "eta_reason", l: L2("Reason", "السبب"), v: x.eta_reason || "", dis: locked, req: 1, span: "span2" }] : []),
@@ -3970,11 +4008,13 @@ PAGES.invoice = async (view, parts, q) => {
       x = { ...x, ...header(), ...h, boq_id: "", number: $("[name=number]").value, date: $("[name=date]").value, lines: lines || [] }; render();
     });
     S.H.letot();
+    fxWire(view);
   };
   const header = () => ({ bu_id: $("[name=bu_id]").value, number: $("[name=number]").value, date: $("[name=date]").value, boq_id: $("[name=boq_id]").value,
     customer: $("[name=customer]").value, vat_code: $("[name=vat_code]").value, wht_code: $("[name=wht_code]").value,
     doc_type: ($("[name=doc_type]") || {}).value || x.doc_type || "I", ...($("[name=ref_number]") ? { ref_number: $("[name=ref_number]").value, eta_reason: $("[name=eta_reason]").value } : {}),
-    ...($("[name=einv_template]") ? { einv_template: $("[name=einv_template]").value } : {}) });
+    ...($("[name=einv_template]") ? { einv_template: $("[name=einv_template]").value } : {}),
+    ...($("[name=currency]") ? { currency: $("[name=currency]").value, fx_rate: $("[name=fx_rate]").value } : {}) });
   S.H.xdtype = el => { const h = header(); x = { ...x, ...h, lines: readLines(true), doc_type: el.value, einv_template: "",
     number: x.id ? h.number : h.number.replace(/^(INV|CN|DN)-/, { I: "INV-", C: "CN-", D: "DN-" }[el.value]) }; render(); };
   // the fee card: one % per section of the lines (and one for any other section); amounts follow the lines as they change
@@ -4007,7 +4047,8 @@ PAGES.invoice = async (view, parts, q) => {
     const fee = drawFees(base) || 0, all = s + fee;
     const vc = $("[name=vat_code]"), wc = $("[name=wht_code]"); const vat = Math.round(all * rateOf(vc ? vc.value : "") * 100) / 100, wht = Math.round(all * rateOf(wc ? wc.value : "") * 100) / 100;
     const el = $("#letot"); if (el) el.textContent = `${t("total")}: ${money(s)}${fee ? ` · ${L2("Fees", "الأتعاب")}: ${money(fee)}` : ""} · ${t("vat_amt")}: ${money(vat)} · ${t("gross")}: ${money(all + vat)} · ${t("wht_amt")}: (${money(wht)}) · ${t("net_receivable")}: ${money(all + vat - wht)} ${cur()}`; };
-  S.H.xcust = el => { const p = (S.boot.parties || []).find(z => z.name === el.value); if (!p) return; if (p.default_vat && !$("[name=vat_code]").value) $("[name=vat_code]").value = p.default_vat; if (p.default_wht && !$("[name=wht_code]").value) $("[name=wht_code]").value = p.default_wht; S.H.letot(); };
+  S.H.xcust = el => { const p = (S.boot.parties || []).find(z => z.name === el.value); if (!p) return;
+    const fc = $("[name=currency]"); if (fc && p.currency && !fc.value && [...fc.options].some(o => o.value === p.currency)) { fc.value = p.currency; fc.dispatchEvent(new Event("change")); } if (p.default_vat && !$("[name=vat_code]").value) $("[name=vat_code]").value = p.default_vat; if (p.default_wht && !$("[name=wht_code]").value) $("[name=wht_code]").value = p.default_wht; S.H.letot(); };
   S.H.leadd = () => { x = { ...x, ...header(), lines: [...readLines(true), { description: "", qty: 1, price: 0 }] }; render(); };
   S.H.lerm = el => { const pg = el.closest(".page"), tr = el.closest("tr");
     if (pg && pg._grid && pg._grid.delRow && pg.contains($("#le"))) pg._grid.delRow(tr); else { tr.remove(); S.H.letot(); } };
@@ -5652,6 +5693,10 @@ PAGES.coa = async (view, parts, q) => {
     { k: "type", l: t("type"), type: "select", opts: types.map(x => [x, tl(x)]), v: a.type || "Expense", change: "atype", dis: a.used },
     { k: "subtype", l: t("statement_line"), type: "select", opts: [], v: a.subtype },
     ...(groups.length ? [{ k: "parent", l: L2("Group", "المجموعة"), type: "select", opts: grpOpts(a.type || "Expense"), v: a.parent || "" }] : []),
+    ...(fxOn() || a.currency ? [{ k: "currency", l: L2("Kept in currency", "العملة"), type: "select", dis: !!(a.used || a.role),
+      opts: [["", fxBase()], ...[...new Set([...(S.boot.fx.currencies || []), ...(a.currency ? [a.currency] : [])])].map(c => [c, c])], v: a.currency || "",
+      help: a.used || a.role ? L2("Fixed once the account has entries (system accounts stay in the company's currency)", "ثابتة بعد وجود قيود (الحسابات النظامية بعملة الشركة)")
+        : L2("For a bank account or loan in a foreign currency: only that currency can be posted to it", "لحساب بنكي أو قرض بعملة أجنبية: لا يُرحَّل إليه إلا بها") }] : []),
     { k: "active", l: t("active"), type: "checkbox", v: a.active !== 0 },
     { html: a.role ? `<div class="banner info">${t("role")}: <b dir="ltr"><code>${esc(a.role)}</code></b> — ${S.lang === "ar" ? "يمكن تغيير الرقم والاسم؛ ويتبع النظام دور الحساب." : "The code and name can be changed; the system follows the account role."}</div>` : "", span: "spanall" }]),
   async v => { if (a.used) v.type = a.type; if (a.code && !a._new) await api("PUT", "/api/accounts/" + encodeURIComponent(a.code), v); else await api("POST", "/api/accounts", v); await refreshBoot(); toast(t("saved")); },
@@ -6263,6 +6308,9 @@ function contactForm(p = {}, after) {
     { k: "tax_id", l: t("tax_id"), v: p.tax_id, ph: "123456789" }, { k: "national_id", l: t("national_id"), v: p.national_id },
     { k: "country", l: t("country"), v: p.country || "EG" }, { k: "postal_code", l: t("postal"), v: p.postal_code },
     { k: "default_vat", l: t("default_vat"), type: "select", opts: taxOpts("vat"), v: p.default_vat }, { k: "default_wht", l: t("default_wht"), type: "select", opts: taxOpts("wht"), v: p.default_wht },
+    ...(fxOn() || p.currency ? [{ k: "currency", l: L2("Usual currency", "العملة المعتادة"), type: "select", v: p.currency || "",
+      opts: [["", fxBase()], ...[...new Set([...(S.boot.fx.currencies || []), ...(p.currency ? [p.currency] : [])])].map(c => [c, c])],
+      help: L2("Their invoices start in it", "تبدأ فواتيرهم بها") }] : []),
     { k: "notes", l: t("notes"), type: "textarea", v: p.notes, span: "spanall" }]) + datalist("ccats", [...Object.keys(CONTACT_CATS), ...(S.cache.ccats || [])].map(catLabel)),
   async v => { const lab = Object.fromEntries(Object.keys(CONTACT_CATS).flatMap(c => [[CONTACT_CATS[c][0].toLowerCase(), c], [CONTACT_CATS[c][1], c]]));
     v.category = lab[(v.category || "").trim().toLowerCase()] || lab[(v.category || "").trim()] || v.category;
@@ -14218,6 +14266,83 @@ const FC_SECTIONS = () => ({ prices: L2("Price list (client prices)", "قائم�
   depreciation: L2("Depreciation and amortisation", "الإهلاك والاستهلاك"), loans: L2("Loan instalments due", "أقساط القروض المستحقة"), sales: L2("Sales", "المبيعات") });
 const FC_MIX = () => [["local", L2("Local", "محلي")], ["imported", L2("Imported", "مستورد")], ["labour", L2("Labour", "عمالة")], ["energy", L2("Energy", "طاقة")]];
 // Year-end close: the year's checklist, its profit going to retained earnings, then the lock (erp/yearend.py)
+// ---------------------------------------------------------- exchange rates (erp/fx.py)
+// Today's rates, once a day, from a free rates service (no key): fetched in the page and sent to the books. A rate
+// entered by hand or imported for the same day is never replaced.
+async function fxAutoFetch(force) {
+  const fx = S.boot && S.boot.fx;
+  if (!fx || !(fx.currencies || []).length || !can("accounting.fx")) return null;
+  if (!force && (!fx.auto || fx.fetched_on === today() || S.fxTried === today())) return null;
+  S.fxTried = today();
+  let payload = null;
+  try { const r = await fetch(`https://${fx.host}/v6/latest/${encodeURIComponent(fx.base)}`, { cache: "no-store", credentials: "omit" });
+    if (r.ok) payload = await r.json(); } catch { payload = null; }
+  try { const got = await api("POST", "/api/fx/fetch", payload ? { payload } : {}); fx.fetched_on = got.date; return got; }
+  catch (e) { if (force) throw e; return null; }
+}
+PAGES.fx = async (view, parts, q) => {
+  const d = await api("GET", "/api/fx" + (q.currency ? "?" + qs({ currency: q.currency }) : ""));
+  const add = can("accounting.fx", "add"), ed = can("accounting.fx", "edit"), setOk = can("settings.company", "edit");
+  const lastMonthEnd = (() => { const n = new Date(today() + "T00:00:00"); n.setDate(0); return n.toISOString().slice(0, 10); })();
+  const srcName = x => ({ manual: L2("By hand", "يدوي"), import: L2("Imported", "مستورد"), auto: L2("Fetched", "تلقائي") })[x] || x;
+  const cur = d.currencies;
+  view.innerHTML = `<div class="toolbar"><h1>${esc(t("m_fx"))}</h1><span class="spacer"></span>
+      ${add && cur.length ? `<button class="btn" data-a="fxfetch">⟳ ${esc(L2("Fetch today's rates", "جلب أسعار اليوم"))}</button>` : ""}</div>
+    <div class="card"><h2>${esc(L2("Currencies", "العملات"))}</h2>
+      <p class="muted">${esc(L2(`The books are kept in ${d.base}. Add the foreign currencies the company deals in: money forms then offer them, with the day's rate.`,
+        `الدفاتر بعملة ${d.base}. أضف العملات الأجنبية التي تتعامل بها الشركة، فتظهر في نماذج الأموال بسعر اليوم.`))}</p>
+      <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">${cur.map(c => `<span class="chip">${esc(c)}${setOk ? ` <a href="#" data-a="fxcrm" data-c="${esc(c)}" aria-label="${esc(t("remove"))}">×</a>` : ""}</span>`).join("") || `<span class="muted">${esc(L2("None yet", "لا يوجد بعد"))}</span>`}
+        ${setOk ? `<input class="in" id="fxcnew" list="fxclist" maxlength="3" placeholder="${esc(L2("Code, e.g. USD", "الرمز، مثل USD"))}" style="max-width:150px;text-transform:uppercase">
+          <datalist id="fxclist">${d.common.filter(c => c !== d.base && !cur.includes(c)).map(c => `<option value="${c}">`).join("")}</datalist><button class="btn sm" data-a="fxcadd">+ ${esc(L2("Add", "إضافة"))}</button>` : ""}</div>
+      ${setOk ? `<label class="f chk" style="margin-top:10px"><input type="checkbox" id="fxauto" ${d.auto ? "checked" : ""}>${esc(L2(`Fetch the rates automatically each day (from ${d.host}, free). A rate entered by hand always wins.`,
+        `جلب الأسعار تلقائياً كل يوم (من ${d.host}، مجاناً). السعر المُدخل يدوياً له الأولوية دائماً.`))}</label>` : ""}
+      ${d.fetched_on ? `<p class="muted">${esc(L2("Last fetched", "آخر جلب"))}: ${fd(d.fetched_on)}</p>` : ""}</div>
+    ${cur.length ? `<div class="card"><h2>${esc(L2("Rates", "الأسعار"))}</h2>
+      <p class="muted">${esc(L2(`How much ${d.base} one unit is worth. A form uses the last rate on or before its date.`, `قيمة الوحدة الواحدة بعملة ${d.base}. يستخدم النموذج آخر سعر في تاريخه أو قبله.`))}</p>
+      ${add ? `<div class="row" style="gap:6px;flex-wrap:wrap;align-items:flex-end">
+        <label class="f"><span class="fl">${t("date")}</span><input type="date" id="fxd" value="${today()}"></label>
+        <label class="f"><span class="fl">${esc(L2("Currency", "العملة"))}</span><select id="fxc">${cur.map(c => `<option>${esc(c)}</option>`).join("")}</select></label>
+        <label class="f"><span class="fl">${esc(L2("Rate", "السعر"))}</span><input type="number" step="any" id="fxr" class="num" style="max-width:140px"></label>
+        <button class="btn pri" data-a="fxadd">${t("save")}</button><button class="btn" data-a="fxpaste">${esc(L2("Paste from Excel…", "لصق من Excel…"))}</button></div>` : ""}
+      <div class="row" style="gap:6px;margin:10px 0"><a class="btn sm ${!q.currency ? "pri" : ""}" href="#/fx">${esc(L2("All", "الكل"))}</a>${cur.map(c => `<a class="btn sm ${q.currency === c ? "pri" : ""}" href="#/fx?currency=${c}">${c}</a>`).join("")}</div>
+      <div class="tbl"><table><thead><tr><th>${t("date")}</th><th>${esc(L2("Currency", "العملة"))}</th><th class="num">${esc(L2("Rate", "السعر"))}</th><th>${esc(L2("Source", "المصدر"))}</th><th></th></tr></thead><tbody>
+      ${d.rates.map(r => `<tr><td>${fd(r.date)}</td><td>${esc(r.currency)}</td><td class="num" dir="ltr">${esc(r.rate)}</td><td>${esc(srcName(r.source))}</td>
+        <td>${ed ? `<button class="btn sm danger" data-a="fxdel" data-d="${esc(r.date)}" data-c="${esc(r.currency)}" aria-label="${esc(t("delete"))}">✕</button>` : ""}</td></tr>`).join("") ||
+        `<tr><td colspan="5" class="muted">${esc(L2("No rates yet: fetch today's, or enter one.", "لا توجد أسعار بعد: اجلب أسعار اليوم أو أدخل سعراً."))}</td></tr>`}</tbody></table></div></div>
+    <div class="card"><h2>${esc(L2("Month-end revaluation", "إعادة التقييم في نهاية الشهر"))}</h2>
+      <p class="muted">${esc(L2("Money held or owed in a foreign currency (bank and cash, customers, suppliers) is restated at that day's rate; the difference goes to exchange gains / losses. It is reversed the next day, so each month starts from what the balances cost.",
+        "تُعاد قيمة الأموال المحتفظ بها أو المستحقة بعملة أجنبية (البنوك والخزينة والعملاء والموردين) بسعر ذلك اليوم، ويُسجل الفرق في أرباح / خسائر فروق العملة. ويُعكس القيد في اليوم التالي فيبدأ كل شهر من تكلفة الأرصدة."))}</p>
+      <div class="row" style="gap:6px;align-items:flex-end;flex-wrap:wrap"><label class="f"><span class="fl">${esc(L2("As at", "في تاريخ"))}</span><input type="date" id="fxvd" value="${esc(q.at || lastMonthEnd)}"></label>
+        <button class="btn" data-a="fxprev">${esc(L2("Preview", "معاينة"))}</button></div><div id="fxvout"></div></div>` : ""}`;
+  const saveCur = async list => { try { await api("PUT", "/api/settings", { fx_currencies: list.join(",") }); await refreshBoot(); route(); } catch (e) { fail(e); } };
+  Object.assign(S.H, {
+    fxcadd: () => { const c = ($("#fxcnew").value || "").trim().toUpperCase(); if (!/^[A-Z]{3}$/.test(c)) return fail(new Error(L2("Enter a three-letter currency code, e.g. USD", "أدخل رمز العملة من ثلاثة أحرف، مثل USD"))); saveCur([...cur, c]); },
+    fxcrm: el => saveCur(cur.filter(c => c !== el.dataset.c)),
+    fxfetch: async () => { try { const r = await fxAutoFetch(true); const n = r ? Object.keys(r.rates || {}).length : 0;
+      toast(n ? L2(`${n} rate(s) saved for ${r.date}.`, `حُفظ ${n} سعر بتاريخ ${r.date}.`) : L2("The rates service gave no rates. Enter them by hand.", "لم تُرجع خدمة الأسعار أسعاراً. أدخلها يدوياً.")); route(); } catch (e) { fail(e); } },
+    fxadd: async () => { try { await api("POST", "/api/fx/rates", { date: $("#fxd").value, currency: $("#fxc").value, rate: $("#fxr").value }); toast(t("saved")); route(); } catch (e) { fail(e); } },
+    fxdel: async el => { if (!await uiConfirm(L2(`Delete the ${el.dataset.c} rate of ${el.dataset.d}?`, `حذف سعر ${el.dataset.c} بتاريخ ${el.dataset.d}؟`), { danger: true })) return;
+      try { await api("DELETE", "/api/fx/rates?" + qs({ date: el.dataset.d, currency: el.dataset.c })); route(); } catch (e) { fail(e); } },
+    fxpaste: () => drawer(L2("Paste rates", "لصق الأسعار"), form([{ k: "rows", l: L2("One rate per line: date, currency, rate (columns copied from Excel)", "سعر في كل سطر: التاريخ، العملة، السعر (أعمدة منسوخة من Excel)"), type: "textarea", span: "spanall", req: 1,
+      ph: "2026-01-31\tUSD\t50.25" }], 1), async v => {
+      const rows = String(v.rows || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split(/\t|;|,(?=\s*[A-Za-z]{3}\b)|,(?=\s*[\d.]+\s*$)/).map(x => x.trim()))
+        .filter(c => c.length >= 3 && !/^date|^تاريخ/i.test(c[0])).map(c => ({ date: c[0], currency: c[1].toUpperCase(), rate: c[2].replace(/,/g, "") }));
+      if (!rows.length) throw new Error(L2("No rates found. Each line needs a date, a currency and a rate.", "لم يُعثر على أسعار. كل سطر يحتاج تاريخاً وعملة وسعراً."));
+      const r = await api("POST", "/api/fx/rates", { rows }); toast(L2(`${r.saved} rate(s) saved.`, `حُفظ ${r.saved} سعر.`)); }),
+    fxprev: async () => { const at = $("#fxvd").value; try { const p = await api("GET", "/api/fx/revalue?" + qs({ date: at }));
+      const tot = p.rows.reduce((a, r) => a + r.difference, 0);
+      $("#fxvout").innerHTML = p.rows.length ? `<div class="tbl" style="margin-top:10px"><table><thead><tr><th>${t("account")}</th><th>${t("party")}</th><th>${esc(L2("Currency", "العملة"))}</th><th class="num">${esc(L2("Foreign balance", "الرصيد بالعملة"))}</th>
+          <th class="num">${esc(L2("Carried at", "مسجل بـ"))}</th><th class="num">${esc(L2("Rate", "السعر"))}</th><th class="num">${esc(L2("Restated", "بعد التقييم"))}</th><th class="num">${esc(L2("Difference", "الفرق"))}</th></tr></thead><tbody>
+          ${p.rows.map(r => `<tr><td>${esc(r.account)} ${esc(r.name)}</td><td>${esc(r.party)}</td><td>${esc(r.currency)}</td><td class="num">${money(r.fx)}</td><td class="num">${money(r.home)}</td><td class="num" dir="ltr">${esc(r.rate)}</td><td class="num">${money(r.revalued)}</td><td class="num ${r.difference < 0 ? "neg" : "pos"}">${money(r.difference)}</td></tr>`).join("")}
+          <tr class="total"><td colspan="7">${esc(L2("Net gain / (loss)", "صافي الربح / (الخسارة)"))}</td><td class="num">${money(tot)}</td></tr></tbody></table></div>
+          ${ed ? `<button class="btn pri" style="margin-top:8px" data-a="fxpost">${esc(L2(`Post the revaluation at ${at} (reversed the next day)`, `ترحيل إعادة التقييم في ${at} (يُعكس في اليوم التالي)`))}</button>` : ""}`
+        : `<p class="muted" style="margin-top:8px">${esc(L2("Nothing to revalue: no foreign balance differs from that day's rate.", "لا يوجد ما يُعاد تقييمه: لا رصيد بعملة أجنبية يختلف عن سعر ذلك اليوم."))}</p>`;
+      } catch (e) { fail(e); } },
+    fxpost: async () => { const at = $("#fxvd").value; if (!await uiConfirm(L2(`Post the revaluation at ${at}? It is reversed on the next day.`, `ترحيل إعادة التقييم في ${at}؟ يُعكس في اليوم التالي.`))) return;
+      try { const r = await api("POST", "/api/fx/revalue", { date: at }); toast(r.entry ? L2(`Posted #${r.entry}, reversed by #${r.reversal}.`, `رُحّل القيد #${r.entry} وعُكس بالقيد #${r.reversal}.`) : L2("Nothing to revalue.", "لا يوجد ما يُعاد تقييمه.")); if (r.entry) openVoucher(r.entry); } catch (e) { fail(e); } },
+  });
+  const au = $("#fxauto"); if (au) au.addEventListener("change", async () => { try { await api("PUT", "/api/settings", { fx_auto: au.checked ? "1" : "0" }); await refreshBoot(); toast(t("saved")); } catch (e) { fail(e); } });
+};
 PAGES["year-end"] = async (view, parts, q) => {
   const list = await api("GET", "/api/year-end");
   const ed = can("accounting.yearend", "edit"), sup = S.boot.user.is_super;

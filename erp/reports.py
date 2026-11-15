@@ -926,12 +926,18 @@ def party_statement_table(db, party, date_from=None, date_to=None, lang="en"):
                     ("Description", "البيان", "left"), ("Debit", "مدين", "right"),
                     ("Credit", "دائن", "right"), ("Balance", "الرصيد", "right")], lang)
     rows = [{"cells": ["", "", "", "رصيد أول المدة" if ar else "Opening balance", "", "", d["opening"]], "style": "subtotal", "indent": 0}]
-    rows += [{"cells": [r["date"], f"#{r['id']} {r['kind']}", r["ref"], r["memo"], r["debit"] or "", r["credit"] or "", r["balance"]],
+    fxt = lambda r: "".join(f" [{c} {v:,.2f}]" for c, v in (r.get("fx") or {}).items())  # noqa: E731
+    rows += [{"cells": [r["date"], f"#{r['id']} {r['kind']}", r["ref"], (r["memo"] or "") + fxt(r), r["debit"] or "", r["credit"] or "", r["balance"]],
               "style": "item", "indent": 0} for r in d["rows"]]
     rows.append({"cells": [L("total", lang), "", "", "", d["debits"], d["credits"], d["closing"]], "style": "grand", "indent": 0})
     c = d["closing"]
     say = (("له علينا" if c < 0 else "عليه لنا") if ar else ("we owe them" if c < 0 else "they owe us")) if c else ("لا رصيد" if ar else "settled")
     rows.append({"cells": ["", "", "", ("الرصيد الختامي: " if ar else "Closing balance: ") + say, "", "", abs(c)], "style": "subtotal", "indent": 0})
+    if d.get("foreign"):
+        rows.append({"cells": ["", "", "", "بالعملات الأجنبية" if ar else "IN FOREIGN CURRENCIES", "", "", ""], "style": "section", "indent": 0})
+        for f in d["foreign"]:
+            rows.append({"cells": ["", "", "", f"{f['currency']} {f['balance']:,.2f} " + (f"(مسجل بـ {f['home']:,.2f})" if ar else f"(carried at {f['home']:,.2f})"),
+                                   "", "", f["home"]], "style": "item", "indent": 1})
     if c:
         rows.append({"cells": ["", "", "", "أعمار الرصيد" if ar else "AGE OF THE OPEN BALANCE", "", "", ""], "style": "section", "indent": 0})
         for b, v in zip(d["buckets_ar"] if ar else [x + " days" for x in d["buckets"]], d["aging"]):

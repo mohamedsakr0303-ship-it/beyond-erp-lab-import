@@ -4,6 +4,26 @@ English stays the source; {} in a message is a value, {1}, {2}… place it in th
 generic message ("{} is required") have their own list."""
 
 MESSAGES = {
+    # foreign currencies (erp/fx.py)
+    '{} is not a currency code (three letters, e.g. USD)': '{1} ليس رمز عملة (ثلاثة أحرف، مثل USD)',
+    "No exchange rate for {} on or before {}. Add one under Exchange rates (or let the app fetch today's).":
+        'لا يوجد سعر صرف لـ {1} في {2} أو قبله. أضفه من شاشة أسعار الصرف (أو اترك البرنامج يجلب سعر اليوم).',
+    "Choose a foreign currency (not the company's own)": 'اختر عملة أجنبية (غير عملة الشركة)',
+    'The rate for {} must be a number': 'يجب أن يكون سعر {1} رقماً',
+    'The rate for {} must be more than zero': 'يجب أن يكون سعر {1} أكبر من صفر',
+    'Account {} is kept in {}: enter its line in {}': 'الحساب {1} بعملة {2}: أدخل سطره بعملة {3}',
+    'A line has a foreign amount but no currency': 'في السطر مبلغ بعملة أجنبية بدون تحديد العملة',
+    'Account {} is kept in {}, not {}': 'الحساب {1} بعملة {2} وليس {3}',
+    'A foreign amount must be more than zero': 'يجب أن يكون المبلغ بالعملة الأجنبية أكبر من صفر',
+    'Foreign balances were already revalued on {} (entry #{}).': 'أُعيد تقييم الأرصدة بالعملات الأجنبية بالفعل في {1} (القيد رقم {2}).',
+    'The rates service did not send rates': 'لم ترسل خدمة الأسعار أي أسعار',
+    'The rates service answered for {}, not {}': 'أرسلت خدمة الأسعار أسعار {1} وليس {2}',
+    "Could not fetch today's rates ({}). Enter them by hand, or try again later.": 'تعذر جلب أسعار اليوم ({1}). أدخلها يدوياً أو حاول لاحقاً.',
+    "A system account stays in the company's currency; open a new account for the foreign one": 'يبقى الحساب النظامي بعملة الشركة؛ افتح حساباً جديداً للعملة الأجنبية',
+    'This account has postings; its currency cannot change. Open a new account and move the balance.': 'على هذا الحساب قيود؛ لا يمكن تغيير عملته. افتح حساباً جديداً وانقل الرصيد.',
+    'The invoice is in {} but has no exchange rate yet — post it first': 'الفاتورة بعملة {1} وليس لها سعر صرف بعد — رحّلها أولاً',
+    'At most 20,000 rates at once': 'الحد الأقصى 20,000 سعر في المرة الواحدة',
+    'Row {}: not a rate': 'السطر {1}: ليس سعراً',
     'Code {} is used by a group of the chart': 'الكود {1} مستخدم لمجموعة في الدليل',
     "Unknown group {}. Add it under the chart's groups first.": 'مجموعة غير معروفة {1}. أضفها أولاً ضمن مجموعات الدليل.',
     'Group {} holds {} accounts; this account is {}': 'المجموعة {1} تضم حسابات من نوع {2}؛ وهذا الحساب من نوع {3}',

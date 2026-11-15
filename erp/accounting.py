@@ -37,7 +37,7 @@ ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment V
                "Loan Forgiven", "Loan Written Off", "Custody Issued", "Custody Settlement", "Custody Return",
                "Custody Deduction", "Rental Equipment Purchase", "Rental Equipment Loss", "Rental Equipment Depreciation",
                "Rental Deposit", "Installment Interest", "Advance Applied", "Cost of Sales", "Cheque Received",
-               "Cheque Cleared", "Cheque Bounced", "Sale Refund", "Bank Entry",
+               "Cheque Cleared", "Cheque Bounced", "Sale Refund", "Bank Entry", "FX Revaluation",
                "Subcontractor Certificate", "Equipment Usage", "Equipment Maintenance", "E-Receipt"]
 
 
@@ -194,7 +194,13 @@ def _validate_lines(db, lines):
             if item not in known_items:
                 raise ValidationError(f"Unknown cost item {item}. Add it under Cost items first.")
         out.append((acc, d, c, party))
-        extra.append((text(ln.get("memo") or ln.get("line_memo"), maxlen=500), item))
+        cur = text(ln.get("currency"), maxlen=3).upper()
+        fx_amt = to_minor(num(ln.get("fx_amount"), "foreign amount")) if cur else 0
+        try:
+            fx_rate = float(ln.get("fx_rate") or 0) if cur else 0.0
+        except (TypeError, ValueError):
+            fx_rate = 0.0
+        extra.append((text(ln.get("memo") or ln.get("line_memo"), maxlen=500), item, cur, abs(fx_amt), fx_rate))
         touched.add((acc, party))
         dr += d
         cr += c
@@ -215,9 +221,11 @@ class _Lines(list):
 
 
 def _insert_lines(db, eid, vlines):
-    extra = getattr(vlines, "extra", None) or [("", "")] * len(vlines)
-    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party,memo,cost_item) VALUES (?,?,?,?,?,?,?)",
-                        [(eid, a, d, c, p, m, it) for (a, d, c, p), (m, it) in zip(vlines, extra)])
+    extra = getattr(vlines, "extra", None) or [("", "", "", 0, 0.0)] * len(vlines)
+    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party,memo,cost_item,currency,fx_amount,fx_rate) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        [(eid, a, d, c, p, *x[:2], *(tuple(x[2:5]) if len(x) >= 5 else ("", 0, 0.0)))
+                         for (a, d, c, p), x in zip(vlines, extra)])
 
 
 def check_open(db, date):
@@ -250,8 +258,17 @@ def over_limit(msg):
     raise NeedsConfirm(msg)
 
 
+def _fx_lines(db, date, lines, party, currency=None, rate=None, exclude_eid=None):
+    """Foreign amounts → the company's currency, with the exchange difference (erp/fx.py); other lines unchanged."""
+    fx_accounts = {r["code"] for r in db.q("SELECT code FROM accounts WHERE currency<>''")}
+    if currency or any(l.get("fx_debit") or l.get("fx_credit") or l.get("currency") or text(l.get("account")) in fx_accounts for l in lines):
+        from . import fx
+        return fx.convert(db, clean_date(date), lines, text(party), currency, rate, exclude_eid=exclude_eid)
+    return lines
+
+
 def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", lines, meta=None,
-                  reversal_of=None, user=""):
+                  reversal_of=None, user="", currency=None, rate=None):
     """Insert a balanced entry. Caller must hold a transaction (db.tx())."""
     if POSTING_HELD.get() and user != "system":
         from .textl10n import Note
@@ -264,6 +281,7 @@ def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", line
         lines = [dict(l, party=l.get("party") or cu["holder"]) if text(l.get("account")) == cu["account"] else l for l in lines]
         meta = {**(meta or {}), "paid_by_custody": cu["code"]}
     check_open(db, clean_date(date))
+    lines = _fx_lines(db, date, lines, party, currency, rate, _REPLACE["eid"])
     vlines = _validate_lines(db, lines)
     if _REPLACE["eid"]:
         eid, _REPLACE["eid"] = _REPLACE["eid"], None
@@ -296,6 +314,12 @@ def _wip_after(db, kind, *bu_ids):
     from . import wip
     for b in {x for x in bu_ids if x}:
         wip.sync(db, b)
+
+
+def fx_of(d):
+    """A form's currency and rate (erp/fx.py): its amounts are in that currency; blank = the company's."""
+    cur = text(d.get("currency"), maxlen=3).upper()
+    return {"currency": cur, "rate": d.get("rate_fx") if d.get("rate_fx") not in (None, "") else d.get("fx_rate")} if cur else {}
 
 
 def post_entry(db, **kw):
@@ -335,7 +359,8 @@ def get_entry(db, eid):
     e["history"] = json.loads(e["history"] or "[]")
     e["lines"] = [{"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
                    "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {}),
-                   **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {})}
+                   **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {}),
+                   **({"currency": r["currency"], "fx_amount": to_major(r["fx_amount"]), "fx_rate": r["fx_rate"]} if r["currency"] else {})}
                   for r in db.q("SELECT l.*, a.name, a.name_ar FROM journal_lines l JOIN accounts a ON a.code=l.account "
                                 "WHERE entry_id=? ORDER BY l.id", (eid,))]
     e["amount"] = round(sum(ln["debit"] for ln in e["lines"]), 2)
@@ -361,7 +386,8 @@ def get_entries(db, ids):
         lines.setdefault(r["entry_id"], []).append(
             {"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
              "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {}),
-             **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {})})
+             **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {}),
+                   **({"currency": r["currency"], "fx_amount": to_major(r["fx_amount"]), "fx_rate": r["fx_rate"]} if r["currency"] else {})})
     for r in db.q(f"SELECT entry_id, tag FROM entry_tags WHERE entry_id IN ({marks}) ORDER BY tag", ids):
         tags.setdefault(r["entry_id"], []).append(r["tag"])
     out = []
@@ -475,7 +501,7 @@ def record_project_cost(db, d, user="", strict=False):
             **({"stage": text(d["stage"], maxlen=80)} if text(d.get("stage")) else {})}
     return post_entry(db, date=d.get("date"), kind="Direct Cost",
                       memo=text(d.get("description"), "description", required=True), bu_id=bu, party=vendor,
-                      ref=meta["deal_ref"], lines=lines, meta=meta, user=user)
+                      ref=meta["deal_ref"], lines=lines, meta=meta, user=user, **fx_of(d))
 
 
 def record_expense(db, d, user=""):
@@ -495,7 +521,8 @@ def record_expense(db, d, user=""):
     return post_entry(db, date=d.get("date"), kind="Operating Expense",
                       memo=text(d.get("description"), "description", required=True),
                       bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=vendor, lines=lines,
-                      meta={"method": text(d.get("method")), "vat_code": vat_code, "wht_code": wht_code, **alloc_meta(db, d)}, user=user)
+                      meta={"method": text(d.get("method")), "vat_code": vat_code, "wht_code": wht_code, **alloc_meta(db, d)}, user=user,
+                      **fx_of(d))
 
 
 def alloc_meta(db, d):
@@ -538,15 +565,21 @@ def record_payment(db, d, user=""):
     account = account_code(db, d.get("against") or db.acct("ap"), types=("Liability",), field="pay-against account")
     party = text(d.get("party"), "payee", required=True)
     amount = num(d.get("amount"), "amount", allow_zero=False)
-    owed = party_balance(db, account, party)
+    fxd = fx_of(d)
+    if fxd and fxd["currency"] != (db.setting("currency") or "EGP").upper():
+        from . import fx
+        owed = -to_major(fx.carried(db, account, party, fxd["currency"], clean_date(d.get("date")))[0])   # what is owed in that currency
+        unit = f" {fxd['currency']}"
+    else:
+        owed, unit = party_balance(db, account, party), ""
     if to_minor(amount) > to_minor(owed) and not d.get("allow_overpay"):
-        raise ValidationError(f"{party} is owed {owed:,.2f} on {account}. Tick 'allow overpayment' to pay more.")
+        raise ValidationError(f"{party} is owed {owed:,.2f}{unit} on {account}. Tick 'allow overpayment' to pay more.")
     return post_entry(db, date=d.get("date"), kind="Payment Voucher", memo=text(d.get("memo")) or f"Payment to {party}",
                       bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=party, ref=text(d.get("ref")),
                       lines=[{"account": account, "debit": amount},
                              {"account": money_account(db, d.get("method"), d.get("paid_from")), "credit": amount}],
                       meta={"method": text(d.get("method")), **({"deal_ref": text(d["deal_ref"])} if text(d.get("deal_ref")) else {})},
-                      user=user)
+                      user=user, **fxd)
 
 
 NEGOTIATION_MODES = ("keep", "pass")
@@ -640,7 +673,7 @@ def record_collection(db, d, user=""):
                       bu_id=bu, party=text(d.get("party")) or bu_row["customer"] or bu_row["name"],
                       ref=text(d.get("ref")), lines=lines,
                       meta={"method": text(d.get("method")), "vat_code": vat_code, "withheld": to_major(withheld)},
-                      user=user)
+                      user=user, **fx_of(d))
 
 
 # ------------------------------------------------------------------ partners
@@ -725,7 +758,7 @@ def record_journal(db, d, user=""):
         date = clean_date(d.get("date"))
         eid = _insert_entry(db, date=date, kind=text(d.get("kind")) or "Journal Voucher", memo=text(d.get("memo")),
                             bu_id=bu_default, party=text(d.get("party")), ref=text(d.get("ref")),
-                            lines=debits + list(d.get("lines") or []), user=user, meta=meta or None)
+                            lines=debits + list(d.get("lines") or []), user=user, meta=meta or None, **fx_of(d))
         for x in items:
             if x["warehouse"]:
                 from . import stockcost
@@ -851,7 +884,8 @@ def reverse_entry(db, eid, date=None, user=""):
             # the invoice belongs to a closed period: it stays issued there; correct it with a credit note now
             raise ValidationError(f"This invoice is in the closed books (up to {lock}). Issue a credit note in the open period instead.")
         _stock_undo_guard(db, eid)
-        lines = [{"account": ln["account"], "debit": ln["credit"], "credit": ln["debit"], "party": ln.get("party", "")}
+        lines = [{"account": ln["account"], "debit": ln["credit"], "credit": ln["debit"], "party": ln.get("party", ""),
+                  **({k: ln[k] for k in ("currency", "fx_amount", "fx_rate")} if ln.get("currency") else {})}
                  for ln in e["lines"]]
         rid = _insert_entry(db, date=date or today(), kind="Reversing Entry", memo=f"Reversal of #{eid}: {e['memo']}",
                             bu_id=e["bu_id"], party=e["party"], ref=e["ref"], lines=lines, reversal_of=eid, user=user)
@@ -875,7 +909,9 @@ def edit_entry(db, eid, d, user=""):
                 db.one("SELECT 1 FROM extracts WHERE entry_id=?", (eid,)):
             raise ValidationError("This entry belongs to a stock movement or invoice. Reverse it and re-enter.")
         _owned_guard(db, eid)
-        vlines = _validate_lines(db, d.get("lines") or e["lines"])
+        fxd = fx_of(d)
+        vlines = _validate_lines(db, _fx_lines(db, d.get("date") or e["date"], d.get("lines") or e["lines"], d.get("party", e["party"]),
+                                               fxd.get("currency"), fxd.get("rate"), exclude_eid=eid))
         snap = {k: e[k] for k in ("date", "memo", "bu_code", "party", "lines")}
         snap.update(ref=e["ref"], edited_at=now_iso(), edited_by=user)
         meta = dict(e["meta"])
@@ -929,6 +965,11 @@ def save_account(db, d, old_code=None):
         # its group: given, or kept as it was (callers that do not know about groups never move an account)
         parent = text(d.get("parent")) if "parent" in d else ((cur0 or {}).get("parent") or "")
         _check_parent(db, parent, typ)
+        # kept in a foreign currency (a USD bank account): given, or kept as it was
+        from . import fx
+        currency = fx.code(d.get("currency")) if "currency" in d else ((db.one("SELECT currency FROM accounts WHERE code=?", (old_code,)) or {}).get("currency", "") if old_code else "")
+        if currency == fx.base(db):
+            currency = ""
         if old_code:
             cur = db.one("SELECT * FROM accounts WHERE code=?", (old_code,))
             if not cur:
@@ -944,13 +985,18 @@ def save_account(db, d, old_code=None):
                 # cash ↔ not cash re-states every past cash flow and the money lists; open a new account instead
                 raise ValidationError("This account has postings; it cannot move into or out of Cash & cash equivalents. "
                                       "Open a new account and move the balance.")
-            db.conn.execute("UPDATE accounts SET code=?, name=?, name_ar=?, type=?, subtype=?, normal=?, active=?, parent=? "
-                            "WHERE code=?", (code, name, name_ar, typ, sub, normal_for(typ, sub), active, parent, old_code))
+            if currency != (cur["currency"] or ""):
+                if cur["role"]:
+                    raise ValidationError("A system account stays in the company's currency; open a new account for the foreign one")
+                if used:
+                    raise ValidationError("This account has postings; its currency cannot change. Open a new account and move the balance.")
+            db.conn.execute("UPDATE accounts SET code=?, name=?, name_ar=?, type=?, subtype=?, normal=?, active=?, parent=?, currency=? "
+                            "WHERE code=?", (code, name, name_ar, typ, sub, normal_for(typ, sub), active, parent, currency, old_code))
         else:
             if db.one("SELECT 1 FROM accounts WHERE code=?", (code,)):
                 raise ValidationError(f"Code {code} is already used")
-            db.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,active,parent) VALUES (?,?,?,?,?,?,?,?)",
-                            (code, name, name_ar, typ, sub, normal_for(typ, sub), active, parent))
+            db.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,active,parent,currency) VALUES (?,?,?,?,?,?,?,?,?)",
+                            (code, name, name_ar, typ, sub, normal_for(typ, sub), active, parent, currency))
     return code
 
 
@@ -1581,8 +1627,18 @@ def save_extract(db, d, extract_id=None):
             r = db.one("SELECT COALESCE(MAX(seq_no),0) AS n, COUNT(*) AS c FROM extracts WHERE bu_id=?", (bu,))
             seq_no = max(r["n"] or 0, r["c"] or 0) + 1
         doc_type, ref_id, reason = _note_fields(db, d, extract_id)
+        from . import fx
+        if "currency" in d or not extract_id:      # the invoice's currency (blank = the company's) and, if fixed, its rate
+            currency = fx.code(d.get("currency"))
+            currency = "" if currency == fx.base(db) else currency
+            fx_rate = num(d.get("fx_rate") or 0, "exchange rate") if currency else 0
+        else:
+            old = db.one("SELECT currency, fx_rate FROM extracts WHERE id=?", (extract_id,)) or {}
+            currency, fx_rate = old.get("currency") or "", old.get("fx_rate") or 0
         if ref_id:      # a credit / debit note belongs to its invoice's business unit (its revenue and receivable)
             bu = db.one("SELECT bu_id FROM extracts WHERE id=?", (int(ref_id),))["bu_id"] or bu
+            currency = db.one("SELECT currency FROM extracts WHERE id=?", (int(ref_id),))["currency"] or ""   # and its currency
+            fx_rate = fx_rate if currency else 0
         vals = (bu, boq_id, number, clean_date(d.get("date")), text(d.get("customer")), vat_code, wht_code,
                 text(d.get("project")), text(d.get("work")), seq_no, prev, to_minor(num(d.get("deductions") or 0, "deductions")),
                 text(d.get("notes"), maxlen=2000), 1 if d.get("final") in (1, True, "1", "true", "yes", "Yes") else 0,
@@ -1602,6 +1658,7 @@ def save_extract(db, d, extract_id=None):
                 raise ValidationError(f"Invoice number {number} already exists")
             extract_id = db.conn.execute("INSERT INTO extracts(bu_id,boq_id,number,date,customer,vat_code,wht_code,project,work,"
                                          "seq_no,prev_paid,deductions,notes,final,fees) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals).lastrowid
+        db.conn.execute("UPDATE extracts SET currency=?, fx_rate=? WHERE id=?", (currency, fx_rate, extract_id))
         db.conn.execute("UPDATE extracts SET doc_type=?, ref_id=?, eta_reason=?, einv_template=? WHERE id=?",
                         (doc_type, ref_id, reason, text(d.get("einv_template"), maxlen=40) if "einv_template" in d else
                          ((db.one("SELECT einv_template FROM extracts WHERE id=?", (extract_id,)) or {}).get("einv_template") or ""), extract_id))
@@ -1635,7 +1692,7 @@ def _post_credit_note(db, x, date, user, ar, rev):
     if x["wht"]:
         lines.append({"account": db.acct("wht_receivable"), "credit": x["wht"]})
     with db.tx():
-        eid = _insert_entry(db, date=date or x["date"], kind="Credit Note",
+        eid = _insert_entry(db, date=date or x["date"], kind="Credit Note", **_extract_fx(db, x, date),
                             memo=f"Credit note — {x['number']} (on {orig['number']}): {x.get('eta_reason') or ''}",
                             bu_id=x["bu_id"], party=x["customer"] or x["bu_customer"] or x["bu_name"], ref=x["number"], user=user,
                             lines=lines, meta={"extract_id": x["id"], "credit_of": x["ref_id"], "vat_code": x["vat_code"], "wht_code": x["wht_code"]})
@@ -1706,6 +1763,16 @@ def list_extracts(db, boq_id=None, bu_id=None, status=None, date_from=None, date
     return customfilter.keep(rows, "extracts")
 
 
+def _extract_fx(db, x, date=None):
+    """A foreign-currency invoice: its currency and the rate it posts at (fixed on the invoice, else the day's), kept on it."""
+    if not x.get("currency"):
+        return {}
+    from . import fx
+    rate = x.get("fx_rate") or fx.rate_on(db, x["currency"], clean_date(date or x["date"]))
+    db.conn.execute("UPDATE extracts SET fx_rate=? WHERE id=?", (rate, x["id"]))
+    return {"currency": x["currency"], "rate": rate}
+
+
 def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=None):
     """Invoice executed work: Dr Receivables / Cr Revenue."""
     x = get_extract(db, xid)
@@ -1726,6 +1793,7 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
     rev = account_code(db, revenue_account or db.acct("revenue"), types=("Revenue",))
     if (x.get("doc_type") or "I") == "C":
         return _post_credit_note(db, x, date, user, ar, rev)
+    xfx = _extract_fx(db, x, date)
     lines = [{"account": ar, "debit": x["receivable"]}]
     if x["wht"]:
         lines.append({"account": db.acct("wht_receivable"), "debit": x["wht"]})
@@ -1743,6 +1811,8 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
     if unbilled_acc:
         bal = db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
                      f"WHERE {LIVE} AND l.account=? AND e.bu_id=?", (unbilled_acc, x["bu_id"]))["n"]
+        if xfx:                                    # the invoice is in a foreign currency: that balance in it
+            bal = int(bal / xfx["rate"])
         total = sum(by_acc.values())
         billed_from = max(0, min(bal, total))
         if billed_from:
@@ -1760,7 +1830,7 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
         debit_note = (x.get("doc_type") or "I") == "D"
         if debit_note:
             orig = db.one("SELECT number FROM extracts WHERE id=?", (x["ref_id"],)) or {}
-        eid = _insert_entry(db, date=date or x["date"], kind="Debit Note" if debit_note else "Sales Invoice",
+        eid = _insert_entry(db, date=date or x["date"], kind="Debit Note" if debit_note else "Sales Invoice", **xfx,
                             memo=f"Debit note — {x['number']} (on {orig.get('number', '')}): {x.get('eta_reason') or ''}" if debit_note else f"Invoice — {x['number']}",
                             bu_id=x["bu_id"], party=x["customer"] or x["bu_customer"] or x["bu_name"], ref=x["number"],
                             user=user, lines=lines,
@@ -2725,7 +2795,7 @@ def review_flags(db, date_from=None, date_to=None, partners=None):
 # ================================================================== tax module
 PARTY_FIELDS = ("name", "type", "receiver_type", "tax_id", "national_id", "country", "governate", "region", "street",
                 "building", "postal_code", "email", "phone", "default_vat", "default_wht", "notes",
-                "category", "contact_person", "phone2", "whatsapp", "specialty", "vehicle", "bank_details")
+                "category", "contact_person", "phone2", "whatsapp", "specialty", "vehicle", "bank_details", "currency")
 # suggested directory categories; any other word typed by the user is kept as-is
 CONTACT_CATEGORIES = ("supplier", "subcontractor", "driver", "transport", "technician", "consultant", "customer",
                       "employee", "other")
@@ -2751,6 +2821,12 @@ def save_party(db, d, party_id=None):
     if not v["name"]:
         raise ValidationError("name is required")
     v["category"] = v["category"].strip().lower()[:40]
+    from . import fx
+    if "currency" not in d and party_id:              # forms that do not show it keep it as it was
+        v["currency"] = (db.one("SELECT currency FROM parties WHERE id=?", (int(party_id),)) or {}).get("currency") or ""
+    v["currency"] = fx.code(v["currency"])            # the currency they usually deal in (documents start in it)
+    if v["currency"] == fx.base(db):
+        v["currency"] = ""
     if v["type"] not in ("customer", "supplier", "both", "employee", "other"):
         v["type"] = _CATEGORY_TYPE.get(v["category"], "other" if v["category"] else "customer")
     v["receiver_type"] = v["receiver_type"] if v["receiver_type"] in ("B", "P", "F") else "B"

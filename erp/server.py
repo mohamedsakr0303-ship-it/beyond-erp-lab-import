@@ -131,7 +131,7 @@ PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location"
                                   "reserve_early_until", "capital_goal", "buffer_months", "repay_funder_first", "funding_repay_pct", "funding_interest_pct", "expected_cost_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit",
                                   "funding_extra", "funding_extra_shrinks", "funding_warn", "funding_critical", "funding_mode", "costplus_overhead", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance", "po_self_approve_limit", "menu_layout", "form_custom", "duplicate_check", "two_step_required",
-                                  "profit_categories", "distribute_noncash", "distribute_from_funder")
+                                  "profit_categories", "distribute_noncash", "distribute_from_funder", "fx_currencies", "fx_auto")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": [],
                  "menu_layout": {}, "form_custom": {}, "profit_categories": []}
 
@@ -251,6 +251,9 @@ def bootstrap(ctx):
     base["profile"] = chat.profile(db, user["id"])
     from . import customfilter
     base["list_rules"] = customfilter.fields()        # the custom filter's fields on each list screen
+    from . import fx
+    base["fx"] = {"base": fx.base(db), "currencies": fx.enabled(db), "common": fx.COMMON, "auto": db.setting("fx_auto", "1") != "0",
+                  "fetched_on": db.setting("fx_fetched_on", ""), "host": fx.FETCH_HOST}
     base["user_since"] = (db.one("SELECT created_at FROM users WHERE id=?", (user["id"],)) or {}).get("created_at") or ""
     pol = ai.policy(db)
     base["ai"] = {"allowed": ai.allowed(pol, user), "used_today": ai.used_today(db, user), "has_key": ai.has_key(db),
@@ -272,7 +275,7 @@ def bootstrap(ctx):
         "items": db.q("SELECT * FROM stock_items ORDER BY name"),
         "tax_codes": db.q("SELECT * FROM tax_codes ORDER BY kind, code"),
         "parties": db.q("SELECT id, name, type, category, phone, whatsapp, contact_person, specialty, default_vat, "
-                         "default_wht FROM parties ORDER BY name"),
+                         "default_wht, currency FROM parties ORDER BY name"),
         "contact_categories": list(acc.CONTACT_CATEGORIES),
         "offer_types": [{"id": t["id"], "name": t["name"]} for t in db.q("SELECT id, name FROM offer_types ORDER BY id")],
         "enums": {"billing_bases": acc.BILLING_BASES, "methods": countries.methods(db),
@@ -439,6 +442,15 @@ def put_settings(ctx):
             raise PermissionError("Enable two-step sign-in for yourself first (profile), then require it for others.")
     if "hidden_modules" in keys:
         ctx.require("settings.menus", "edit")
+    if keys & {"fx_currencies", "fx_auto"}:
+        ctx.require("settings.company", "edit")
+        if "fx_currencies" in keys:
+            from . import fx
+            raw = ctx.body["fx_currencies"]
+            cs = [fx.code(c) for c in (raw if isinstance(raw, list) else str(raw or "").split(","))]
+            ctx.body["fx_currencies"] = ",".join(dict.fromkeys(c for c in cs if c and c != fx.base(ctx.db)))
+        if "fx_auto" in keys:
+            ctx.body["fx_auto"] = "0" if ctx.body["fx_auto"] in (False, 0, "0", "", None) else "1"
     for k, ok_vals in (("country", set(countries.BY_CODE)), ("invoice_style", set(countries.STYLES)), ("doc_lang", {"ar", "en"})):
         if k in keys:
             ctx.body[k] = acc.text(ctx.body[k]).upper() if k == "country" else acc.text(ctx.body[k])
@@ -616,6 +628,77 @@ def del_account_group(ctx, code):
     acc.delete_group(ctx.db, code)
     ctx.log("account_group.delete", code)
     return ok()
+
+
+# ============================================================ foreign currencies (erp/fx.py)
+@route("GET", "/api/fx", "accounting.fx")
+def fx_overview(ctx):
+    from . import fx
+    return ok({"base": fx.base(ctx.db), "currencies": fx.enabled(ctx.db), "common": fx.COMMON, "auto": ctx.db.setting("fx_auto", "1") != "0",
+               "fetched_on": ctx.db.setting("fx_fetched_on", ""), "host": fx.FETCH_HOST,
+               "rates": fx.rates(ctx.db, ctx.q.get("currency") or None, int(acc.num(ctx.q.get("limit") or 400)))})
+
+
+@route("GET", "/api/fx/rate")
+def fx_rate(ctx):
+    """The rate a form fills in: company currency per 1 unit on that day (the last one on or before it)."""
+    from . import fx
+    return ok({"currency": fx.code(ctx.q.get("currency")), "date": acc.clean_date(ctx.q.get("date") or acc.today()),
+               "rate": fx.rate_on(ctx.db, ctx.q.get("currency"), ctx.q.get("date") or acc.today())})
+
+
+@route("POST", "/api/fx/rates", "accounting.fx", "add")
+def fx_add_rates(ctx):
+    """One rate {date, currency, rate}, or many {rows: [...]} (pasted or read from a spreadsheet): all or none."""
+    from . import fx
+    rows = ctx.body.get("rows") if isinstance(ctx.body.get("rows"), list) else [ctx.body]
+    if len(rows) > 20000:
+        raise acc.ValidationError("At most 20,000 rates at once")
+    with ctx.db.tx():
+        for i, r in enumerate(rows, 1):
+            if not isinstance(r, dict):
+                raise acc.ValidationError(f"Row {i}: not a rate")
+            try:
+                fx.set_rate(ctx.db, r.get("date"), r.get("currency"), r.get("rate"), "import" if len(rows) > 1 else "manual")
+            except acc.ValidationError as e:
+                raise acc.ValidationError(f"Row {i}: {e}" if len(rows) > 1 else str(e)) from None
+    ctx.log("fx.rates", f"{len(rows)} rate(s)")
+    return ok({"saved": len(rows)})
+
+
+@route("DELETE", "/api/fx/rates", "accounting.fx", "edit")
+def fx_del_rate(ctx):
+    from . import fx
+    cur, date = fx.code(ctx.q.get("currency")), acc.clean_date(ctx.q.get("date"))
+    ctx.db.x("DELETE FROM fx_rates WHERE currency=? AND date=?", (cur, date))
+    ctx.log("fx.rate_delete", f"{cur} {date}")
+    return ok()
+
+
+@route("POST", "/api/fx/fetch", "accounting.fx")
+def fx_fetch(ctx):
+    """Today's rates: the browser edition fetches them in the page and sends the service's answer ({payload}); the
+    desktop app fetches them itself."""
+    from . import fx
+    if not fx.enabled(ctx.db):
+        return ok({"date": acc.today(), "rates": {}})
+    got = fx.store_fetched(ctx.db, ctx.body["payload"]) if isinstance(ctx.body.get("payload"), dict) else fx.fetch_now(ctx.db)
+    return ok(got)
+
+
+@route("GET", "/api/fx/revalue", "accounting.fx")
+def fx_revalue_preview(ctx):
+    from . import fx
+    return ok(fx.revalue(ctx.db, ctx.q.get("date") or acc.today(), preview=True))
+
+
+@route("POST", "/api/fx/revalue", "accounting.fx", "edit")
+def fx_revalue(ctx):
+    from . import fx
+    got = fx.revalue(ctx.db, ctx.body.get("date") or acc.today(), ctx.user["username"])
+    if got["entry"]:
+        ctx.log("fx.revalue", f"{got['date']} #{got['entry']} (reversed #{got['reversal']})")
+    return ok(got)
 
 
 # ============================================================ business units

@@ -126,7 +126,9 @@ SHEETS = [
               C("name_ar", "Arabic Name", "الاسم بالعربية", width=34),
               C("active", "Active", "نشط", width=7, choices=["Yes", "No"]),
               # last, so the columns before it (and the workbook's formulas on them) stay where they were
-              C("parent", "Group", "المجموعة", width=12, note="the account's group in Account Groups; blank = top level")]},
+              C("parent", "Group", "المجموعة", width=12, note="the account's group in Account Groups; blank = top level"),
+              C("currency", "Currency", "العملة", width=8,
+                note="Only for an account kept in a foreign currency (e.g. a USD bank account): its three-letter code. Blank = the company's")]},
     {"name": "Cost Items", "ar": "بنود التكلفة", "module": "business_units",
      "title": "Cost items: one catalogue of work items for every project (01 = a trade, 01.02 = an item under it). "
               "Cost lines are tagged with them; budgets are per project and item",
@@ -200,7 +202,8 @@ SHEETS = [
               C("contact_person", "Contact Person", "الشخص المسؤول", width=18), C("phone2", "Other Phone", "هاتف آخر", width=14),
               C("whatsapp", "WhatsApp", "واتساب", width=14), C("specialty", "Trade / Specialty", "النشاط / التخصص", width=16),
               C("vehicle", "Vehicle / Plate", "المركبة / اللوحة", width=12),
-              C("bank_details", "Bank Details", "بيانات البنك", width=26)]},
+              C("bank_details", "Bank Details", "بيانات البنك", width=26),
+              C("currency", "Currency", "العملة", width=8, note="The currency they usually deal in (e.g. USD). Blank = the company's")]},
     {"name": "Partners", "ar": "الشركاء", "module": "partners", "title": "Partners and their default profit share",
      "cols": [C("name", "Partner", "الشريك", width=30, required=True),
               C("default_share", "Default Share %", "نسبة الملكية الافتراضية", kind="pct", width=12),
@@ -623,8 +626,18 @@ SHEETS = [
                 note="A warehouse name (received into stock) — or empty: used on the voucher's business unit"),
               C("alloc_rule", "Allocation Rule", "قاعدة التوزيع", width=14,
                 note="Vouchers with no business unit: a rule code, or company to keep it as company cost. Blank = by the rules"),
-              C("stage", "Stage", "المرحلة", width=14), C("deal_ref", "Deal Ref.", "مرجع الاتفاق", width=12)],
+              C("stage", "Stage", "المرحلة", width=14), C("deal_ref", "Deal Ref.", "مرجع الاتفاق", width=12),
+              C("currency", "Currency", "العملة", width=8,
+                note="A line in a foreign currency: its code (e.g. USD). Debit / Credit stay in the company's currency"),
+              C("fx_amount", "Foreign Amount", "المبلغ بالعملة", kind="num", note="The line's amount in that currency"),
+              C("fx_rate", "Exchange Rate", "سعر الصرف", kind="num", note="Company currency per 1 unit, as used on the line")],
      "legs": [("debit", "account", "D"), ("credit", "account", "C")]},
+    {"name": "Exchange Rates", "ar": "أسعار الصرف", "module": "accounting",
+     "title": "Exchange rates: how much of the company's currency 1 unit of each foreign currency is worth on a day "
+              "(the last rate on or before a date is used)",
+     "cols": [C("date", "Date", "التاريخ", kind="date", required=True), C("currency", "Currency", "العملة", width=8, required=True),
+              C("rate", "Rate", "السعر", kind="num", required=True),
+              C("source", "Source", "المصدر", width=10, choices=["manual", "import", "auto"])]},
 ]
 from . import setup_sheets as _setup  # noqa: E402
 SHEETS += _setup.specs(C)
@@ -692,7 +705,10 @@ def export_data(db):
     for a in db.q("SELECT * FROM accounts ORDER BY code"):
         out["Chart of Accounts"].append({"code": a["code"], "name": a["name"], "name_ar": a["name_ar"], "type": a["type"],
                                          "subtype": a["subtype"], "role": a["role"] or "",
-                                         "active": "Yes" if a["active"] else "No", "parent": a.get("parent") or ""})
+                                         "active": "Yes" if a["active"] else "No", "parent": a.get("parent") or "",
+                                         "currency": a.get("currency") or ""})
+    for r in db.q("SELECT date, currency, rate, source FROM fx_rates ORDER BY date, currency"):
+        out["Exchange Rates"].append(dict(r))
     bus = {b["id"]: b for b in db.q("SELECT * FROM business_units ORDER BY code")}
     code = lambda bid: bus[bid]["code"] if bid in bus else ""  # noqa: E731
     for b in bus.values():
@@ -881,7 +897,9 @@ def export_data(db):
                                                 "memo": e["memo"], "account": ln["account"],
                                                 "debit": ln["debit"] or "", "credit": ln["credit"] or "",
                                                 "line_party": ln.get("party", ""), "line_memo": ln.get("memo", ""),
-                                                "cost_item": ln.get("cost_item", ""), **_alloc_cols(e)})
+                                                "cost_item": ln.get("cost_item", ""), **_alloc_cols(e),
+                                                **({"currency": ln["currency"], "fx_amount": ln.get("fx_amount") or 0,
+                                                    "fx_rate": ln.get("fx_rate") or 0} if ln.get("currency") else {})})
     return out
 
 
@@ -895,6 +913,8 @@ def _entry_to_row(e, accounts):
     """Map a posted entry back onto its document sheet; None -> goes to Journal Vouchers."""
     if e["reversed_by"] or e["reversal_of"]:
         return None
+    if any(ln.get("currency") for ln in e["lines"]):
+        return None  # foreign-currency lines keep their currency, amount and rate only on the Journal Vouchers sheet
     if any(ln.get("party") and ln["party"] != e["party"] for ln in e["lines"]):
         return None  # lines for several parties (partners' capital moves) only fit the Journal Vouchers sheet
     role = lambda code: accounts[code]["role"]  # noqa: E731
@@ -2052,14 +2072,14 @@ WIPE_ORDER = ("cost_budgets", "cost_items", "year_closes", "cost_subs", "entry_t
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "einv_received", "einv_templates", "stock_alert_log", "stock_minimums", "stock_recosts", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
-              "journal_lines", "journal_entries", "partner_stage_shares", "partner_shares", "partners", "rates", "alloc_rules", "business_units")
+              "journal_lines", "journal_entries", "partner_stage_shares", "partner_shares", "partners", "rates", "fx_rates", "alloc_rules", "business_units")
 
 
 # "New rows only": what identifies a record that is already in the books. Rows of these sheets are skipped when their
 # key is there (so changes made in the app are never overwritten); several rows sharing a key (an invoice and its
 # lines, an order and its items) come in or stay out together. Other sheets compare the whole row.
 ONLY_NEW_KEYS = {
-    "Chart of Accounts": ("code",), "Account Groups": ("code",), "Tax Codes": ("code",), "Business Units": ("code",), "Cost Items": ("code",),
+    "Chart of Accounts": ("code",), "Account Groups": ("code",), "Exchange Rates": ("date", "currency"), "Tax Codes": ("code",), "Business Units": ("code",), "Cost Items": ("code",),
     "Cost Budgets": ("bu_code", "item"), "Parties": ("name",), "Partners": ("name",),
     "Fixed Assets": ("code",), "E-Invoice Templates": ("code",), "E-Invoices Received": ("uuid",), "Warehouses": ("name",), "Stock Items": ("name",), "Products": ("code",), "Employees": ("code",),
     "Loans": ("code",), "Cash Custody": ("code",), "Rental Equipment": ("code",), "Rental Contracts": ("ref",), "Sales Contracts": ("code",),
@@ -2283,6 +2303,9 @@ def _import_data(db, data, mode="append", dry_run=False, user=""):
             data["Account Groups"] = _parents_first(data.get("Account Groups") or [])   # the group above first
             run("Account Groups", lambda r: _imp_group(db, r))
             run("Chart of Accounts", lambda r: _imp_account(db, r))
+            from . import fx as _fx
+            run("Exchange Rates", lambda r: _fx.set_rate(db, r.get("date"), r.get("currency"), r.get("rate"),
+                                                         acc.text(r.get("source")) if acc.text(r.get("source")) in ("manual", "import", "auto") else "import"))
             run("Tax Codes", lambda r: _imp_tax_code(db, r))
             run("Business Units", lambda r: _imp_bu(db, r))
             from . import costitems
@@ -2436,6 +2459,8 @@ def _imp_account(db, r):
          "active": 0 if str(r.get("active", "Yes")).lower() in ("no", "0", "false") else 1}
     if "parent" in r:          # a file with the Group column places the account; an older file leaves it where it is
         d["parent"] = acc.text(r.get("parent"))
+    if "currency" in r:
+        d["currency"] = acc.text(r.get("currency"))
     if by_role and by_role["code"] != code:
         acc.save_account(db, d, old_code=by_role["code"])  # renumbered system account
     elif existing:
@@ -2829,6 +2854,8 @@ def _imp_journal(db, rows, errors, counts, user):
                                     # a later row naming another party than the voucher's: that line is that party's
                                     "lines": [{"account": r.get("account"), "debit": r.get("debit"), "credit": r.get("credit"),
                                                "memo": r.get("line_memo"), "cost_item": r.get("cost_item"),
+                                               **({"currency": acc.text(r.get("currency")).upper(), "fx_amount": r.get("fx_amount") or 0,
+                                                   "fx_rate": r.get("fx_rate") or 0} if acc.text(r.get("currency")) else {}),
                                                "party": r.get("line_party") or (r.get("party") if acc.text(r.get("party")) not in
                                                                                 ("", acc.text(first.get("party"))) else None)}
                                               for _, r in items if not acc.text(r.get("item"))]}, user)

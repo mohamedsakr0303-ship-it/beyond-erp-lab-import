@@ -90,6 +90,15 @@ CREATE TABLE IF NOT EXISTS accounts (
     parent  TEXT NOT NULL DEFAULT ''          -- its group in the chart's tree (account_groups.code); '' = top level
 );
 
+-- exchange rates: company currency per 1 unit of a foreign currency, as of a date (erp/fx.py)
+CREATE TABLE IF NOT EXISTS fx_rates (
+    date     TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    rate     REAL NOT NULL CHECK (rate > 0),
+    source   TEXT NOT NULL DEFAULT 'manual',     -- manual / auto (fetched) / import
+    PRIMARY KEY (date, currency)
+);
+
 -- Groups of the chart of accounts ("Fixed assets 111", "Suppliers 221"): headings that total the accounts and groups under
 -- them. Kept apart from accounts on purpose: a group is never posted to, offered in a form or counted twice in a report.
 CREATE TABLE IF NOT EXISTS account_groups (
@@ -147,7 +156,10 @@ CREATE TABLE IF NOT EXISTS journal_lines (
     credit INTEGER NOT NULL DEFAULT 0 CHECK (credit >= 0),
     party TEXT DEFAULT '',                 -- a line's own party (e.g. each partner in a share transfer); '' = the entry's
     memo TEXT DEFAULT '',                  -- the line's own description ('' = the entry's)
-    cost_item TEXT DEFAULT ''              -- the work item a cost line is for (costitems.py); '' = not tagged
+    cost_item TEXT DEFAULT '',             -- the work item a cost line is for (costitems.py); '' = not tagged
+    currency TEXT NOT NULL DEFAULT '',     -- a foreign-currency line (erp/fx.py): its currency ('' = the company's)
+    fx_amount INTEGER NOT NULL DEFAULT 0,  -- …its amount in that currency (minor units, same side as debit / credit)
+    fx_rate REAL NOT NULL DEFAULT 0        -- …and the rate it was valued at (company currency per 1 unit)
 );
 CREATE INDEX IF NOT EXISTS ix_jl_entry ON journal_lines(entry_id);
 CREATE INDEX IF NOT EXISTS ix_jl_account ON journal_lines(account);
@@ -2052,7 +2064,7 @@ SUBMODULES = {
     "rentals": ["contracts", "fleet", "calculator"],
     "payroll": ["employees", "attendance", "requests", "runs", "entries", "crew", "settings", "workdays"],
     "assets": ["overview", "cash", "register", "depreciation"],
-    "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets", "approvals", "yearend"],
+    "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets", "approvals", "yearend", "fx"],
     "partners": ["equity", "transactions", "ownership"],
     "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast", "cashplan", "audit"],
     "tax": ["codes", "report", "einvoice", "ereceipt"],
@@ -2081,6 +2093,8 @@ DEFAULT_SETTINGS = {
     "company_address": "",
     "company_tax_id": "",
     "currency": "EGP",
+    "fx_currencies": "",      # foreign currencies the company works in, e.g. "USD,EUR" (erp/fx.py)
+    "fx_auto": "1",           # fetch each day's rates automatically (a rate entered by hand always wins)
     "fiscal_year_start": "01-01",
     "reserve_pct": "0.40",
     "legal_reserve_pct": "0",     # share of each profit set aside as legal reserve when profit is shared (0 = none)
@@ -2181,6 +2195,12 @@ class Database:
         self.conn.execute("INSERT OR IGNORE INTO chat_rooms(id, kind, name, created_at) VALUES (1, 'general', 'General', datetime('now'))")
         have = self._add_cols("accounts", [("name_ar", "TEXT DEFAULT ''")])
         self._add_cols("accounts", [("parent", "TEXT NOT NULL DEFAULT ''")])     # its group in the chart's tree
+        # foreign currencies (erp/fx.py): a line's currency, amount and rate; an account / party / invoice in a currency
+        self._add_cols("journal_lines", [("currency", "TEXT NOT NULL DEFAULT ''"), ("fx_amount", "INTEGER NOT NULL DEFAULT 0"),
+                                         ("fx_rate", "REAL NOT NULL DEFAULT 0")])
+        self._add_cols("accounts", [("currency", "TEXT NOT NULL DEFAULT ''")])
+        self._add_cols("parties", [("currency", "TEXT NOT NULL DEFAULT ''")])
+        self._add_cols("extracts", [("currency", "TEXT NOT NULL DEFAULT ''"), ("fx_rate", "REAL NOT NULL DEFAULT 0")])
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("workdays", [("start_site", "TEXT NOT NULL DEFAULT ''"), ("end_site", "TEXT NOT NULL DEFAULT ''"),

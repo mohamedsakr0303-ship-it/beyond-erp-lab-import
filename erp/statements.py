@@ -42,7 +42,7 @@ def _lines(db, party=None, date_to=None, subtypes=None):
         w.append("e.date<=?")
         p.append(date_to)
     return db.q(f"""SELECT e.id, e.date, e.kind, e.ref, e.memo, {acc.PARTY} AS party, l.account, a.name AS account_name,
-                           a.name_ar AS account_name_ar, l.debit, l.credit
+                           a.name_ar AS account_name_ar, l.debit, l.credit, l.currency, l.fx_amount
                     FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
                     WHERE {' AND '.join(w)} ORDER BY e.date, e.id, l.id""", p)
 
@@ -108,6 +108,9 @@ def statement(db, party, date_from=None, date_to=None):
             rows.append(e)
         e["debit"] += r["debit"]
         e["credit"] += r["credit"]
+        if r["currency"] and r["fx_amount"]:          # the voucher's amount in a foreign currency (+ they owe us)
+            fxs = e.setdefault("fx", {})
+            fxs[r["currency"]] = fxs.get(r["currency"], 0) + (r["fx_amount"] if r["debit"] > 0 else -r["fx_amount"])
         if r["account"] not in e["accounts"]:
             e["accounts"].append(r["account"])
     tot_dr = tot_cr = 0
@@ -119,7 +122,17 @@ def statement(db, party, date_from=None, date_to=None):
         tot_cr += e["credit"]
         e["balance"] = to_major(run)
         e["debit"], e["credit"] = to_major(e["debit"]), to_major(e["credit"])
+        if e.get("fx"):
+            e["fx"] = {c: to_major(v) for c, v in e["fx"].items() if v}
     rows = [e for e in rows if e["debit"] or e["credit"]]
+    # what they owe / are owed in each foreign currency, next to its value in the company's currency
+    fxb = {}
+    for r in lines:
+        if r["currency"]:
+            b = fxb.setdefault(r["currency"], {"currency": r["currency"], "fx": 0, "home": 0})
+            b["fx"] += r["fx_amount"] if r["debit"] > 0 else -r["fx_amount"]
+            b["home"] += r["debit"] - r["credit"]
+    foreign = [{"currency": b["currency"], "balance": to_major(b["fx"]), "home": to_major(b["home"])} for b in fxb.values() if b["fx"] or b["home"]]
     per_account = {}
     for r in lines:
         a = per_account.setdefault(r["account"], {"account": r["account"], "name": r["account_name"],
@@ -130,7 +143,7 @@ def statement(db, party, date_from=None, date_to=None):
     p = db.one("SELECT * FROM parties WHERE name=?", (party,))
     return {"party": party, "contact": p, "date_from": date_from, "date_to": date_to, "opening": to_major(opening),
             "rows": rows, "debits": to_major(tot_dr), "credits": to_major(tot_cr), "closing": to_major(run),
-            "balances": balances, "aging": aging, "later": later(db, date_to, party), "buckets": [b[2] for b in BUCKETS], "buckets_ar": [b[3] for b in BUCKETS]}
+            "balances": balances, "foreign": foreign, "aging": aging, "later": later(db, date_to, party), "buckets": [b[2] for b in BUCKETS], "buckets_ar": [b[3] for b in BUCKETS]}
 
 
 def aging(db, date_to=None, side="all", subtypes=None):

@@ -20,17 +20,21 @@ def _ar_date(d):
     return f"{int(dd)}/{int(m)}/{y}"
 
 
-def _collections(db, bu_id, upto=None, before=None):
-    """What the site's client paid: credits to receivables on the site's entries (receipt vouchers against invoices)."""
+def _collections(db, bu_id, upto=None, before=None, currency=""):
+    """What the site's client paid: credits to receivables on the site's entries (receipt vouchers against invoices).
+    In the company's currency; with a currency, what was paid in that currency."""
     ar = db.acct("ar")
     w, p = ["e.status='posted'", "e.bu_id=?", "l.account=?"], [bu_id, ar]
+    if currency:
+        w.append("l.currency=?")
+        p.append(currency)
     if upto:
         w.append("e.date<=?")
         p.append(upto)
     if before:
         w.append("e.date<?")
         p.append(before)
-    r = db.one(f"SELECT COALESCE(SUM(l.credit),0) AS c FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+    r = db.one(f"SELECT COALESCE(SUM({'CASE WHEN l.credit>0 THEN l.fx_amount ELSE 0 END' if currency else 'l.credit'}),0) AS c FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
                f"WHERE {' AND '.join(w)} AND e.kind NOT IN ('Sales Invoice','Credit Note','Debit Note')", p)
     return to_major(r["c"])
 
@@ -39,7 +43,7 @@ def prev_paid(db, x):
     """'Less paid before' on the extract: the amount typed, else what the site's client paid before its date."""
     if x.get("prev_paid") is not None:
         return to_major(x["prev_paid"]), False
-    return _collections(db, x["bu_id"], before=x["date"]) if x.get("date") else 0.0, True
+    return _collections(db, x["bu_id"], before=x["date"], currency=x.get("currency") or "") if x.get("date") else 0.0, True
 
 
 def _earlier(db, x):
@@ -94,6 +98,22 @@ def board(db, bu_id=None, status=None, q=None):
         x["receivable_to_date"] = round(sum(y["receivable"] for y in out if y["bu_id"] == r["bu_id"] and y["status"] == "posted")
                                         + x["receivable"], 2)
         x["due"] = round(x["receivable_to_date"] - x["prev"] - x["deductions"], 2)
+        if r.get("currency"):
+            # a foreign-currency invoice: its own figures stay under "fx"; the board counts it in the company's currency
+            rate = r.get("fx_rate") or 0
+            if not rate:
+                from . import fx
+                try:
+                    rate = fx.rate_on(db, r["currency"], r["date"] or acc.today())
+                except ValidationError:
+                    rate = 0
+            keys = ("works", "vat", "wht", "gross", "receivable", "prev", "deductions", "due")
+            x["fx"] = {"currency": r["currency"], "rate": rate, **{k: x[k] for k in keys}}
+            for k in keys:
+                x[k] = round(x[k] * rate, 2)
+            x["receivable_to_date"] = round(sum(y["receivable"] for y in out if y["bu_id"] == r["bu_id"] and y["status"] == "posted")
+                                            + x["receivable"], 2)
+            x["due"] = round(x["receivable_to_date"] - x["prev"] - x["deductions"], 2)
         s = sites.setdefault(r["bu_id"], {"bu_id": r["bu_id"], "bu_code": r["bu_code"], "bu_name": r["bu_name"],
                                           "client": r["customer"] or r["bu_customer"] or "", "billed": 0.0, "drafts": 0,
                                           "extracts": 0, "last": None, "rental_id": None, "rental_code": None})

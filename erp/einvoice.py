@@ -85,6 +85,12 @@ def build_document(db, extract_id, version=None):
     for k in ("eta_governate", "eta_region", "eta_street", "eta_building"):
         if not s.get(k):
             problems.append(f"Issuer address field '{k[4:]}' is missing — Settings → E-invoicing")
+    # an invoice in a foreign currency: each line says the currency, the amount in it and the rate; totals are in EGP
+    cur = (x.get("currency") or "").upper()
+    xr = float(x.get("fx_rate") or 0) if cur else 1.0
+    if cur and xr <= 0:
+        problems.append(f"The invoice is in {cur} but has no exchange rate yet — post it first")
+        xr = 1.0
     cust_name = x["customer"] or x.get("bu_customer") or x["bu_name"]
     p = _party(db, cust_name)
     rtype = p.get("receiver_type") or "B"
@@ -93,7 +99,7 @@ def build_document(db, extract_id, version=None):
         problems.append(f"Customer '{cust_name}' is not in Customers & Suppliers — add it with tax ID and address")
     elif rtype == "B" and not re.fullmatch(r"\d{9}", receiver_id or ""):
         problems.append(f"Customer '{cust_name}' needs a 9-digit tax registration number")
-    elif rtype == "P" and x["gross"] >= 50000 and not receiver_id:
+    elif rtype == "P" and x["gross"] * xr >= 50000 and not receiver_id:
         problems.append("Invoices of 50,000 EGP or more to individuals need the customer's national ID")
     if x["status"] != "posted":
         problems.append("Post the invoice before issuing it as an e-invoice")
@@ -107,7 +113,8 @@ def build_document(db, extract_id, version=None):
                   "unit": "", "item_no": "FEE", "seq": i} for i, f in enumerate(x.get("fee_rows") or [])]
     for ln in x["lines"] + fee_lines:
         qty = ln["qty"] * (ln.get("pct") if ln.get("pct") is not None else 1)     # completion % is part of the quantity billed
-        net = _r(qty * ln["price"])
+        price_egp = _r(ln["price"] * xr)
+        net = _r(qty * price_egp)
         items = []
         if vat:
             amt = _r(net * vat["rate"])
@@ -131,7 +138,8 @@ def build_document(db, extract_id, version=None):
                                                         s.get("eta_default_unit") or "EA"),
             "quantity": _r(qty, 5), "internalCode": str(ln["item_no"] or ln["seq"] + 1),
             "salesTotal": net, "total": total, "valueDifference": 0.0, "totalTaxableFees": 0.0, "netTotal": net,
-            "itemsDiscount": 0.0, "unitValue": {"currencySold": "EGP", "amountEGP": _r(ln["price"])},
+            "itemsDiscount": 0.0, "unitValue": ({"currencySold": cur, "amountSold": _r(ln["price"]), "currencyExchangeRate": _r(xr),
+                                                 "amountEGP": price_egp} if cur else {"currencySold": "EGP", "amountEGP": price_egp}),
             "discount": {"rate": 0.0, "amount": 0.0}, "taxableItems": items})
     net_amount = _r(sum(line["netTotal"] for line in lines))
     doc = {
@@ -159,10 +167,11 @@ def build_document(db, extract_id, version=None):
     if refs:
         doc["references"] = refs                            # a credit / debit note names the invoice it corrects
     # the document must say what the books say: rounding of fractional quantities can make them part
-    book = {"net": x["total"], "T1": x.get("vat") or 0, "T4": x.get("wht") or 0}
+    book = {"net": x["total"] * xr, "T1": (x.get("vat") or 0) * xr, "T4": (x.get("wht") or 0) * xr}
+    allowed = 0.01 if not cur else 0.01 + 0.01 * len(lines)      # converting each line to EGP rounds each one
     sent = {"net": net_amount, "T1": tax_totals.get((vat or {}).get("eta_type") or "T1", 0), "T4": tax_totals.get((wht or {}).get("eta_type") or "T4", 0)}
     for k, label in (("net", "net"), ("T1", "VAT"), ("T4", "withholding tax")):
-        if abs(round(book[k] - sent[k], 5)) > 0.01:
+        if abs(round(book[k] - sent[k], 5)) > allowed:
             problems.append(f"The e-invoice {label} ({sent[k]:,.5f}) differs from the invoice ({book[k]:,.2f}) by rounding of "
                             "fractional quantities. Round the quantities or prices so the lines come out in whole piasters.")
     if x["date"] > acc.today():
