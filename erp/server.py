@@ -84,6 +84,18 @@ class Reply:
         self.headers = headers or {}
 
 
+def _body_fx(db, body):
+    """The foreign currency a form was filled in (one of the company's), with its rate if typed; else None."""
+    if not isinstance(body, dict) or not isinstance(body.get("currency"), str) or not body["currency"].strip():
+        return None
+    from . import fx
+    cur = body["currency"].strip().upper()
+    if cur == fx.base(db) or cur not in fx.enabled(db):
+        return None
+    rate = body.get("fx_rate")
+    return {"currency": cur, "rate": rate if rate not in (None, "", 0, "0") else None}
+
+
 def push_hint(obj, *items):
     """Ask the signed-in person's app to notify others' devices (the shared workspace's push function sends it, so it
     reaches them even with the app closed): {kind, to: [usernames], title, body, href, tag} now, or with "day" a
@@ -6956,6 +6968,8 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             from . import approvals as _apr
             held = acc.POSTING_HELD.set(method != "GET" and as_user is None and _apr.needs_approval(db, user))
             over = acc.OVER_OK.set(bool(isinstance(body, dict) and body.get("confirm_over")) or as_user is not None)
+            # a form filled in a foreign currency: what it posts is converted from it (erp/fx.py)
+            fxtok = acc.DOC_FX.set(_body_fx(db, body) if method in ("POST", "PUT") else None)
             cf = None
             if method == "GET" and ctx.q.get("rules"):     # custom filter on a list (or its export): erp/customfilter.py
                 from . import customfilter
@@ -6971,6 +6985,7 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             finally:
                 acc.POSTING_HELD.reset(held)
                 acc.OVER_OK.reset(over)
+                acc.DOC_FX.reset(fxtok)
                 if cf is not None:
                     customfilter.deactivate(cf)
             if method == "GET" and match.groupdict() and isinstance(reply, Reply) and reply.status == 200 and reply.body == b'{"ok": true}':

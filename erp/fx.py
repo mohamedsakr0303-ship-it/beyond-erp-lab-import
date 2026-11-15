@@ -19,7 +19,11 @@ import re
 from . import accounting as acc
 from .db import to_major, to_minor
 
-MONETARY = {"cash", "receivable", "payable"}          # balances owed / held in money: valued at the carried rate when they go down
+# balances held or owed in money (IAS 21 monetary items): valued at the carried rate when they go down, revalued at month end
+MONETARY = {"cash", "receivable", "payable", "accrued", "short_term_debt", "long_term_debt", "other_current_liability",
+            "other_noncurrent_liability", "other_current_asset", "other_noncurrent_asset", "dividends_payable"}
+# taxes are declared and settled in the company's currency: their lines are converted but never kept in a foreign one
+TAX_ROLES = {"vat_input", "vat_output", "wht_receivable", "wht_payable"}
 CODE = re.compile(r"^[A-Z]{3}$")
 # the currencies offered first (any three-letter code is accepted)
 COMMON = ["USD", "EUR", "GBP", "SAR", "AED", "KWD", "QAR", "BHD", "OMR", "JOD", "CNY", "TRY", "CHF", "JPY", "CAD", "AUD", "EGP"]
@@ -132,11 +136,14 @@ def convert(db, date, lines, party="", currency=None, rate=None, exclude_eid=Non
     rate_e = None
     if cur_e and rate not in (None, "", 0, "0"):
         rate_e = _rate_value(rate, cur_e)
-    accts = {r["code"]: r for r in db.q("SELECT code, subtype, currency FROM accounts")}
+    accts = {r["code"]: r for r in db.q("SELECT code, subtype, currency, role FROM accounts")}
     out, any_fx, diff_minor, rounding = [], False, 0, 0
     running = {}                                       # foreign balances as this entry moves them (several lines, one balance)
     for ln in lines:
         ln = dict(ln)
+        if ln.pop("_home", None):                      # already in the company's currency (a stock cost, a balance held…)
+            out.append(ln)
+            continue
         a = accts.get(acc.text(ln.get("account")))
         a_cur = (a or {}).get("currency") or ""
         fxd, fxc = ln.pop("fx_debit", None), ln.pop("fx_credit", None)
@@ -167,8 +174,8 @@ def convert(db, date, lines, party="", currency=None, rate=None, exclude_eid=Non
         ln.pop("rate", None)
         at_rate = round(amount * r)
         home = at_rate
-        if a and not a_cur and a["subtype"] == "cash":
-            # a bank / cash account in the company's currency: the money moved is that currency, at the day's rate
+        if a and not a_cur and (a["subtype"] in ("cash", "tax_payable") or (a.get("role") or "") in TAX_ROLES):
+            # a bank / cash account in the company's currency, or a tax: the money moved is that currency, at the day's rate
             out.append({**ln, "debit": to_major(home) if is_debit else 0, "credit": 0 if is_debit else to_major(home)})
             any_fx = True
             continue

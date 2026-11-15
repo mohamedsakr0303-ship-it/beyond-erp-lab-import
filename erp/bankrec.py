@@ -49,8 +49,18 @@ def _account(db, code):
     return a["code"]
 
 
+def _cur(db, account):
+    """A bank account kept in a foreign currency (erp/fx.py): its statements are in that currency."""
+    return (db.one("SELECT currency FROM accounts WHERE code=?", (account,)) or {}).get("currency") or ""
+
+
+def _amt(db, account):
+    """What the books hold on the account, in the statement's currency."""
+    return "(CASE WHEN l.debit>0 THEN l.fx_amount ELSE -l.fx_amount END)" if _cur(db, account) else "(l.debit-l.credit)"
+
+
 def book_balance(db, account, date_to):
-    r = db.one("SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+    r = db.one(f"SELECT COALESCE(SUM({_amt(db, account)}),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
                "WHERE e.status='posted' AND l.account=? AND e.date<=?", (account, date_to))
     return r["n"]
 
@@ -497,7 +507,7 @@ def book_items(db, account, date_from=None, date_to=None):
     if date_to:
         w.append("e.date<=?")
         p.append(date_to)
-    rows = db.q(f"""SELECT e.id, e.date, e.kind, e.memo, e.party, e.ref, e.meta, SUM(l.debit-l.credit) amount
+    rows = db.q(f"""SELECT e.id, e.date, e.kind, e.memo, e.party, e.ref, e.meta, SUM({_amt(db, account)}) amount
                     FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id WHERE {' AND '.join(w)}
                     GROUP BY e.id HAVING amount<>0 ORDER BY e.date, e.id""", p)
     for r in rows:
@@ -674,7 +684,8 @@ def create_entry(db, sid, line_id, d, user=""):
         eid = acc._insert_entry(db, date=ln["date"], kind=KIND, memo=text(d.get("memo")) or ln["description"] or "Bank entry",
                                 bu_id=acc.bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=party,
                                 ref=text(d.get("ref")) or ln["ref"], lines=lines,
-                                meta={"bank_statement": s["id"], "vat_code": vat_code, "bank": {s["account"]: ln["id"]}}, user=user)
+                                meta={"bank_statement": s["id"], "vat_code": vat_code, "bank": {s["account"]: ln["id"]}}, user=user,
+                                **({"currency": _cur(db, s["account"])} if _cur(db, s["account"]) else {}))
         db.conn.execute("UPDATE bank_lines SET status='matched' WHERE id=?", (ln["id"],))
         if d.get("remember") and text(d.get("pattern")):
             save_rule(db, {"pattern": d["pattern"], "direction": "in" if ln["amount"] > 0 else "out", "account": other,

@@ -1155,6 +1155,15 @@ def save(db, d, rid=None, user=""):
             else:
                 db.conn.execute("INSERT INTO rental_lines(seq,kind,item_id,kit_id,model_id,description,unit,qty,rate,charge_type,charge_when,"
                                 "components,inputs,notes,cost,rental_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (rid,))
+        from . import fx       # a rental in a foreign currency: its rates, deposits, invoices and accruals are in it
+        if "currency" in d:
+            cur = fx.code(d.get("currency"))
+            cur = "" if cur == fx.base(db) else cur
+            was = db.one("SELECT currency, code FROM rentals WHERE id=?", (rid,))
+            if cur != (was["currency"] or "") and db.one("SELECT 1 FROM journal_entries WHERE status='posted' AND ref GLOB ?",
+                                                          (acc.ref_prefix(f"RENT:{was['code']}:"),)):
+                raise ValidationError("This rental has entries; its currency cannot change.")
+            db.conn.execute("UPDATE rentals SET currency=? WHERE id=?", (cur, rid))
     return rid
 
 
@@ -1377,12 +1386,15 @@ def ongoing(db, today=None):
         days = max(0, (_dt.date.fromisoformat(today) - _dt.date.fromisoformat(first)).days) if first else 0
         inv = col = 0
         if r["bu_id"]:
-            inv = db.one("SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+            cur = (db.one("SELECT currency FROM rentals WHERE id=?", (r["id"],)) or {}).get("currency") or ""
+            dr, cr, xp = ("(CASE WHEN l.currency=? THEN l.fx_amount ELSE 0 END)", "(CASE WHEN l.currency=? THEN l.fx_amount ELSE 0 END)", [cur]) \
+                if cur else ("(l.debit-l.credit)", "l.credit", [])     # a rental in a foreign currency: in it
+            inv = db.one(f"SELECT COALESCE(SUM({dr}),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
                          "JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND e.bu_id=? AND a.subtype='receivable' AND l.debit>0",
-                         (r["bu_id"],))["n"]
-            col = db.one("SELECT COALESCE(SUM(l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                         (*xp, r["bu_id"]))["n"]
+            col = db.one(f"SELECT COALESCE(SUM({cr}),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
                          "JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND e.bu_id=? AND a.subtype='receivable' AND l.credit>0",
-                         (r["bu_id"],))["n"]
+                         (*xp, r["bu_id"]))["n"]
         nxt = next_period(db, r["id"])
         out.append({"id": r["id"], "code": r["code"], "client": r["client"], "site": r["site"], "since": first or "", "days": days,
                     "monthly": r["monthly_on_site"], "rent_to_date": round(r["monthly_on_site"] / 30 * days, 2), "pieces_out": r["pieces_out"],
@@ -1682,8 +1694,10 @@ def _minimum_charges(db, r, h, date, returned):
 def deposit_balance(db, r):
     """Security deposit the company holds for this rental (minor units)."""
     acc_code = _role_or(db, "rental_deposits")
-    row = db.one(f"SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-                 f"WHERE {LIVE_REF} AND l.account=? AND e.ref GLOB ?", (acc_code, acc.ref_prefix(f"RENT:{r['code']}:DEP")))
+    amt, xp = ("(CASE WHEN l.currency=? THEN (CASE WHEN l.credit>0 THEN l.fx_amount ELSE -l.fx_amount END) ELSE 0 END)", [r["currency"]]) \
+        if r.get("currency") else ("(l.credit-l.debit)", [])
+    row = db.one(f"SELECT COALESCE(SUM({amt}),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                 f"WHERE {LIVE_REF} AND l.account=? AND e.ref GLOB ?", (*xp, acc_code, acc.ref_prefix(f"RENT:{r['code']}:DEP")))
     return row["n"]
 
 
@@ -1700,7 +1714,11 @@ def deposit(db, r, d, user=""):
     date = acc.clean_date(d.get("date") or acc.today())
     party = r["client"]
     if what == "apply":
-        owed = -to_minor(acc.party_balance(db, db.acct("ar"), party))
+        if r.get("currency"):
+            from . import fx
+            owed = fx.carried(db, db.acct("ar"), party, r["currency"], date)[0]
+        else:
+            owed = -to_minor(acc.party_balance(db, db.acct("ar"), party))
         if amount > owed:
             raise ValidationError(f"{party} owes only {to_major(max(owed, 0)):,.2f} on invoices. Apply up to that amount, or refund the remainder.")
         other = {"account": db.acct("ar"), "credit": to_major(amount), "party": party}
@@ -1715,7 +1733,8 @@ def deposit(db, r, d, user=""):
             lines = [{"account": dep, "debit": to_major(amount), "party": party}, {"account": money, "credit": to_major(amount)}]
             memo = f"Security deposit refunded to {party} ({r['code']})"
     return acc._insert_entry(db, date=date, kind=KINDS[3], memo=text(d.get("memo")) or memo, bu_id=_ensure_bu(db, r), party=party,
-                             ref=f"RENT:{r['code']}:DEP-{what.upper()}", lines=lines, meta={"rental": r["code"], "deposit": what}, user=user)
+                             ref=f"RENT:{r['code']}:DEP-{what.upper()}", lines=lines, meta={"rental": r["code"], "deposit": what}, user=user,
+                             currency=r.get("currency") or "", rate=d.get("fx_rate") or None)
 
 
 def _charge_account(db, kind):
@@ -1907,17 +1926,21 @@ def run_accrual(db, month, user=""):
         for e in db.q(f"SELECT id FROM journal_entries e WHERE {acc.LIVE} AND (e.ref LIKE ? OR e.ref LIKE ?)",
                       (f"RENT:ACR:{plan['month']}:%", f"RENT:ACR-R:{plan['month']}:%")):
             acc.void_entry(db, e["id"], "Replaced by a new month-end accrual", user)
+        from . import fx
         for r in plan["rows"]:
+            cur = (db.one("SELECT currency FROM rentals WHERE code=?", (r["code"],)) or {}).get("currency") or ""
+            # in the rental's currency, at the month-end rate both ways, so the reversal takes back exactly what was booked
+            fxk = {"currency": cur, "rate": fx.rate_on(db, cur, plan["through"]) if cur else None}
             cr = [{"account": a, "credit": to_major(v)} for a, v in r["accounts"].items()]
             dr = [{"account": unbilled, "debit": r["amount"]}]
             meta = {"accrual": plan["month"], "rental": r["code"], "period": [r["from"], r["to"]]}
             made.append(acc._insert_entry(db, date=plan["through"], kind=KINDS[5], bu_id=r["bu_id"], party=r["client"],
                                           memo=f"Rent earned, not invoiced yet: {r['code']} {r['from']} to {r['to']}",
-                                          ref=f"RENT:ACR:{plan['month']}:{r['code']}", lines=dr + cr, meta=meta, user=user))
+                                          ref=f"RENT:ACR:{plan['month']}:{r['code']}", lines=dr + cr, meta=meta, user=user, **fxk))
             acc._insert_entry(db, date=nxt_day, kind=KINDS[5], bu_id=r["bu_id"], party=r["client"],
                               memo=f"Reversal of the {plan['month']} accrual: {r['code']}", ref=f"RENT:ACR-R:{plan['month']}:{r['code']}",
                               lines=[{"account": x["account"], "debit": x["credit"]} for x in cr] + [{"account": unbilled, "credit": r["amount"]}],
-                              meta=meta, user=user)
+                              meta=meta, user=user, **fxk)
     return {**plan, "entries": made}
 
 
@@ -1937,7 +1960,7 @@ def create_invoice(db, rid, d, user=""):
             n += 1
             number = f"{r['code']}-INV{n:02d}"
         xid = acc.save_extract(db, {"bu_id": bu, "number": number, "date": d.get("date") or period["to"], "customer": r["client"],
-                                    "vat_code": r["vat_code"], "wht_code": r["wht_code"], "lines": period["lines"]})
+                                    "vat_code": r["vat_code"], "wht_code": r["wht_code"], "lines": period["lines"], "currency": r.get("currency") or ""})
         db.conn.execute("INSERT INTO rental_invoices(rental_id,extract_id,period_from,period_to) VALUES (?,?,?,?)",
                         (r["id"], xid, period["from"], period["to"]))
         ids = [x["charge_id"] for x in period["lines"] if x.get("charge_id")]

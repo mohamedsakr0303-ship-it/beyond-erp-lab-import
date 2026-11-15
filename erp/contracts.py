@@ -83,9 +83,15 @@ def save(db, d, cid=None):
                 vat_code=acc.tax_code(db, d.get("vat_code"), "vat")[0] if d.get("vat_code") else "",
                 wht_code=acc.tax_code(db, d.get("wht_code"), "wht")[0] if d.get("wht_code") else "",
                 status=d.get("status") if d.get("status") in STATUSES else "active", notes=text(d.get("notes"), maxlen=4000))
+    from . import fx            # a contract in a foreign currency: its value, certificates and payments are in it
+    cur = fx.code(d.get("currency")) if "currency" in d else ((db.one("SELECT currency FROM contracts WHERE id=?", (cid,)) or {}).get("currency") or "" if cid else "")
+    vals["currency"] = "" if cur == fx.base(db) else cur
     with db.tx():
         if cid:
             old = get(db, cid)
+            if vals["currency"] != (old.get("currency") or "") and db.one("SELECT 1 FROM journal_entries WHERE status='posted' AND (ref=? OR ref GLOB ?)",
+                                                                          (old["code"], acc.ref_prefix(old["code"] + "/"))):
+                raise ValidationError("This contract has entries; its currency cannot change.")
             if lines and old["certificates"] and any(c["status"] == "posted" for c in old["certificates"]):
                 keep = {(ln["description"]) for ln in old["lines"]}
                 if not keep <= {x[1] for x in lines}:
@@ -243,7 +249,7 @@ def _cert_row(db, c, x):
 def _money(db, c, x, this):
     """The certificate's split (minor units): retention, advance recovered, deductions, VAT, WHT, net payable."""
     retention = int(round(this * (c["retention_pct"] or 0)))
-    outstanding = advance_outstanding(db, c["code"], c["party"], before=x["number"])
+    outstanding = advance_outstanding(db, c["code"], c["party"], before=x["number"], cur=c.get("currency") or "")
     recover = max(0, min(int(round(this * (c["advance_recovery_pct"] or 0))), outstanding))
     deductions = x["deductions"] or 0
     base = this - deductions
@@ -253,7 +259,25 @@ def _money(db, c, x, this):
     return {"retention": retention, "advance_recovered": recover, "deductions_amt": deductions, "vat": vat, "wht": wht, "net_payable": net}
 
 
-def advance_outstanding(db, code, party, before=None):
+def _net(cur):
+    """A line's signed amount in the contract's currency (debit +): its foreign amount, or debit − credit."""
+    return ("(CASE WHEN l.currency=? THEN (CASE WHEN l.debit>0 THEN l.fx_amount ELSE -l.fx_amount END) ELSE 0 END)", [cur]) if cur \
+        else ("(l.debit-l.credit)", [])
+
+
+def _dr(cur):
+    return ("(CASE WHEN l.currency=? AND l.debit>0 THEN l.fx_amount ELSE 0 END)", [cur]) if cur else ("l.debit", [])
+
+
+def _fx(c, d=None):
+    """What a contract's entry posts in: its currency (with the rate typed, else the day's), or the company's."""
+    if not c.get("currency"):
+        return {"currency": ""}
+    rate = (d or {}).get("fx_rate") or ((acc.DOC_FX.get() or {}).get("rate") if (acc.DOC_FX.get() or {}).get("currency") == c["currency"] else None)
+    return {"currency": c["currency"], "rate": rate or None}
+
+
+def advance_outstanding(db, code, party, before=None, cur=""):
     """Advance paid to the subcontractor on this contract less what certificates recovered (minor units);
     with `before`, only certificates numbered below it count."""
     try:
@@ -261,9 +285,10 @@ def advance_outstanding(db, code, party, before=None):
     except LookupError:
         return 0
     n = 0
-    for r in db.q(f"""SELECT e.ref, SUM(l.debit-l.credit) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+    ex, xp = _net(cur)
+    for r in db.q(f"""SELECT e.ref, SUM({ex}) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                       WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY_IS} AND (e.ref=? OR e.ref GLOB ?) GROUP BY e.ref""",
-                  (acct, party, code, acc.ref_prefix(f"{code}/"))):
+                  (*xp, acct, party, code, acc.ref_prefix(f"{code}/"))):
         tail = r["ref"][len(code) + 1:]
         if tail.startswith("C") and tail[1:].isdigit() and before is not None and int(tail[1:]) >= before:
             continue
@@ -357,7 +382,7 @@ def post_certificate(db, cert_id, user=""):
                                 ref=f"{c['code']}/C{x['number']}", user=user,
                                 memo=f"Certificate {x['number']} — {party} ({c['code']}{' · ' + c['title'] if c['title'] else ''})",
                                 lines=[ln for ln in lines if (ln.get("debit") or ln.get("credit"))],
-                                meta={"contract": c["code"], "certificate": x["number"], **{k: to_major(v) for k, v in m.items()}})
+                                meta={"contract": c["code"], "certificate": x["number"], **{k: to_major(v) for k, v in m.items()}}, **_fx(c))
         db.conn.execute("UPDATE sub_certificates SET status='posted', entry_id=? WHERE id=?", (eid, x["id"]))
     return eid
 
@@ -400,8 +425,9 @@ def pay(db, cid, d, user=""):
     date = acc.clean_date(d.get("date"))
     party = c["party"]
     if kind == "advance":
-        given = to_major(db.one("SELECT COALESCE(SUM(l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-                                "WHERE e.status='posted' AND e.ref=?", (f"{c['code']}/ADV",))["n"])
+        ex, xp = _dr(c.get("currency") or "")
+        given = to_major(db.one(f"SELECT COALESCE(SUM({ex}),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                                "WHERE e.status='posted' AND e.ref=?", (*xp, f"{c['code']}/ADV"))["n"])
         if c["revised_value"] and given + amount > c["revised_value"] + 0.004:
             acc.over_limit(f"Advances to {party} would reach {given + amount:,.2f}, more than the contract value "
                            f"({c['revised_value']:,.2f}).")
@@ -409,7 +435,7 @@ def pay(db, cid, d, user=""):
         return acc.post_entry(db, date=date, kind="Payment Voucher", bu_id=c["bu_id"], party=party, ref=f"{c['code']}/ADV",
                               memo=f"Advance to {party} ({c['code']})", user=user,
                               lines=[{"account": _role(db, "supplier_advances"), "debit": amount, "party": party},
-                                     {"account": money, "credit": amount}])
+                                     {"account": money, "credit": amount}], **_fx(c, d))
     if kind == "release":
         held = to_minor(c["statement"]["retention_held"])
         if to_minor(amount) > held:
@@ -417,35 +443,39 @@ def pay(db, cid, d, user=""):
         return acc.post_entry(db, date=date, kind="Journal Voucher", bu_id=c["bu_id"], party=party, ref=f"{c['code']}/RET",
                               memo=f"Retention released to {party} ({c['code']})", user=user,
                               lines=[{"account": _role(db, "retention_payable"), "debit": amount, "party": party},
-                                     {"account": _role(db, "sub_payable", db.acct("ap")), "credit": amount, "party": party}])
+                                     {"account": _role(db, "sub_payable", db.acct("ap")), "credit": amount, "party": party}], **_fx(c, d))
     if kind == "payment":
         return acc.record_payment(db, {"date": date, "against": _role(db, "sub_payable", db.acct("ap")), "party": party,
                                        "amount": amount, "method": d.get("method"), "paid_from": d.get("paid_from"),
                                        "bu_id": c["bu_id"], "ref": f"{c['code']}/PAY",
                                        "memo": text(d.get("memo")) or f"Payment to {party} ({c['code']})",
-                                       "allow_overpay": d.get("allow_overpay")}, user)
+                                       "allow_overpay": d.get("allow_overpay"),
+                                       **({"currency": c["currency"], "fx_rate": _fx(c, d)["rate"] or ""} if c.get("currency") else {})}, user)
     raise ValidationError("Unknown payment type")
 
 
 def statement(db, c):
     code, party = c["code"], c["party"]
+    cur = c.get("currency") or ""
+    nx, np_ = _net(cur)
+    dx, dp = _dr(cur)
 
     def bal(role, sign=-1, refs=None):
         try:
             a = db.acct(role)
         except LookupError:
             return 0
-        r = db.one(f"""SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                       WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY_IS} AND (e.ref=? OR e.ref GLOB ?)""", (a, party, code, acc.ref_prefix(f"{code}/")))
+        r = db.one(f"""SELECT COALESCE(SUM({nx}),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                       WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY_IS} AND (e.ref=? OR e.ref GLOB ?)""", (*np_, a, party, code, acc.ref_prefix(f"{code}/")))
         return sign * (r["n"] or 0)
     certified = sum(to_minor(x["this_period"]) for x in c.get("certificates") or [] if x["status"] == "posted") \
         if isinstance(c.get("certificates"), list) else 0
-    paid = db.one(f"""SELECT COALESCE(SUM(l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                      WHERE {acc.LIVE} AND e.kind='Payment Voucher' AND {acc.PARTY_IS} AND e.ref=?""", (party, f"{code}/PAY"))["n"]
-    advance_paid = db.one(f"""SELECT COALESCE(SUM(l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                              WHERE {acc.LIVE} AND {acc.PARTY_IS} AND e.ref=? AND l.debit>0""", (party, f"{code}/ADV"))["n"]
+    paid = db.one(f"""SELECT COALESCE(SUM({dx}),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                      WHERE {acc.LIVE} AND e.kind='Payment Voucher' AND {acc.PARTY_IS} AND e.ref=?""", (*dp, party, f"{code}/PAY"))["n"]
+    advance_paid = db.one(f"""SELECT COALESCE(SUM({dx}),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                              WHERE {acc.LIVE} AND {acc.PARTY_IS} AND e.ref=? AND l.debit>0""", (*dp, party, f"{code}/ADV"))["n"]
     return {"certified": to_major(certified), "retention_held": to_major(bal("retention_payable")),
-            "advance_paid": to_major(advance_paid), "advance_outstanding": to_major(advance_outstanding(db, code, party)),
+            "advance_paid": to_major(advance_paid), "advance_outstanding": to_major(advance_outstanding(db, code, party, cur=cur)),
             "paid": to_major(paid), "payable": to_major(bal("sub_payable"))}
 
 
@@ -502,7 +532,7 @@ def export_rows(db):
     out = []
     for r in db.q("SELECT id FROM contracts ORDER BY id"):
         c = get(db, r["id"])
-        out.append({k: c[k] for k in ("code", "kind", "bu_code", "party", "title", "value", "signed_on", "start", "finish", "retention_pct",
+        out.append({k: c.get(k) or "" if k == "currency" else c[k] for k in ("code", "kind", "bu_code", "party", "title", "value", "signed_on", "start", "finish", "retention_pct", "currency",
                                        "retention_release", "advance", "advance_recovery_pct", "payment_terms", "scope", "vat_code",
                                        "wht_code", "status", "notes")}
                    | {"lines": [{k: ln[k] for k in ("item_no", "description", "unit", "qty", "rate")} for ln in c["lines"]],

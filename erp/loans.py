@@ -95,10 +95,17 @@ def _sign(ln):
     return 1 if ln["direction"] == "lent" else -1
 
 
+def _amt(ln):
+    """A loan in a foreign currency is followed in it: what its lines moved in that currency, else in the company's."""
+    return ("(CASE WHEN l.currency=? THEN (CASE WHEN l.debit>0 THEN l.fx_amount ELSE -l.fx_amount END) ELSE 0 END)", [ln["currency"]]) \
+        if ln.get("currency") else ("(l.debit-l.credit)", [])
+
+
 def _sum(db, ln, account, types=None, upto=None):
     """Signed movement on one account across this loan's entries (+ = more owed on the loan side)."""
     if not account:
         return 0
+    ex, xp = _amt(ln)
     w = [LIVE_REF, "(e.ref=? OR e.ref GLOB ?)", "l.account=?"]
     p = [f"LN:{ln['code']}", acc.ref_prefix(f"LN:{ln['code']}:"), account]
     if types:
@@ -107,8 +114,8 @@ def _sum(db, ln, account, types=None, upto=None):
     if upto:
         w.append("e.date<=?")
         p.append(upto)
-    r = db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-               f"WHERE {' AND '.join(w)}", p)
+    r = db.one(f"SELECT COALESCE(SUM({ex}),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+               f"WHERE {' AND '.join(w)}", xp + p)
     return r["n"] * _sign(ln)
 
 
@@ -154,9 +161,10 @@ def earned(db, ln, upto):
         return int(round(base * ln["rate"] * days / 365))
     # declining: day by day on the outstanding balance
     moves = {}
-    for r in db.q(f"""SELECT e.date, SUM(l.debit-l.credit) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+    ex, xp = _amt(ln)
+    for r in db.q(f"""SELECT e.date, SUM({ex}) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                       WHERE {LIVE_REF} AND (e.ref=? OR e.ref GLOB ?) AND l.account=? AND e.date<=? GROUP BY e.date""",
-                  (f"LN:{ln['code']}", acc.ref_prefix(f"LN:{ln['code']}:"), ln["account"], upto.isoformat())):
+                  (*xp, f"LN:{ln['code']}", acc.ref_prefix(f"LN:{ln['code']}:"), ln["account"], upto.isoformat())):
         moves[r["date"]] = r["n"] * _sign(ln)
     bal = ln["opening_balance"] + sum(v for k, v in moves.items() if k <= start.isoformat())
     total, day = 0.0, start + _dt.timedelta(days=1)
@@ -445,7 +453,12 @@ def save(db, d, lid=None, user=""):
     vals = (code, direction, party, text(d.get("purpose"), maxlen=300), account, interest_account, accrued_account, start,
             principal, opening, opening_date, rate, itype, fixed, term, freq, first_due, stype,
             json.dumps(custom), acc.bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), text(d.get("notes"), maxlen=2000))
+    from . import fx
+    currency = fx.code(d.get("currency")) if "currency" in d else ((old or {}).get("currency") or "")
+    currency = "" if currency == fx.base(db) else currency
     with db.tx():
+        if old and currency != (old.get("currency") or "") and _entries(db, old["code"]):
+            raise ValidationError("This loan has entries; its currency cannot change.")
         dup = db.one("SELECT id FROM loans WHERE code=?", (code,))
         if dup and (not old or dup["id"] != old["id"]):
             raise ValidationError(f"Loan code {code} is already used")
@@ -459,14 +472,16 @@ def save(db, d, lid=None, user=""):
                             "accrued_account=?, start_date=?, principal=?, opening_balance=?, opening_date=?, rate=?, "
                             "interest_type=?, fixed_interest=?, term_months=?, frequency=?, first_due=?, schedule_type=?, "
                             "schedule=?, bu_id=?, notes=? WHERE id=?", vals + (old["id"],))
+            db.conn.execute("UPDATE loans SET currency=? WHERE id=?", (currency, old["id"]))
             return old["id"]
         lid = db.conn.execute("INSERT INTO loans(code,direction,party,purpose,account,interest_account,accrued_account,"
                               "start_date,principal,opening_balance,opening_date,rate,interest_type,fixed_interest,term_months,"
                               "frequency,first_due,schedule_type,schedule,bu_id,notes,created_at) "
                               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                               vals + (acc.now_iso(),)).lastrowid
+        db.conn.execute("UPDATE loans SET currency=? WHERE id=?", (currency, lid))
         if how == "money" and principal:
-            post(db, lid, "draw", {"date": start, "amount": to_major(principal), "method": d.get("method"),
+            post(db, lid, "draw", {"date": start, "amount": to_major(principal), "method": d.get("method"), "fx_rate": d.get("fx_rate"),
                                    "paid_from": d.get("paid_from"), "fees": d.get("fees"), "memo": d.get("memo")}, user)
         return lid
 
@@ -629,7 +644,8 @@ def post(db, lid, action, d, user=""):
         pl = plan(db, lid, action, d)
         ln = pl["loan"]
         eid = acc._insert_entry(db, date=pl["date"], kind=pl["kind"], memo=pl["memo"], bu_id=ln["bu_id"], party=ln["party"],
-                                ref=pl["ref"], lines=pl["lines"], meta=pl["meta"], user=user)
+                                ref=pl["ref"], lines=pl["lines"], meta=pl["meta"], user=user,
+                                **({"currency": ln["currency"], "rate": d.get("fx_rate") or None} if ln.get("currency") else {"currency": ""}))
         return eid
 
 

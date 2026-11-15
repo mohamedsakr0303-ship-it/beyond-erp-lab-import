@@ -243,6 +243,27 @@ _REPLACE = {"eid": None}
 # directly, whatever screen it comes from (the system's own bookkeeping, such as work in progress, still runs).
 import contextvars as _cv
 POSTING_HELD = _cv.ContextVar("posting_held", default=False)
+# The currency a form was filled in (erp/fx.py): every entry its request posts is converted from it, except the
+# system's own entries (stock costs, depreciation, work in progress, reversals…), which are always in the company's.
+DOC_FX = _cv.ContextVar("doc_fx", default=None)
+HOME_KINDS = {"Material Issue", "Stock Transfer", "Stock Cost Adjustment", "Stock Adjustment", "Work in Progress", "Depreciation",
+              "Rental Equipment Depreciation", "Rental Equipment Cost Adjustment", "Reversing Entry", "FX Revaluation", "E-Receipt",
+              "Equipment Usage", "Payroll Accrual", "Salary Advance", "Year-End Close"}
+
+
+class in_currency:
+    """`with in_currency("USD", 52):` — entries posted inside are in that currency (blank / None: the company's)."""
+    def __init__(self, currency, rate=None):
+        cur = text(currency, maxlen=3).upper() if currency else ""
+        self.val = {"currency": cur, "rate": rate if rate not in ("", 0, "0") else None} if cur else None
+
+    def __enter__(self):
+        self.tok = DOC_FX.set(self.val)
+        return self
+
+    def __exit__(self, *a):
+        DOC_FX.reset(self.tok)
+        return False
 # Going over a limit (a contract, a bill of quantities, a purchase request): asked once, done when confirmed
 OVER_OK = _cv.ContextVar("over_ok", default=False)
 
@@ -260,7 +281,11 @@ def over_limit(msg):
 
 def _fx_lines(db, date, lines, party, currency=None, rate=None, exclude_eid=None):
     """Foreign amounts → the company's currency, with the exchange difference (erp/fx.py); other lines unchanged."""
+    if currency and currency.upper() == (db.setting("currency") or "EGP").upper():
+        currency = None
     fx_accounts = {r["code"] for r in db.q("SELECT code FROM accounts WHERE currency<>''")}
+    if not currency:
+        lines = [{k: v for k, v in l.items() if k != "_home"} if "_home" in l else l for l in lines]
     if currency or any(l.get("fx_debit") or l.get("fx_credit") or l.get("currency") or text(l.get("account")) in fx_accounts for l in lines):
         from . import fx
         return fx.convert(db, clean_date(date), lines, text(party), currency, rate, exclude_eid=exclude_eid)
@@ -281,6 +306,8 @@ def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", line
         lines = [dict(l, party=l.get("party") or cu["holder"]) if text(l.get("account")) == cu["account"] else l for l in lines]
         meta = {**(meta or {}), "paid_by_custody": cu["code"]}
     check_open(db, clean_date(date))
+    if currency is None and reversal_of is None and kind not in HOME_KINDS and DOC_FX.get():
+        currency, rate = DOC_FX.get()["currency"], DOC_FX.get()["rate"]
     lines = _fx_lines(db, date, lines, party, currency, rate, _REPLACE["eid"])
     vlines = _validate_lines(db, lines)
     if _REPLACE["eid"]:
@@ -314,6 +341,15 @@ def _wip_after(db, kind, *bu_ids):
     from . import wip
     for b in {x for x in bu_ids if x}:
         wip.sync(db, b)
+
+
+def owed_in(db, account, party, d):
+    """What is owed to a party on a liability account, in the form's currency: (amount, " USD" or "")."""
+    cur = (fx_of(d).get("currency") or (DOC_FX.get() or {}).get("currency") or "").upper()
+    if cur and cur != (db.setting("currency") or "EGP").upper():
+        from . import fx
+        return -to_major(fx.carried(db, account, party, cur, clean_date(d.get("date")))[0]), f" {cur}"
+    return party_balance(db, account, party), ""
 
 
 def fx_of(d):
@@ -557,7 +593,7 @@ def record_payroll(db, d, user=""):
             "basis": text(d.get("basis")), "method": text(d.get("method"))}
     return post_entry(db, date=d.get("date"), kind="Payroll Accrual",
                       memo=f"{worker} — {role_txt}" if role_txt else worker,
-                      bu_id=bu, party=worker, lines=lines, meta=meta, user=user)
+                      bu_id=bu, party=worker, lines=lines, meta=meta, user=user, **fx_of(d))
 
 
 def record_payment(db, d, user=""):
@@ -566,12 +602,7 @@ def record_payment(db, d, user=""):
     party = text(d.get("party"), "payee", required=True)
     amount = num(d.get("amount"), "amount", allow_zero=False)
     fxd = fx_of(d)
-    if fxd and fxd["currency"] != (db.setting("currency") or "EGP").upper():
-        from . import fx
-        owed = -to_major(fx.carried(db, account, party, fxd["currency"], clean_date(d.get("date")))[0])   # what is owed in that currency
-        unit = f" {fxd['currency']}"
-    else:
-        owed, unit = party_balance(db, account, party), ""
+    owed, unit = owed_in(db, account, party, d)
     if to_minor(amount) > to_minor(owed) and not d.get("allow_overpay"):
         raise ValidationError(f"{party} is owed {owed:,.2f}{unit} on {account}. Tick 'allow overpayment' to pay more.")
     return post_entry(db, date=d.get("date"), kind="Payment Voucher", memo=text(d.get("memo")) or f"Payment to {party}",
@@ -624,9 +655,10 @@ def record_supplier_discount(db, d, user=""):
     party = text(d.get("party"), "supplier", required=True)
     account = account_code(db, d.get("against") or db.acct("ap"), types=("Liability",), field="payable account")
     dflt = supplier_discount_defaults(db, party, account)
-    amount = num(d.get("amount") or dflt["owed"], "amount", allow_zero=False)
-    if to_minor(amount) > to_minor(dflt["owed"]):
-        raise ValidationError(f"{party} is only owed {dflt['owed']:,.2f} on {account}")
+    owed, unit = owed_in(db, account, party, d)
+    amount = num(d.get("amount") or owed, "amount", allow_zero=False)
+    if to_minor(amount) > to_minor(owed):
+        raise ValidationError(f"{party} is only owed {owed:,.2f}{unit} on {account}")
     mode = text(d.get("negotiation")).lower()
     if not d.get("credit_account") and mode in NEGOTIATION_MODES:
         d = {**d, "credit_account": dflt["keep_account"] if mode == "keep" else dflt["cost_account"]}
@@ -640,7 +672,7 @@ def record_supplier_discount(db, d, user=""):
                       bu_id=bu, party=party, ref=deal,
                       lines=[{"account": account, "debit": amount}, {"account": credit, "credit": amount}],
                       meta={"deal_ref": deal, "savings": amount, "deal_status": "Settled", "negotiation": mode},
-                      user=user)
+                      user=user, **fx_of(d))
 
 
 # ----------------------------------------------------------------------- sales
@@ -702,7 +734,7 @@ def record_partner_tx(db, d, user=""):
     kind = "Capital Contribution" if typ == "Capital" else "Owner Drawing"
     return post_entry(db, date=d.get("date"), kind=kind, memo=text(d.get("memo")) or kind,
                       bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=p["name"], lines=lines,
-                      user=user)
+                      user=user, **fx_of(d))
 
 
 # ----------------------------------------------------------------- journal
@@ -1254,7 +1286,11 @@ def stock_move(db, d, user=""):
             eid = _insert_entry(db, date=date, kind="Goods Receipt", memo=f"Received {qty:g} {item['unit']} "
                                 f"{item['name']} → {wh['name']}", party=vendor, lines=lines, user=user,
                                 meta={"qty": qty, "rate": rate, "item": item["name"], "warehouse": wh["name"],
-                                      "vat_code": vat_code, "wht_code": wht_code})
+                                      "vat_code": vat_code, "wht_code": wht_code}, **fx_of(d))
+            if db.one("SELECT 1 FROM journal_lines WHERE entry_id=? AND currency<>'' LIMIT 1", (eid,)):
+                # bought in a foreign currency: the stock is valued at what it cost in the company's currency
+                total = db.one("SELECT COALESCE(SUM(debit),0) n FROM journal_lines WHERE entry_id=? AND account=?", (eid, inv))["n"]
+                rate = to_major(total) / qty
             mid = _new_move(db, item["id"], wh["id"], date, qty, "Receipt", note, eid=eid, value=total, fixed=1, rate=rate * 100)
             settle(mid, f"goods received on {date}")
         elif typ == "Issue":

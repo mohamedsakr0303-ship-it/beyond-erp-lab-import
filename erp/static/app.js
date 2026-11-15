@@ -2700,7 +2700,7 @@ const DOCS = {
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "party", l: t("supplier"), list: "parties", req: 1 },
     { k: "against", l: t("pay_against"), type: "select", opts: accts(["Liability"]), v: accByRole("ap") }, { k: "amount", l: L2("Discount amount", "مبلغ الخصم"), type: "number", req: 1 },
     { k: "credit_account", l: L2("Credit account", "الحساب الدائن"), type: "select", opts: accts(["COGS", "Expense", "Revenue"]) },
-    { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—") }, { k: "deal_ref", l: t("deal_ref") }, { k: "memo", l: t("memo"), span: "spanall" }] },
+    { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—") }, { k: "deal_ref", l: t("deal_ref") }, ...fxFields(), { k: "memo", l: t("memo"), span: "spanall" }] },
   expense: { title: "m_expenses", fields: () => [
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts(t("shared")), help: t("overhead_note") },
     { k: "alloc_rule", l: L2("Allocation (shared costs)", "التوزيع (التكاليف المشتركة)"), type: "select", opts: allocOpts() },
@@ -2719,7 +2719,7 @@ const DOCS = {
     { k: "role", l: t("position") }, { k: "period", l: t("period"), v: today().slice(0, 7) },
     { k: "basis", l: t("rate_basis"), type: "select", opts: ["Daily", "Monthly", "Lump Sum", "Hourly"] },
     { k: "qty", l: t("days"), type: "number", v: 1, input: "calc" }, { k: "rate", l: t("rate"), type: "number", req: 1, input: "calc" },
-    { k: "paid", l: t("paid_now"), type: "number", input: "calc" }, { k: "method", l: t("method"), type: "select", opts: payMethodOpts() },
+    { k: "paid", l: t("paid_now"), type: "number", input: "calc" }, { k: "method", l: t("method"), type: "select", opts: payMethodOpts() }, ...fxFields(),
     { html: `<div class="banner info" id="calc"></div>`, span: "spanall" }],
     calc: f => { const g = n => Number($(`[name=${n}]`, f).value) || 0; $("#calc", f).innerHTML = `${t("gross_pay")}: <b>${money(g("qty") * g("rate"))}</b> · ${t("unpaid")}: <b>${money(g("qty") * g("rate") - g("paid"))}</b>`; } },
   payment: { title: "m_payments", fields: pre => [
@@ -2742,7 +2742,7 @@ const DOCS = {
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "partner_id", l: t("partner"), type: "select", opts: S.boot.partners.filter(p => p.active !== 0).map(p => [p.id, p.name]), req: 1 },
     { k: "type", l: t("type"), type: "select", opts: [["Distribution", t("drawing")], ["Capital", t("capital")]] },
     { k: "amount", l: t("amount"), type: "number", req: 1 }, { k: "method", l: t("method"), type: "select", opts: payMethodOpts() },
-    { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—") }, { k: "memo", l: t("memo"), span: "spanall" }] },
+    { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—") }, ...fxFields(), { k: "memo", l: t("memo"), span: "spanall" }] },
   stock_move: { title: "m_moves", fields: pre => [
     { k: "type", l: t("type"), type: "select", opts: S.boot.enums.stock_types, v: (pre && pre.type) || "Receipt", change: "stype" },
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "warehouse_id", l: t("warehouse"), type: "select", opts: whOpts(), v: pre && pre.warehouse_id },
@@ -2753,9 +2753,9 @@ const DOCS = {
     { k: "account", l: t("cost_account"), type: "select", opts: accts(["COGS", "Expense"]), v: accByRole("materials") },
     { k: "vendor", l: t("supplier"), list: "parties" }, { k: "paid", l: t("paid_now"), type: "number" },
     { k: "method", l: t("method"), type: "select", opts: payMethodOpts() }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat") },
-    { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht") }, { k: "note", l: t("notes") }],
-    open: f => { partyDefaults(f, "vendor"); const sync = () => { const ty = $("[name=type]", f).value; const show = { Receipt: ["qty", "rate", "vendor", "paid", "method", "unit", "vat_code", "wht_code"], Issue: ["qty", "bu_id", "account"], Transfer: ["qty", "to_warehouse_id"], Adjustment: ["counted", "rate"] }[ty];
-      ["to_warehouse_id", "qty", "counted", "rate", "bu_id", "account", "vendor", "paid", "method", "unit", "vat_code", "wht_code"].forEach(n => { const el = $(`[name=${n}]`, f).closest("label"); el.style.display = show.includes(n) ? "" : "none"; $(`[name=${n}]`, f).dataset.skip = show.includes(n) ? "" : "1"; }); };
+    { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht") }, ...fxFields(), { k: "note", l: t("notes") }],
+    open: f => { partyDefaults(f, "vendor"); const sync = () => { const ty = $("[name=type]", f).value; const show = { Receipt: ["qty", "rate", "vendor", "paid", "method", "unit", "vat_code", "wht_code", ...(fxOn() ? ["currency", "fx_rate"] : [])], Issue: ["qty", "bu_id", "account"], Transfer: ["qty", "to_warehouse_id"], Adjustment: ["counted", "rate"] }[ty];
+      ["to_warehouse_id", "qty", "counted", "rate", "bu_id", "account", "vendor", "paid", "method", "unit", "vat_code", "wht_code", ...(fxOn() ? ["currency", "fx_rate"] : [])].forEach(n => { const el = $(`[name=${n}]`, f).closest("label"); el.style.display = show.includes(n) ? "" : "none"; $(`[name=${n}]`, f).dataset.skip = show.includes(n) ? "" : "1"; }); };
       S.H.stype = sync; sync(); } },
 };
 // one "+ New" item: doc:<type> | eq:<action> | asset:new | asset:depr | entry:<entry type id>
@@ -7880,7 +7880,7 @@ PAGES.loan = async (view, parts) => {
         ${!d.entries.length ? `<button class="btn danger" data-a="lndel">${t("delete")}</button>` : ""}` : ""}
       ${exportMenu("loan_schedule", { code: L.code })}</div>
     ${L.settled && live ? `<div class="banner info">${L2("Fully repaid. The loan can be closed.", "تم السداد بالكامل. يمكن إغلاق القرض.")}</div>` : ""}
-    <div class="kpis">${kpiBox(B ? L2("Outstanding (payable)", "الرصيد المستحق على الشركة") : L2("Outstanding (receivable)", "الرصيد المستحق للشركة"), L.outstanding, B ? "" : "pos", `${L2("of", "من")} ${money(L.drawn)} · ${Math.round(L.progress * 100)}% ${L2("Repaid", "مسدد")}`)}
+    <div class="kpis">${kpiBox((B ? L2("Outstanding (payable)", "الرصيد المستحق على الشركة") : L2("Outstanding (receivable)", "الرصيد المستحق للشركة")) + (L.currency ? ` · ${L.currency}` : ""), L.outstanding, B ? "" : "pos", `${L2("of", "من")} ${money(L.drawn)} · ${Math.round(L.progress * 100)}% ${L2("Repaid", "مسدد")}`)}
       ${kpiBox(L2("Accrued interest", "فوائد مستحقة"), L.accrued, "", L.interest_to_date ? `${L2("Not yet recorded", "غير مسجلة")}: ${money(L.interest_to_date)}` : "")}
       ${kpiBox(L2("Overdue", "المتأخرات"), L.overdue, L.overdue ? "neg" : "")}
       ${kpiBox(L2("Next instalment", "القسط القادم"), L.next_due ? money(L.next_amount) : "—", "", L.next_due ? fd(L.next_due) : "")}
@@ -7914,6 +7914,7 @@ async function loanForm(d) {
     { k: "party", l: `${L2("Lender / borrower", "المقرض / المقترض")}`, v: L ? L.party : "", list: "lnparties", req: 1 },
     { k: "purpose", l: L2("Purpose", "الغرض"), v: L ? L.purpose : "", ph: L2("e.g. Equipment finance, employee advance", "مثال: تمويل معدات، سلفة موظف") },
     { k: "principal", l: L2("Loan amount", "مبلغ القرض"), type: "number", v: L ? (L.principal || "") : "", req: !ed },
+    ...fxFields(L ? L.currency : "").map(fl => ({ ...fl, dis: fl.k === "currency" && !!hasEntries })),
     { k: "start_date", l: L2("Start date", "تاريخ البداية"), type: "date", v: L ? L.start_date : today(), req: 1 },
     { k: "interest_type", l: L2("Interest", "الفائدة"), type: "select", opts: LOAN_O.itype(), v: L ? L.interest_type : "none", change: "lnsync" },
     { k: "rate", l: L2("Interest rate (% p.a.)", "سعر الفائدة (% سنوياً)"), type: "number", v: L ? (L.rate_pct || "") : "" },
@@ -7980,7 +7981,9 @@ async function loanAction(d, action) {
   const acc = (types) => accts(types);
   const titles = { pay: B ? L2("Repayment", "سداد") : L2("Collection", "تحصيل"), interest: L2("Accrue interest", "استحقاق فوائد"), draw: B ? L2("Drawdown received", "استلام مبلغ القرض") : L2("Advance paid", "صرف مبلغ القرض"),
     fee: L2("Charges / fees", "مصاريف / رسوم"), writeoff: B ? L2("Waived by lender", "إعفاء من المقرض") : L2("Write off", "إعدام القرض") };
-  const money_ = (lbl) => [{ k: "paid_from", l: lbl || (B ? L2("Paid from", "دُفع من") : L2("Received in", "استُلم في")), type: "select", opts: loanMoneyOpts(), v: defMoney("bank") }];
+  // a loan in a foreign currency: its amounts are in it; the money side is converted at the day's rate (or the one typed)
+  const money_ = (lbl) => [{ k: "paid_from", l: lbl || (B ? L2("Paid from", "دُفع من") : L2("Received in", "استُلم في")), type: "select", opts: loanMoneyOpts(), v: defMoney("bank") },
+    ...(L.currency ? [{ k: "fx_rate", l: L2(`Exchange rate (${fxBase()} per 1 ${L.currency})`, `سعر الصرف (${fxBase()} لكل 1 ${L.currency})`), type: "number", help: L2("Blank = the day's rate", "فارغ = سعر اليوم") }] : [])];
   const fields = {
     pay: [{ k: "date", l: t("date"), type: "date", v: today(), change: "lnsug", req: 1 },
       { html: `<div class="muted" id="lnsugtxt"></div>`, span: "spanall" },
@@ -8002,7 +8005,7 @@ async function loanAction(d, action) {
       { k: "account", l: t("account"), type: "select", opts: acc(B ? ["Revenue"] : ["Expense"]), v: B ? accByRole("other_income") : accByRole("bad_debt") },
       { k: "include_accrued", l: L2("Include accrued interest", "تشمل الفوائد المستحقة"), type: "checkbox", v: true, span: "spanall" }, { k: "memo", l: t("memo"), span: "spanall" }],
   }[action];
-  drawer(`${titles[action]} — ${L.code} · ${L.party}`, form(fields) + `<h4 style="margin:12px 0 0">${L2("Entry", "القيد")}</h4><div id="lpv" class="muted">—</div>`,
+  drawer(`${titles[action]} — ${L.code} · ${L.party}${L.currency ? ` · ${L.currency}` : ""}`, form(fields) + `<h4 style="margin:12px 0 0">${L2("Entry", "القيد")}</h4><div id="lpv" class="muted">—</div>`,
     async v => { await api("POST", `/api/loans/${L.id}/${action}`, v); toast(t("posted")); },
     { submitLabel: t("post"), onOpen: f => {
       const txt = s => s.basis === "schedule" ? `${L2("Instalment", "القسط")} ${s.installments.join(", ")} — ${money(s.total)}` : `${L2("Interest to date", "الفوائد حتى تاريخه")}: ${money(s.interest)}`;
@@ -8283,6 +8286,7 @@ async function rentalForm(d, pre) {
     { k: "site_location", l: L2("Address", "العنوان"), v: R.site_location || "" }, { k: "quote_date", l: L2("Quotation date", "تاريخ العرض"), type: "date", v: R.quote_date || today() },
     { k: "valid_until", l: L2("Valid until", "صالح حتى"), type: "date", v: R.valid_until || "" }, { k: "duration_months", l: L2("Expected duration (months)", "المدة المتوقعة (بالأشهر)"), type: "number", v: R.duration_months ?? 1 },
     { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: R.vat_code || "" }, { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), v: R.wht_code || "" },
+    ...fxFields(R.currency || "").filter(fl => fl.k === "currency").map(fl => ({ ...fl, change: "", help: L2("Rates, deposit and invoices are in it", "الأسعار والتأمين والفواتير بها") })),
     { k: "lang", l: L2("Document language", "لغة المستندات"), type: "select", opts: [["ar", "العربية"], ["en", "English"]], v: R.lang || S.boot.settings.language || "ar" },
     { k: "min_days", l: L2("Minimum rental period (days)", "الحد الأدنى لمدة الإيجار (أيام)"), type: "number", v: R.min_days || 0, help: L2("0: none. Items returned earlier are charged for the remaining days.", "0: بدون. تُحتسب الأيام المتبقية على القطع المرتجعة قبل ذلك.") },
     { k: "deposit", l: L2("Security deposit", "مبلغ التأمين"), type: "number", v: R.deposit || "" },
@@ -8376,10 +8380,11 @@ function rentSign(R) {
 function rentDeposit(R, type) {
   const title = { receive: L2("Receive security deposit", "استلام مبلغ التأمين"), refund: L2("Refund security deposit", "رد مبلغ التأمين"), apply: L2("Apply deposit to invoices", "تطبيق التأمين على الفواتير") }[type];
   const dflt = type === "receive" ? Math.max((R.deposit || 0) - (R.deposit_held || 0), 0) : R.deposit_held;
-  drawer(`${title} — ${R.code}`, `<p class="muted">${type === "apply" ? L2("Reduces the client's invoice balance; the remainder stays held.", "يخفض رصيد فواتير العميل، ويبقى الباقي محتفظاً به.")
+  drawer(`${title} — ${R.code}${R.currency ? ` · ${R.currency}` : ""}`, `<p class="muted">${type === "apply" ? L2("Reduces the client's invoice balance; the remainder stays held.", "يخفض رصيد فواتير العميل، ويبقى الباقي محتفظاً به.")
       : type === "receive" ? L2("Held as a liability (2105 Security Deposits from Clients) until refunded or applied.", "يُسجَّل التزاماً (2105 تأمينات العملاء) حتى يُرد أو يُطبَّق.") : L2("Refunded to the client.", "يُرد للعميل.")}</p>` +
     form([{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", v: dflt || "", req: 1, help: `${L2("Currently held", "المحتفظ به حالياً")}: ${money(R.deposit_held)}` },
       ...(type === "apply" ? [] : [{ k: "paid_from", l: type === "receive" ? L2("Received in", "استُلم في") : L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: defMoney("bank") }]),
+      ...(R.currency ? [{ k: "fx_rate", l: L2(`Exchange rate (${fxBase()} per 1 ${R.currency})`, `سعر الصرف (${fxBase()} لكل 1 ${R.currency})`), type: "number", help: L2("Blank = the day's rate", "فارغ = سعر اليوم") }] : []),
       { k: "memo", l: t("memo"), span: "spanall" }]),
     async v => { await api("POST", `/api/rentals/${R.id}/deposit`, { ...v, type }); toast(t("posted")); });
 }
@@ -8941,7 +8946,7 @@ function assetForm(a) {
     { k: "vendor", l: t("supplier"), list: "faparties" }, { k: "paid", l: t("paid_now"), type: "number" },
     { k: "method", l: t("method"), type: "select", opts: methodOpts() },
     { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat") }, { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht") },
-    { k: "partner", l: t("partner"), type: "select", opts: activePartners().map(p => [p.id, p.name]) });
+    ...fxFields(), { k: "partner", l: t("partner"), type: "select", opts: activePartners().map(p => [p.id, p.name]) });
   drawer((isNew ? L2("New asset", "أصل جديد") : t("edit")) + (a.code ? " — " + a.code : ""), form(fields) + partyList("faparties") + `<div id="falife" class="muted"></div><h4>${L2("Depreciation schedule", "جدول الإهلاك")}</h4><div id="fasch" class="muted"></div>`,
     async v => { if (!v.depr_start) delete v.depr_start; if (isNew) await api("POST", "/api/assets", v); else await api("PUT", "/api/assets/" + a.id, v); toast(t("saved")); },
     { onOpen: async f => {
@@ -8957,7 +8962,8 @@ function assetForm(a) {
         $("[name=depr_start]", f).placeholder = pol.convention === "next_month" ? L2("Month after acquisition", "الشهر التالي للاقتناء") : L2("Month of acquisition", "شهر الاقتناء"); S.H.falife(); sch(); };
       $("[name=account]", f).addEventListener("change", fill); fill();
       if (isNew) { S.H.fapay = () => { const p = $("[name=pay]", f).value;
-        showFields(f, { none: [], cash: ["method", "vat_code", "wht_code", "vendor"], payable: ["vendor", "paid", "method", "vat_code", "wht_code"], partner: ["partner"] }[p], ["vendor", "paid", "method", "vat_code", "wht_code", "partner"]); };
+        const fxk = fxOn() ? ["currency", "fx_rate"] : [];
+        showFields(f, { none: [], cash: ["method", "vat_code", "wht_code", "vendor", ...fxk], payable: ["vendor", "paid", "method", "vat_code", "wht_code", ...fxk], partner: ["partner", ...fxk] }[p], ["vendor", "paid", "method", "vat_code", "wht_code", "partner", ...fxk]); };
         S.H.fapay(); }
       const acc = $("[name=account]", f); acc.addEventListener("change", () => { const x = S.boot.accounts.find(y => y.code === acc.value); if (x && x.subtype === "fixed_asset" && /land|أراض/i.test(x.name + x.name_ar)) $("[name=life_months]", f).value = 0; S.H.falife(); });
     } });
@@ -9421,6 +9427,7 @@ async function saleForm(s, pre = {}) {
   drawer(isNew ? L2("New sale", "بيع جديد") : `${t("edit")} — ${s.code}`, form([
     { k: "customer", l: L2("Customer", "العميل"), v: s.customer || pre.customer, req: 1, list: "scust" }, { k: "date", l: t("date"), type: "date", v: s.date || pre.date || today(), req: 1 },
     { k: "bu_id", l: L2("Project / business unit", "المشروع / وحدة الأعمال"), type: "select", opts: buOpts(), v: s.bu_id || pre.bu_id || "", req: 1 },
+    ...fxFields(s.currency || pre.currency || "").filter(fl => fl.k === "currency").map(fl => ({ ...fl, change: "", help: L2("Prices, schedule and payments are in it", "الأسعار والجدول والدفعات بها") })),
     { k: "revenue_on", l: L2("Revenue recognition", "إثبات الإيراد"), type: "select", opts: [["sale", L2("At sale", "عند البيع")], ["delivery", L2("On delivery", "عند التسليم")]], v: s.revenue_on || st.revenue_on },
     { k: "delivery_due", l: L2("Expected delivery date", "تاريخ التسليم المتوقع"), type: "date", v: s.delivery_due || "" }, { k: "salesperson", l: L2("Salesperson", "مندوب المبيعات"), v: s.salesperson || "" },
     { html: `<h4 class="fsec">${L2("Items sold", "البنود المبيعة")}</h4><div class="tbl"><table id="slt"><thead><tr><th>${L2("Product / description", "المنتج / البيان")}</th><th>${t("qty")}</th><th>${t("unit")}</th><th>${L2("Price", "السعر")}</th><th>${L2("Discount", "الخصم")}</th><th></th></tr></thead><tbody>${lineRows()}</tbody></table></div>
@@ -9502,11 +9509,12 @@ function confirmSaleForm(s) {
   async v => { await api("POST", `/api/sales/${s.id}/confirm`, v); toast(t("posted")); }, { submitLabel: L2("Confirm", "تأكيد") });
 }
 function collectForm(s, row) {
-  drawer(L2("Receive payment", "تحصيل دفعة") + " — " + s.code, form([
+  drawer(L2("Receive payment", "تحصيل دفعة") + " — " + s.code + (s.currency ? ` · ${s.currency}` : ""), form([
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", req: 1, v: row ? row.left : (s.schedule.find(r => r.left > 0) || {}).left || "" },
     { k: "method", l: t("method"), type: "select", opts: methodOpts(), change: "cmeth" },
     { k: "postdated", l: L2("Post-dated cheque (treated as paid only when cleared)", "شيك آجل (لا يُعد مسدداً إلا بعد تحصيله)"), type: "checkbox", span: "spanall", change: "cmeth" },
     { k: "cheque_no", l: L2("Cheque no.", "رقم الشيك") }, { k: "bank", l: L2("Bank", "البنك") }, { k: "cheque_due", l: L2("Cheque date", "تاريخ الشيك"), type: "date", v: row ? row.due : "" },
+    ...(s.currency ? [{ k: "currency", hidden: 1, v: s.currency }, { k: "fx_rate", l: L2(`Exchange rate (${fxBase()} per 1 ${s.currency})`, `سعر الصرف (${fxBase()} لكل 1 ${s.currency})`), type: "number", help: L2("Blank = the day's rate", "فارغ = سعر اليوم") }] : []),
     { k: "ref", l: t("ref") }, { k: "memo", l: t("memo") }]),
   async v => { await api("POST", `/api/sales/${s.id}/collect`, v); toast(t("posted")); },
   { submitLabel: L2("Receive", "تحصيل"), onOpen: f => { S.H.cmeth = () => { const chq = $("[name=method]", f).value === "Cheque"; showFields(f, chq ? ["postdated", ...($("[name=postdated]", f).checked ? ["cheque_no", "bank", "cheque_due"] : ["cheque_no"])] : [], ["postdated", "cheque_no", "bank", "cheque_due"]); }; S.H.cmeth(); } });
@@ -9939,6 +9947,7 @@ async function subForm(s) {
     <label class="f chk"><input type="checkbox" name="auto_renew" ${s.auto_renew ? "checked" : ""}>${L2("Auto-renew at end of term", "تجديد تلقائي في نهاية المدة")}</label>
     <label class="f">${t("vat_code")}<select name="vat_code"><option value="">${esc(L2("Per plan", "حسب الخطة"))}</option>${optHtml(taxOpts("vat").filter(x => x[0]), s.vat_code || "")}</select></label>
     <label class="f">${t("bu")}<select name="bu_id">${optHtml(buOpts(L2("Services (shared)", "الخدمات (مشتركة)")), s.bu_id || "")}</select></label>
+    ${(fxOn() || s.currency) && !s.parent_id ? `<label class="f">${L2("Currency", "العملة")}<select name="currency">${optHtml([["", fxBase()], ...[...new Set([...(S.boot.fx.currencies || []), ...(s.currency ? [s.currency] : [])])].map(c => [c, c])], s.currency || "")}</select></label>` : ""}
     <label class="f">${L2("Sale / contract reference", "مرجع البيع / العقد")}<input name="sale_code" value="${esc(s.sale_code || "")}"></label></div>
     <label class="f">${t("notes")}<textarea name="notes" rows="2">${esc(s.notes || "")}</textarea></label>
     <p class="muted" style="font-size:.85em">${L2("Invoices are issued at the start of each period (Invoice amounts due). Price changes apply from the next invoice.", "تصدر الفواتير في بداية كل فترة (فوترة المستحق). تسري تغييرات السعر من الفاتورة التالية.")}</p>`,
@@ -10044,6 +10053,7 @@ function poForm(po) {
     : isNew ? `<label class="f" id="pofrom" hidden>${L2("Start from an approved purchase request (optional)", "البدء من طلب شراء معتمد (اختياري)")}<select data-change="pofrom"><option value="">—</option></select></label>` : "";
   const html = fromPr + `<div class="grid g2">
       <label class="f">${t("supplier")} *<input name="supplier" required value="${esc(po.supplier || "")}" list="pos-sup">${partyList("pos-sup")}</label>
+      ${fxOn() || po.currency ? `<label class="f">${L2("Currency", "العملة")}<select name="currency">${optHtml([["", fxBase()], ...[...new Set([...(S.boot.fx.currencies || []), ...(po.currency ? [po.currency] : [])])].map(c => [c, c])], po.currency || "")}</select></label>` : ""}
       <label class="f">${t("date")}<input type="date" name="date" value="${esc(po.date || today())}"></label>
       <label class="f">${t("bu")}<select name="bu_id">${optHtml(buOpts("— " + L2("None (overhead / stock)", "بدون (مصروفات عامة / مخزون)")), po.bu_id || "")}</select></label>
       <label class="f">${L2("Delivery date", "تاريخ التسليم")}<input type="date" name="expected" value="${esc(po.expected || "")}"></label>
@@ -10099,10 +10109,11 @@ function poReceive(po) {
       <label class="f">${L2("Supplier invoice / delivery note no.", "رقم فاتورة / إذن تسليم المورد")}<input name="supplier_ref"></label></div>
     <div class="tbl"><table><thead><tr><th>${t("description")}</th><th class="num">${L2("Outstanding", "المتبقي")}</th><th>${L2("Received now", "المستلم الآن")}</th></tr></thead><tbody>
       ${open.map(l => `<tr><td>${esc(l.description)}<div class="muted" style="font-size:.85em">${esc(poKind(l.kind))} · ${money(l.rate)} / ${esc(l.unit || t("unit"))}</div></td><td class="num">${numf(l.left)}</td><td><input type="number" step="any" min="0" max="${l.left}" data-line="${l.id}" value="${l.left}" style="width:100px"></td></tr>`).join("")}</tbody></table></div>
-    <div class="grid g2"><label class="f">${L2("Paid now (optional)", "المدفوع الآن (اختياري)")}<input type="number" step="any" name="paid" value="0"></label>
-      <label class="f">${t("method")}<select name="method">${optHtml(payMethodOpts(), "")}</select></label></div>
+    <div class="grid g2"><label class="f">${L2("Paid now (optional)", "المدفوع الآن (اختياري)")}${po.currency ? ` (${esc(po.currency)})` : ""}<input type="number" step="any" name="paid" value="0"></label>
+      <label class="f">${t("method")}<select name="method">${optHtml(payMethodOpts(), "")}</select></label>
+      ${po.currency ? `<label class="f">${L2(`Exchange rate (${fxBase()} per 1 ${po.currency})`, `سعر الصرف (${fxBase()} لكل 1 ${po.currency})`)}<input type="number" step="any" name="fx_rate" placeholder="${esc(L2("Blank = the day's rate", "فارغ = سعر اليوم"))}"></label>` : ""}</div>
     <p class="muted" style="font-size:.85em">${L2("Each line posts its voucher (project cost, expense or goods receipt) referenced to this order. Unpaid amounts are recorded as payable to the supplier.", "يُرحِّل كل بند سنده (تكلفة مشروع أو مصروف أو استلام مخزون) بمرجع هذا الأمر، وتُسجَّل المبالغ غير المسددة مستحقة للمورد.")}</p>`;
-  const f = drawer(`${po.code} — ${L2("Receive delivery", "استلام توريد")}`, html, async v => {
+  const f = drawer(`${po.code} — ${L2("Receive delivery", "استلام توريد")}${po.currency ? ` · ${po.currency}` : ""}`, html, async v => {
     const lines = $$("[data-line]", f).map(i => ({ line_id: +i.dataset.line, qty: +i.value || 0 })).filter(x => x.qty > 0);
     const r = await api("POST", `/api/purchase-orders/${po.id}/receive`, { ...v, lines });
     toast(`${r.entries.length} ${L2("Vouchers posted", "سند مرحّل")}`);
@@ -10372,7 +10383,7 @@ function entryTypeForm(id) {
     e.cr.fixed ? { html: `<label class="f">${t("credit")}<input value="${esc(fixed(e.cr))}" disabled></label>` } : { k: "credit_account", l: t("credit"), type: "select", opts: opts(e.cr), v: e.cr.default }];
   if (e.party !== "none") fields.push({ k: "party", l: t("party"), list: "etparties", req: e.party === "required" });
   if (e.bu !== "none") fields.push({ k: "bu_id", l: t("bu"), type: "select", opts: buOpts(e.bu === "required" ? "" : "—"), req: e.bu === "required" });
-  fields.push({ k: "ref", l: t("ref") }, { k: "memo", l: t("memo"), v: (S.lang === "ar" && e.name_ar) || e.name, span: "spanall" });
+  fields.push(...fxFields(), { k: "ref", l: t("ref") }, { k: "memo", l: t("memo"), v: (S.lang === "ar" && e.name_ar) || e.name, span: "spanall" });
   drawer((S.lang === "ar" && e.name_ar) || e.name, form(fields) + partyList("etparties", (S.boot.partners || []).map(p => p.name)),
     async v => { await api("POST", "/api/entry/" + e.id, v); modelUsed(e.id); toast(t("posted")); });
 }
@@ -12524,6 +12535,7 @@ function contractForm(c) {
     { k: "kind", hidden: 1, v: c.kind },
     { k: "party", l: (sub ? L2("Subcontractor", "مقاول الباطن") : L2("Client", "العميل")) + " *", v: c.party, req: 1, list: "con-party" },
     { k: "bu_id", l: t("bu") + (sub ? " *" : ""), type: "select", opts: buOpts(sub ? "" : "—"), v: c.bu_id || "" },
+    ...fxFields(c.currency || "").filter(fl => fl.k === "currency").map(fl => ({ ...fl, change: "", help: L2("Value, certificates and payments are in it", "القيمة والمستخلصات والمدفوعات بها") })),
     { k: "title", l: L2("Title / scope summary", "العنوان / ملخص النطاق"), v: c.title, span: "spanall" },
     { k: "value", l: L2("Contract value", "قيمة العقد") + (sub ? " " + L2("(blank: sum of lines)", "(فارغ: مجموع البنود)") : ""), type: "number", v: c.value || "" },
     { k: "signed_on", l: L2("Signed on", "تاريخ التوقيع"), type: "date", v: c.signed_on },
@@ -12596,9 +12608,10 @@ function certForm(c, x) {
 function conPay(c, kind) {
   const L = { advance: L2("Pay advance", "صرف دفعة مقدمة"), payment: L2("Pay subcontractor", "صرف لمقاول الباطن"), release: L2("Release retention", "رد المحتجزات") }[kind];
   const sug = kind === "release" ? c.statement.retention_held : kind === "payment" ? c.statement.payable : Math.max(0, (c.advance || 0) - c.statement.advance_paid);
-  drawer(`${c.code} — ${L}`, form([{ k: "date", l: t("date"), type: "date", v: today() }, { k: "amount", l: t("amount") + " *", type: "number", v: sug || "", req: 1 },
+  drawer(`${c.code} — ${L}${c.currency ? ` · ${c.currency}` : ""}`, form([{ k: "date", l: t("date"), type: "date", v: today() }, { k: "amount", l: t("amount") + " *", type: "number", v: sug || "", req: 1 },
     ...(kind !== "release" ? [{ k: "paid_from", l: L2("Paid from", "الصرف من"), type: "select", opts: moneyAccts(), v: defMoney("bank") }] : []),
-    ...(kind === "payment" ? [{ k: "memo", l: t("memo"), v: "" }] : [])]) +
+    ...(kind === "payment" ? [{ k: "memo", l: t("memo"), v: "" }] : []),
+    ...(c.currency ? [{ k: "fx_rate", l: L2(`Exchange rate (${fxBase()} per 1 ${c.currency})`, `سعر الصرف (${fxBase()} لكل 1 ${c.currency})`), type: "number", help: L2("Blank = the day's rate", "فارغ = سعر اليوم") }] : [])]) +
     `<p class="muted" style="font-size:.85em">${kind === "release" ? L2("Transfers the retention to the amount payable; then pay it as a normal payment.", "تُحوَّل المحتجزات إلى المبلغ المستحق، ثم تُصرف كدفعة عادية.") : kind === "advance" ? L2("Recorded as a supplier advance and recovered from certificates at the contract rate.", "تُسجَّل دفعة مقدمة للمورد وتُسترد من المستخلصات بالنسبة المتعاقد عليها.") : L2("Settles amounts due under posted certificates.", "تسدد المستحق بموجب المستخلصات المرحّلة.")}</p>`,
     async v => { await api("POST", `/api/contracts/${c.id}/pay`, { ...v, kind }); toast(t("saved")); });
 }

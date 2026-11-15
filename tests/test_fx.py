@@ -206,6 +206,167 @@ class Invoices(unittest.TestCase):
         self.assertEqual((row["fx"]["currency"], row["fx"]["receivable"], row["receivable"]), ("USD", 1140.0, 59280.0))
 
 
+class EveryModule(unittest.TestCase):
+    def test_stock_bought_in_dollars_is_valued_in_pounds_and_issued_at_that_cost(self):
+        db = books()
+        wh = db.one("SELECT id FROM warehouses LIMIT 1")["id"]
+        acc.stock_move(db, {"type": "Receipt", "date": "2026-01-21", "warehouse_id": wh, "item": "Steel", "unit": "t", "qty": 2, "rate": 100,
+                            "vendor": "Initech", "paid": 0, "currency": "USD"}, "t")
+        m = db.one("SELECT value FROM stock_moves ORDER BY id DESC LIMIT 1")
+        self.assertEqual(m["value"], 1040000)                                      # 200 USD × 52 = 10,400.00
+        self.assertEqual(fx.carried(db, db.acct("ap"), "Initech", "USD", "2026-12-31")[0], -20000)   # 200 USD owed
+        with acc.in_currency("USD"):                                               # a request in USD: the issue stays at cost
+            eid = acc.stock_move(db, {"type": "Issue", "date": "2026-01-22", "warehouse_id": wh, "item": "Steel", "qty": 1, "bu_code": "P1"}, "t")
+        lines = acc.get_entry(db, eid)["lines"]
+        self.assertEqual({(ln["debit"] or ln["credit"], ln.get("currency")) for ln in lines}, {(5200.0, None)})
+        self.assertTrue(balanced(db))
+
+    def test_an_asset_bought_in_dollars_is_kept_and_depreciated_in_pounds(self):
+        from erp import assets
+        db = books()
+        aid = assets.save(db, {"name": "Crane", "account": db.acct("fixed_asset") or db.one("SELECT code FROM accounts WHERE type='Asset' AND subtype LIKE '%ppe%' OR subtype='fixed_assets' LIMIT 1")["code"], "acquired": "2026-01-21", "cost": 1000, "salvage": 100, "life_months": 10,
+                               "pay": "payable", "vendor": "Initech", "paid": 0, "currency": "USD"}, user="t")
+        a = assets.get(db, aid)
+        self.assertEqual((a["cost"], a["salvage"]), (52000.0, 5200.0) if isinstance(a["cost"], float) else (5200000, 520000))
+        self.assertEqual(fx.carried(db, db.acct("ap"), "Initech", "USD", "2026-12-31")[0], -100000)
+        self.assertTrue(balanced(db))
+
+    def test_a_dollar_bank_account_is_reconciled_in_dollars(self):
+        from erp import bankrec
+        db = books()
+        acc.record_journal(db, {"date": "2026-01-05", "lines": [{"account": "1015", "fx_debit": 500}, {"account": db.acct("revenue"), "credit": 25000}]}, "t")
+        sid = bankrec.save(db, {"account": "1015", "opening": 0, "lines": [{"date": "2026-01-05", "description": "Deposit", "amount": 500},
+                                                                           {"date": "2026-01-25", "description": "Fee", "amount": -10}]})
+        self.assertEqual(bankrec.book_balance(db, "1015", "2026-01-31"), 50000)       # 500.00 in USD, as the statement
+        ln = db.one("SELECT id FROM bank_lines WHERE statement_id=? AND amount<0", (sid,))["id"]
+        eid = bankrec.create_entry(db, sid, ln, {"account": db.acct("other_overhead")}, "t")
+        bank = next(x for x in acc.get_entry(db, eid)["lines"] if x["account"] == "1015")
+        self.assertEqual((bank["credit"], bank["currency"], bank["fx_amount"]), (500.0, "USD", 10.0))   # at the 50 it cost
+        self.assertEqual(bankrec.book_balance(db, "1015", "2026-01-31"), 49000)
+        self.assertTrue(balanced(db))
+
+    def test_supplier_discount_and_partner_money_in_dollars(self):
+        db = books()
+        acc.record_expense(db, {"date": "2026-01-06", "amount": 300, "vendor": "Initech", "paid": 0, "description": "Parts", "currency": "USD"}, "t")
+        with self.assertRaisesRegex(acc.ValidationError, "only owed 300.00 USD"):
+            acc.record_supplier_discount(db, {"date": "2026-01-21", "party": "Initech", "amount": 301, "currency": "USD"}, "t")
+        acc.record_supplier_discount(db, {"date": "2026-01-21", "party": "Initech", "amount": 300, "currency": "USD"}, "t")
+        self.assertEqual(fx.carried(db, db.acct("ap"), "Initech", "USD", "2026-12-31"), (0, 0))
+        self.assertTrue(balanced(db))
+
+
+class Documents(unittest.TestCase):
+    def test_a_dollar_loan_is_followed_in_dollars_and_repaid_at_what_it_cost(self):
+        from erp import loans
+        db = books()
+        lid = loans.save(db, {"direction": "borrowed", "party": "Big Bank", "principal": 10000, "start_date": "2026-01-05",
+                              "term_months": 12, "interest_type": "none", "schedule_type": "none", "currency": "USD", "paid_from": "1015"}, user="t")
+        ln = loans.get(db, lid)
+        self.assertEqual(ln["currency"], "USD")
+        self.assertEqual(loans.principal_balance(db, ln), 1000000)                  # 10,000.00 USD owed
+        self.assertEqual(bal(db, ln["account"]), -500000)                            # booked at 50
+        loans.post(db, lid, "pay", {"date": "2026-01-21", "principal": 5000, "paid_from": "1015"}, "t")
+        self.assertEqual(loans.principal_balance(db, ln), 500000)
+        self.assertEqual(bal(db, ln["account"]), -250000)                            # half of what it cost
+        self.assertEqual(bal(db, "1015"), 250000)                                    # the USD went out at the 50 they came in at
+        with self.assertRaisesRegex(acc.ValidationError, "Only 5,000.00 of principal"):
+            loans.post(db, lid, "pay", {"date": "2026-01-22", "principal": 6000, "paid_from": "1015"}, "t")
+        # repaid from the pound account at 52: the loan clears at cost, the 10,000 more is an exchange loss
+        loans.post(db, lid, "pay", {"date": "2026-01-22", "principal": 5000}, "t")
+        self.assertEqual(loans.principal_balance(db, ln), 0)
+        self.assertEqual(bal(db, ln["account"]), 0)
+        self.assertEqual(bal(db, fx.diff_account(db)), 10000)
+        with self.assertRaisesRegex(acc.ValidationError, "currency cannot change"):
+            loans.save(db, {**{k: ln[k] for k in ("direction", "party", "start_date", "term_months", "interest_type", "schedule_type")},
+                            "principal": 100, "currency": ""}, lid)
+        self.assertTrue(balanced(db))
+
+
+    def test_a_purchase_order_in_dollars_receives_in_dollars(self):
+        from erp import purchasing
+        db = books()
+        pid = purchasing.save(db, {"supplier": "Initech", "date": "2026-01-10", "currency": "USD",
+                                   "lines": [{"kind": "expense", "description": "Software", "account": db.acct("other_overhead"), "qty": 2, "rate": 150}]}, "t")
+        purchasing.approve(db, pid, "boss")
+        po = purchasing.get(db, pid)
+        self.assertEqual(po["currency"], "USD")
+        purchasing.receive(db, pid, {"date": "2026-01-21", "lines": [{"line_id": po["lines"][0]["id"], "qty": 2}]}, "t")
+        self.assertEqual(fx.carried(db, db.acct("ap"), "Initech", "USD", "2026-12-31"), (-30000, -1560000))   # 300 USD at 52
+        self.assertTrue(balanced(db))
+
+
+    def test_a_sale_in_dollars_collects_and_invoices_in_dollars_and_costs_in_pounds(self):
+        from erp import sales
+        db = books()
+        unit = sales.save_product(db, {"name": "Villa V-1", "kind": "unit", "price": 30000, "bu_code": "P1", "cost": 1000000, "inventory_account": "1210"})
+        sid = sales.save(db, {"customer": "Globex", "bu_code": "P1", "date": "2026-01-05", "revenue_on": "delivery", "currency": "USD",
+                              "lines": [{"product_id": unit}], "plan": {"type": "full"}})
+        with acc.in_currency("USD"):
+            sales.confirm(db, sid, {"date": "2026-01-05", "collect": 10000, "method": "Bank Transfer", "received_into": "1015"})
+        adv = db.acct("client_advances")
+        self.assertEqual(fx.carried(db, adv, "Globex", "USD", "2026-12-31"), (-1000000, -50000000))   # 10,000 USD at 50
+        with acc.in_currency("USD"):
+            sales.collect(db, sid, {"date": "2026-01-21", "amount": 20000, "method": "Bank Transfer", "received_into": "1015"})
+            sales.deliver(db, sid, {"date": "2026-01-31"})
+        d = sales.detail(db, sid, "2026-01-31")
+        self.assertEqual((d["paid"], d["invoiced"]), (30000, True))
+        x = acc.get_extract(db, sales.get(db, sid)["extract_id"])
+        self.assertEqual((x["currency"], x["fx_rate"]), ("USD", 53.0))
+        self.assertEqual(fx.carried(db, adv, "Globex", "USD", "2026-12-31")[0], 0)
+        self.assertEqual(fx.carried(db, db.acct("ar"), "Globex", "USD", "2026-12-31")[0], 0)   # invoiced, then cleared by the advances
+        cos = next(r for r in db.q("SELECT l.* FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id WHERE e.kind='Cost of Sales'"))
+        self.assertEqual((cos["debit"], cos["currency"]), (100000000, ""))                      # what the villa cost, in pounds
+        self.assertTrue(balanced(db))
+
+
+    def test_a_subcontract_in_dollars_certifies_recovers_and_pays_in_dollars(self):
+        from erp import contracts
+        db = books()
+        sid = contracts.save(db, {"kind": "sub", "bu_code": "P1", "party": "Sub Co", "retention_pct": 10, "advance_recovery_pct": 20, "currency": "USD",
+                                  "lines": [{"description": "Plaster", "qty": 1000, "rate": 100}, {"description": "Paint", "qty": 1000, "rate": 50}]})
+        lines = contracts.get(db, sid)["lines"]
+        contracts.pay(db, sid, {"kind": "advance", "amount": 20000, "date": "2026-01-05", "paid_from": "1015"}, "t")
+        x1 = contracts.save_certificate(db, sid, {"date": "2026-01-21", "lines": [{"line_id": lines[0]["id"], "qty_to_date": 300}]})
+        contracts.approve_certificate(db, x1)
+        contracts.post_certificate(db, x1)
+        st = contracts.get(db, sid)["statement"]
+        self.assertEqual((st["certified"], st["retention_held"], st["advance_outstanding"], st["payable"]), (30000, 3000, 14000, 21000))
+        contracts.pay(db, sid, {"kind": "payment", "amount": 21000, "date": "2026-01-31"}, "t")
+        st = contracts.get(db, sid)["statement"]
+        self.assertEqual((st["paid"], st["payable"]), (21000, 0))
+        self.assertEqual(bal(db, db.acct("ap"), "Sub Co"), 0)
+        self.assertTrue(balanced(db))
+
+
+    def test_a_dollar_subscription_bills_in_dollars_and_earns_at_the_invoice_rate(self):
+        from erp import services
+        db = books()
+        sid = services.save(db, {"customer": "Globex", "title": "Support", "price": 300, "period_months": 3, "start": "2026-01-21", "currency": "USD"}, "t")
+        services.run(db, "2026-01-21", "t")
+        x = db.one("SELECT * FROM extracts ORDER BY id DESC LIMIT 1")
+        self.assertEqual((x["currency"], x["fx_rate"]), ("USD", 52.0))
+        self.assertEqual(fx.carried(db, db.acct("ar"), "Globex", "USD", "2026-12-31")[0], 30000)
+        services.recognize(db, "2026-03-31", "t")
+        self.assertEqual(bal(db, db.acct("service_deferred")), 0)          # deferred at 52, released at 52: nothing left over
+        with self.assertRaisesRegex(acc.ValidationError, "main subscription's currency"):
+            services.save(db, {"customer": "Globex", "title": "Extra", "price": 10, "parent_id": sid, "currency": "EUR"}, "t")
+        self.assertTrue(balanced(db))
+
+    def test_a_dollar_rental_deposit_is_held_in_dollars(self):
+        from erp import rentals
+        db = books()
+        rid = rentals.save(db, {"client": "Globex", "site": "Tower", "start_date": "2026-01-05", "duration_months": 3, "currency": "USD", "lines": [{"kind": "charge", "charge_type": "install", "charge_when": "delivery", "description": "Installation", "qty": 1, "rate": 100}]}, user="t")
+        r = rentals.get(db, rid)
+        self.assertEqual(r["currency"], "USD")
+        rentals.deposit(db, r, {"type": "receive", "amount": 1000, "date": "2026-01-05", "paid_from": "1015"}, "t")
+        self.assertEqual(rentals.deposit_balance(db, r), 100000)                 # 1,000.00 USD
+        with self.assertRaisesRegex(acc.ValidationError, "Only 1,000.00 of deposit"):
+            rentals.deposit(db, r, {"type": "refund", "amount": 1001, "date": "2026-01-21", "paid_from": "1015"}, "t")
+        rentals.deposit(db, r, {"type": "refund", "amount": 1000, "date": "2026-01-21", "paid_from": "1015"}, "t")
+        self.assertEqual((rentals.deposit_balance(db, r), bal(db, "1015")), (0, 0))
+        self.assertTrue(balanced(db))
+
+
 class App:
     pass
 

@@ -322,9 +322,15 @@ def _book_purchase(db, d, code, name, account, cost, date, how, bu_id, user):
         payable = acc.account_code(db, d.get("payable_account") or db.acct("ap"), types=("Liability",))
         lines = acc._purchase_lines(db, d, account, cost, vat, wht, payable, paid)
         kind = "Asset Purchase"
-    acc._insert_entry(db, date=date, kind=kind, memo=f"{name} ({code})", bu_id=bu_id, party=party, ref=f"FA:{code}",
-                      lines=lines, meta={"asset": code, "method": text(d.get("method")), "vat_code": text(d.get("vat_code")),
-                                         "wht_code": text(d.get("wht_code"))}, user=user)
+    eid = acc._insert_entry(db, date=date, kind=kind, memo=f"{name} ({code})", bu_id=bu_id, party=party, ref=f"FA:{code}",
+                            lines=lines, meta={"asset": code, "method": text(d.get("method")), "vat_code": text(d.get("vat_code")),
+                                               "wht_code": text(d.get("wht_code"))}, user=user, **acc.fx_of(d))
+    if cost and db.one("SELECT 1 FROM journal_lines WHERE entry_id=? AND currency<>'' LIMIT 1", (eid,)):
+        # bought in a foreign currency: the asset is kept (and depreciated) at what it cost in the company's currency
+        home = db.one("SELECT COALESCE(SUM(debit),0) n FROM journal_lines WHERE entry_id=? AND account=?", (eid, account))["n"]
+        k = home / cost
+        db.conn.execute("UPDATE fixed_assets SET cost=?, salvage=CAST(ROUND(salvage*?) AS INTEGER), opening_depr=CAST(ROUND(opening_depr*?) AS INTEGER) WHERE code=?",
+                        (home, k, k, code))
 
 
 def delete(db, aid):

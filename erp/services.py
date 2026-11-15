@@ -105,6 +105,11 @@ def save(db, d, user="", sid=None):
                 term_months=int(num(d.get("term_months") or 0, "term (months)")),
                 auto_renew=0 if d.get("auto_renew") in (False, 0, "0", "No", "no") else 1,
                 notes=text(d.get("notes"), maxlen=4000))
+    from . import fx       # a subscription in a foreign currency: its price and invoices are in it (an add-on follows its main one)
+    cur = fx.code(d.get("currency")) if "currency" in d else ((parent or {}).get("currency") or ((get(db, sid) or {}).get("currency") if sid else "") or "")
+    vals["currency"] = "" if cur == fx.base(db) else cur
+    if parent and vals["currency"] != (parent.get("currency") or ""):
+        raise ValidationError("An add-on is in its main subscription's currency")
     with db.tx():
         if sid:
             s = get(db, sid)
@@ -341,7 +346,7 @@ def _bill(db, subs, date, user, post):
         per_sub.append((s, pf, pt, rev))
         total += s["price"]
     xid = acc.save_extract(db, {"bu_id": bu, "number": number, "date": date, "customer": first["customer"],
-                                "vat_code": first["vat_code"], "wht_code": first["wht_code"], "lines": lines})
+                                "vat_code": first["vat_code"], "wht_code": first["wht_code"], "lines": lines, "currency": first.get("currency") or ""})
     for ln in lines:
         if ln.get("visit_id"):
             db.conn.execute("UPDATE sub_visits SET extract_id=? WHERE id=?", (xid, ln["visit_id"]))
@@ -383,7 +388,7 @@ def bill_charges(db, sid, date=None, user=""):
         xid = acc.save_extract(db, {"bu_id": bu, "number": number, "date": date, "customer": s["customer"], "vat_code": s["vat_code"],
                                     "wht_code": s["wht_code"], "lines": [{"description": f"Extra visit {v['date']} — {v['description']}"[:300],
                                                                           "unit": "visit", "qty": 1, "price": to_major(v["charge"]),
-                                                                          "account": rev} for v in visits]})
+                                                                          "account": rev} for v in visits], "currency": s.get("currency") or ""})
         for v in visits:
             db.conn.execute("UPDATE sub_visits SET extract_id=? WHERE id=?", (xid, v["id"]))
         acc.post_extract(db, xid, user=user, revenue_account=rev)
@@ -393,14 +398,16 @@ def bill_charges(db, sid, date=None, user=""):
 def recognize(db, through, user=""):
     """Move deferred revenue to income for every month that has started (one entry per subscription per month)."""
     n = 0
-    for r in db.q("SELECT r.*, s.code, s.customer, s.title FROM sub_recognitions r JOIN subscriptions s ON s.id=r.sub_id "
+    for r in db.q("SELECT r.*, s.code, s.customer, s.title, x.currency AS x_cur, x.fx_rate AS x_rate FROM sub_recognitions r JOIN subscriptions s ON s.id=r.sub_id "
                   "JOIN sub_invoices i ON i.id=r.invoice_id JOIN extracts x ON x.id=i.extract_id "
                   "WHERE r.entry_id IS NULL AND r.month<=? AND x.status='posted' ORDER BY r.month, r.id", (through,)):
         eid = acc._insert_entry(db, date=r["month"], kind="Revenue Recognition", memo=f"{r['code']} — {r['title']} earned {r['month'][:7]}",
                                 bu_id=r["bu_id"], party=r["customer"], ref=r["code"],
                                 lines=[{"account": db.acct("service_deferred"), "debit": to_major(r["amount"])},
                                        {"account": r["account"], "credit": to_major(r["amount"])}],
-                                meta={"subscription": r["code"]}, user=user)
+                                meta={"subscription": r["code"]}, user=user,
+                                # billed in a foreign currency: earned at the rate it was invoiced at (what the deferral holds)
+                                currency=r["x_cur"] or "", rate=r["x_rate"] or None)
         db.conn.execute("UPDATE sub_recognitions SET entry_id=? WHERE id=?", (eid, r["id"]))
         n += 1
     return n

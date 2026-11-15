@@ -488,6 +488,9 @@ def save(db, d, sid=None):
                     plan=json.dumps(plan, ensure_ascii=False), price=t["price"], markup=markup,
                     delivery_due=acc.clean_date(d["delivery_due"]) if d.get("delivery_due") else "",
                     salesperson=text(d.get("salesperson"), maxlen=100), notes=text(d.get("notes"), maxlen=8000))
+        from . import fx       # a sale in a foreign currency: its prices, schedule, payments and invoice are in it
+        cur = fx.code(d.get("currency")) if "currency" in d else ((old or {}).get("currency") or "")
+        vals["currency"] = "" if cur == fx.base(db) else cur
         if old:
             _set_units(db, _units_of(db, old["id"]), "available")
             db.conn.execute(f"UPDATE sales_orders SET {','.join(k + '=?' for k in vals)} WHERE id=?", (*vals.values(), old["id"]))
@@ -632,10 +635,15 @@ def detail(db, sid, as_of=None):
 
 
 # ------------------------------------------------------------------ posting
-def _post(db, s, date, kind, memo, lines, sale_type, amount, user, extra=None):
+def _post(db, s, date, kind, memo, lines, sale_type, amount, user, extra=None, home=False):
+    """One entry of the sale. A sale in a foreign currency posts in it (at the day's rate, or the one typed on the form);
+    its cost of sales (home=True) is what the goods cost, in the company's currency."""
+    cur = "" if home else (s.get("currency") or "")
+    dfx = acc.DOC_FX.get()
+    rate = dfx["rate"] if dfx and cur and dfx["currency"] == cur else None
     return acc._insert_entry(db, date=date, kind=kind, memo=memo, bu_id=s["bu_id"], party=s["customer"], ref="SO:" + s["code"],
                              lines=lines, meta={"sale": s["code"], "sale_type": sale_type, "sale_amount": int(amount), **(extra or {})},
-                             user=user)
+                             user=user, currency=cur, rate=rate)
 
 
 def _tag(db, eid, s, sale_type, party=False):
@@ -682,8 +690,10 @@ def _recognize(db, s, date, user):
     number = s["code"]
     while db.one("SELECT 1 FROM extracts WHERE number=?", (number,)):
         number += "-INV"
+    dfx = acc.DOC_FX.get()
     xid = acc.save_extract(db, {"bu_id": s["bu_id"], "number": number, "date": date, "customer": s["customer"],
-                                "vat_code": s["vat_code"], "wht_code": s["wht_code"], "lines": xl})
+                                "vat_code": s["vat_code"], "wht_code": s["wht_code"], "lines": xl, "currency": s.get("currency") or "",
+                                "fx_rate": dfx["rate"] if dfx and s.get("currency") and dfx["currency"] == s["currency"] and dfx["rate"] else 0})
     eid = acc.post_extract(db, xid, date=date, user=user)
     _tag(db, eid, s, "invoice")
     db.conn.execute("UPDATE sales_orders SET extract_id=? WHERE id=?", (xid, s["id"]))
@@ -694,7 +704,8 @@ def _recognize(db, s, date, user):
         _post(db, s, date, "Installment Interest", f"Installment interest (deferred) — {s['code']}",
               [{"account": ar, "debit": a}, {"account": _role(db, "installment_deferred"), "credit": a}], "markup", s["markup"], user)
     adv = _role(db, "client_advances")
-    held = db.one(f"SELECT COALESCE(SUM(l.credit-l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+    amt = "(CASE WHEN l.credit>0 THEN l.fx_amount ELSE -l.fx_amount END)" if s.get("currency") else "(l.credit-l.debit)"
+    held = db.one(f"SELECT COALESCE(SUM({amt}),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
                   f"WHERE {LIVE_REF} AND e.ref=? AND l.account=?", ("SO:" + s["code"], adv))["n"]
     if held > 0:
         _post(db, s, date, "Advance Applied", f"Advances applied to the invoice — {s['code']}",
@@ -713,7 +724,7 @@ def _recognize(db, s, date, user):
         elif ln["cost"] and ln["inventory_account"]:
             v = int(round(ln["qty"] * ln["cost"]))
             _post(db, s, date, "Cost of Sales", f"Cost of {ln['description']}"[:300],
-                  [{"account": cos, "debit": to_major(v)}, {"account": ln["inventory_account"], "credit": to_major(v)}], "cogs", v, user)
+                  [{"account": cos, "debit": to_major(v)}, {"account": ln["inventory_account"], "credit": to_major(v)}], "cogs", v, user, home=True)
     _sync_interest(db, s, date, user)
 
 

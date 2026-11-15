@@ -68,6 +68,9 @@ def save(db, d, user="", po_id=None):
                 expected=acc.clean_date(d.get("expected"), "expected date") if d.get("expected") else "",
                 vat_code=vat_code, wht_code=wht_code, terms=text(d.get("terms"), maxlen=2000), notes=text(d.get("notes"), maxlen=2000),
                 pr_id=pr["id"] if pr else None)
+    from . import fx                     # an order in a foreign currency: its prices, and what its receipts post, are in it
+    cur = fx.code(d.get("currency")) if "currency" in d else ((get(db, po_id) or {}).get("currency") or "" if po_id else "")
+    vals["currency"] = "" if cur == fx.base(db) else cur
     po = None
     with db.tx():
         if po_id:
@@ -250,7 +253,8 @@ def receive(db, po_id, d, user=""):
             pay_left -= paid
             memo = f"{po['code']} — {ln['description']}" + (f" ({ref})" if ref else "")
             common = {"date": date, "vendor": po["supplier"], "vat_code": po["vat_code"], "wht_code": po["wht_code"],
-                      "paid": to_major(paid), "method": d.get("method") or "", "paid_from": d.get("paid_from") or ""}
+                      "paid": to_major(paid), "method": d.get("method") or "", "paid_from": d.get("paid_from") or "",
+                      **({"currency": po["currency"], "fx_rate": d.get("fx_rate") or ""} if po.get("currency") else {})}
             if ln["kind"] == "cost":
                 form = {**common, "bu_id": po["bu_id"], "account": ln["account"], "description": memo, "qty": q, "unit": ln["unit"],
                         "rate": ln["rate"], "deal_ref": po["code"], "deal_status": "Open"}
@@ -313,7 +317,7 @@ def export_rows(db):
         po = get(db, r["id"])
         prl = {r["id"]: r["description"] for r in db.q("SELECT id, description FROM pr_lines WHERE pr_id=?", (po["pr_id"],))} if po.get("pr_id") else {}
         out.append({k: po[k] for k in ("code", "date", "supplier", "bu_code", "warehouse", "expected", "vat_code", "wht_code",
-                                        "terms", "notes", "status", "created_by", "approved_by")}
+                                        "terms", "notes", "status", "created_by", "approved_by", "currency")}
                    | {"pr_code": po.get("pr_code") or "", "pr_lines": {ln["description"]: prl[ln["pr_line_id"]] for ln in po["lines"]
                                                                         if ln.get("pr_line_id") in prl}}
                    | {"approved_at": db.one("SELECT approved_at FROM purchase_orders WHERE id=?", (r["id"],))["approved_at"] or ""}
