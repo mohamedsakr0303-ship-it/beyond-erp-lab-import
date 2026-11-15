@@ -462,9 +462,12 @@ def general_ledger_table(db, account=None, date_from=None, date_to=None, bu_id=N
              {"label": L("credit", lang), "align": "right", "fmt": "money"}]
     if account:
         cols.append({"label": L("balance", lang), "align": "right", "fmt": "money"})
+    fxcol = any(r.get("currency") for r in gl["rows"])      # lines entered in a foreign currency: their own amount and rate
+    if fxcol:
+        cols.append({"label": "بالعملة الأجنبية" if lang == "ar" else "In foreign currency", "align": "right"})
     rows = []
     if account and date_from:
-        rows.append({"cells": ["", "", L("opening", lang), "", "", "", "", gl["opening"]], "style": "subtotal", "indent": 0})
+        rows.append({"cells": ["", "", L("opening", lang), "", "", "", "", gl["opening"]] + ([""] if fxcol else []), "style": "subtotal", "indent": 0})
     for r in gl["rows"]:
         cells = [r["date"], f"#{r['id']} {r['kind']}", r["memo"], r["party"], r["bu_code"] or ""]
         if not account:
@@ -472,10 +475,12 @@ def general_ledger_table(db, account=None, date_from=None, date_to=None, bu_id=N
         cells += [r["debit"] or "", r["credit"] or ""]
         if account:
             cells.append(r["balance"])
+        if fxcol:
+            cells.append(f"{r['currency']} {fmt_fx(acc.to_major(r['fx_amount']))} @ {r['fx_rate']:g}" if r.get("currency") and r.get("fx_amount") else "")
         rows.append({"cells": cells, "style": "item", "indent": 0})
     td = round(sum(r["debit"] for r in gl["rows"]), 2)
     tc = round(sum(r["credit"] for r in gl["rows"]), 2)
-    tot = [L("total", lang)] + [""] * (len(cols) - (4 if account else 3)) + [td, tc] + ([gl["closing"]] if account else [])
+    tot = [L("total", lang)] + [""] * (len(cols) - (4 if account else 3) - fxcol) + [td, tc] + ([gl["closing"]] if account else []) + ([""] if fxcol else [])
     rows.append({"cells": tot, "style": "grand", "indent": 0})
     title = L("general_ledger", lang) + (f" — {gl['account']['code']} {nm.get(gl['account']['code'], gl['account']['name'])}"
                                          if gl["account"] else "")
@@ -705,6 +710,11 @@ def materials_table(db, p, lang="en"):
             "subtitle": _subtitle(db, lang, [("", p.get("date_from") or "…", acc.clean_date(p.get("date_to")))], p.get("bu_id")),
             "columns": _mkcols(heads, lang), "rows": rows, "lang": lang,
             "summary": {k: d[k] for k in ("count", "total", "materials", "one_material")}}
+
+
+def fmt_fx(v):
+    """An amount in a foreign currency, as text (it sits in a column of company-currency money)."""
+    return f"{v:,.2f}"
 
 
 def _mkcols(heads, lang):
@@ -974,20 +984,29 @@ def aging_table(db, date_to=None, side="all", lang="en"):
     ar = lang == "ar"
     d = statements.aging(db, date_to, side or "all")
     labels = d["buckets_ar"] if ar else [b + " days" for b in d["buckets"]]
+    fxcol = any(r.get("fx") for r in d["rows"])     # balances kept in a foreign currency: what is owed in it
     cols = _mkcols([("Contact", "الجهة", "left"), ("Last activity", "آخر حركة", "left")] +
-                   [(b, b, "right") for b in labels] + [("Balance", "الرصيد", "right")], lang)
+                   [(b, b, "right") for b in labels] + [("Balance", "الرصيد", "right")] +
+                   ([("In foreign currency", "بالعملة الأجنبية", "right")] if fxcol else []), lang)
+    if fxcol:
+        cols[-1]["fmt"] = None
+    fxt = lambda m: " · ".join(f"{c} {fmt_fx(abs(v))}" for c, v in sorted((m or {}).items()))  # noqa: E731
     rows = []
     for key, title in (("receivable", ("THEY OWE US", "مستحق لنا")), ("payable", ("WE OWE THEM", "مستحق علينا"))):
         rs = [r for r in d["rows"] if (r["balance"] > 0) == (key == "receivable")]
         if not rs:
             continue
-        rows.append({"cells": [title[1] if ar else title[0]] + [""] * (len(labels) + 2), "style": "section", "indent": 0})
+        rows.append({"cells": [title[1] if ar else title[0]] + [""] * (len(labels) + 2 + fxcol), "style": "section", "indent": 0})
+        tfx = {}
         for r in rs:
-            rows.append({"cells": [r["party"], r["last"]] + [abs(v) or "" for v in r["aging"]] + [abs(r["balance"])],
+            rows.append({"cells": [r["party"], r["last"]] + [abs(v) or "" for v in r["aging"]] + [abs(r["balance"])] + ([fxt(r.get("fx"))] if fxcol else []),
                          "style": "item", "indent": 1})
+            for c, v in (r.get("fx") or {}).items():
+                tfx[c] = round(tfx.get(c, 0) + v, 2)
         t = d[key]
-        rows.append({"cells": [L("total", lang), ""] + [abs(v) for v in t["aging"]] + [abs(t["balance"])], "style": "subtotal", "indent": 0})
-    _later_rows(rows, d, ar, len(labels) + 3, 0)
+        rows.append({"cells": [L("total", lang), ""] + [abs(v) for v in t["aging"]] + [abs(t["balance"])] + ([fxt(tfx)] if fxcol else []),
+                     "style": "subtotal", "indent": 0})
+    _later_rows(rows, d, ar, len(labels) + 3 + fxcol, 0)
     return {"title": "أعمار الديون (العملاء والموردين)" if ar else "Aging — receivables & payables",
             "subtitle": f"{L('as_of', lang)} {d['date_to']} · {db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
 

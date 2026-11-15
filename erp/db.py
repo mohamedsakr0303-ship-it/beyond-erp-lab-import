@@ -603,6 +603,7 @@ CREATE TABLE IF NOT EXISTS products (
     category TEXT DEFAULT '',
     unit TEXT DEFAULT '',
     price INTEGER NOT NULL DEFAULT 0,           -- list price, minor units
+    price_currency TEXT NOT NULL DEFAULT '',    -- the list price's currency ('' = the company's); a sale converts it
     cost INTEGER NOT NULL DEFAULT 0,            -- cost per unit for the cost of sales (when not taken from stock)
     vat_code TEXT DEFAULT '',
     revenue_account TEXT DEFAULT '',
@@ -2098,6 +2099,7 @@ DEFAULT_SETTINGS = {
     "currency": "EGP",
     "fx_currencies": "",      # foreign currencies the company works in, e.g. "USD,EUR" (erp/fx.py)
     "fx_auto": "1",           # fetch each day's rates automatically (a rate entered by hand always wins)
+    "fx_reval_auto": "0",     # revalue foreign balances at each month-end on its own (once that month's rates are in)
     "fiscal_year_start": "01-01",
     "reserve_pct": "0.40",
     "legal_reserve_pct": "0",     # share of each profit set aside as legal reserve when profit is shared (0 = none)
@@ -2207,6 +2209,7 @@ class Database:
         # documents kept in a foreign currency (erp/fx.py): their amounts, schedules and balances are in it
         for t in ("loans", "sales_orders", "rentals", "contracts", "subscriptions", "purchase_orders", "care_patients"):
             self._add_cols(t, [("currency", "TEXT NOT NULL DEFAULT ''")])
+        self._add_cols("products", [("price_currency", "TEXT NOT NULL DEFAULT ''")])
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("workdays", [("start_site", "TEXT NOT NULL DEFAULT ''"), ("end_site", "TEXT NOT NULL DEFAULT ''"),

@@ -2205,7 +2205,7 @@ def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, p
         opening = r["n"]
     sign = 1 if (not acc or acc["normal"] == "Debit") else -1
     rows = db.q(f"""SELECT e.id, e.date, e.kind, e.memo, {PARTY} AS party, b.code AS bu_code, l.account, a.name AS account_name,
-                    l.debit, l.credit FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                    l.debit, l.credit, l.currency, l.fx_amount, l.fx_rate FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                     JOIN accounts a ON a.code=l.account LEFT JOIN business_units b ON b.id=e.bu_id
                     WHERE {w} ORDER BY e.date, e.id, l.id LIMIT ? OFFSET ?""", p + [int(limit), int(offset)])
     run = opening
@@ -2271,9 +2271,16 @@ def party_balances(db, subtypes=("payable",), accounts=None, date_to=None):
                     FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                     WHERE {w} AND l.account IN ({",".join("?" * len(codes))})
                     GROUP BY 1, l.account HAVING balance<>0 ORDER BY balance DESC""", p + codes)
+    fxs = {}       # what is still owed in each foreign currency, per contact and account
+    for f in db.q(f"""SELECT {PARTY} AS party, l.account, l.currency, SUM(CASE WHEN l.credit>0 THEN l.fx_amount ELSE -l.fx_amount END) n
+                       FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                       WHERE {w} AND l.currency<>'' AND l.account IN ({",".join("?" * len(codes))})
+                       GROUP BY 1, l.account, l.currency HAVING n<>0""", p + codes):
+        fxs.setdefault((f["party"], f["account"]), {})[f["currency"]] = to_major(f["n"])
     for r in rows:
         for k in ("owed", "paid", "balance"):
             r[k] = to_major(r[k])
+        r["fx"] = fxs.get((r["party"], r["account"])) or {}
     from . import customfilter            # (here: it imports this module)
     return customfilter.keep(rows, "parties")
 

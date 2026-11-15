@@ -143,7 +143,7 @@ PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location"
                                   "reserve_early_until", "capital_goal", "buffer_months", "repay_funder_first", "funding_repay_pct", "funding_interest_pct", "expected_cost_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit",
                                   "funding_extra", "funding_extra_shrinks", "funding_warn", "funding_critical", "funding_mode", "costplus_overhead", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance", "po_self_approve_limit", "menu_layout", "form_custom", "duplicate_check", "two_step_required",
-                                  "profit_categories", "distribute_noncash", "distribute_from_funder", "fx_currencies", "fx_auto")
+                                  "profit_categories", "distribute_noncash", "distribute_from_funder", "fx_currencies", "fx_auto", "fx_reval_auto")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": [],
                  "menu_layout": {}, "form_custom": {}, "profit_categories": []}
 
@@ -265,7 +265,12 @@ def bootstrap(ctx):
     base["list_rules"] = customfilter.fields()        # the custom filter's fields on each list screen
     from . import fx
     base["fx"] = {"base": fx.base(db), "currencies": fx.enabled(db), "common": fx.COMMON, "auto": db.setting("fx_auto", "1") != "0",
-                  "fetched_on": db.setting("fx_fetched_on", ""), "host": fx.FETCH_HOST}
+                  "fetched_on": db.setting("fx_fetched_on", ""), "host": fx.FETCH_HOST, "reval_auto": db.setting("fx_reval_auto", "0") == "1"}
+    if base["fx"]["currencies"] and ctx.can("accounting.fx", "edit"):
+        try:       # last month's end not revalued yet: a reminder, or (when the company chose it) the app posts it
+            base["fx"]["reval_due"] = fx.revaluation_due(db)
+        except Exception:  # noqa: BLE001 — a reminder never stops the app from opening
+            base["fx"]["reval_due"] = None
     base["user_since"] = (db.one("SELECT created_at FROM users WHERE id=?", (user["id"],)) or {}).get("created_at") or ""
     pol = ai.policy(db)
     base["ai"] = {"allowed": ai.allowed(pol, user), "used_today": ai.used_today(db, user), "has_key": ai.has_key(db),
@@ -454,15 +459,15 @@ def put_settings(ctx):
             raise PermissionError("Enable two-step sign-in for yourself first (profile), then require it for others.")
     if "hidden_modules" in keys:
         ctx.require("settings.menus", "edit")
-    if keys & {"fx_currencies", "fx_auto"}:
+    if keys & {"fx_currencies", "fx_auto", "fx_reval_auto"}:
         ctx.require("settings.company", "edit")
         if "fx_currencies" in keys:
             from . import fx
             raw = ctx.body["fx_currencies"]
             cs = [fx.code(c) for c in (raw if isinstance(raw, list) else str(raw or "").split(","))]
             ctx.body["fx_currencies"] = ",".join(dict.fromkeys(c for c in cs if c and c != fx.base(ctx.db)))
-        if "fx_auto" in keys:
-            ctx.body["fx_auto"] = "0" if ctx.body["fx_auto"] in (False, 0, "0", "", None) else "1"
+        for k in {"fx_auto", "fx_reval_auto"} & keys:
+            ctx.body[k] = "0" if ctx.body[k] in (False, 0, "0", "", None) else "1"
     for k, ok_vals in (("country", set(countries.BY_CODE)), ("invoice_style", set(countries.STYLES)), ("doc_lang", {"ar", "en"})):
         if k in keys:
             ctx.body[k] = acc.text(ctx.body[k]).upper() if k == "country" else acc.text(ctx.body[k])
@@ -647,6 +652,7 @@ def del_account_group(ctx, code):
 def fx_overview(ctx):
     from . import fx
     return ok({"base": fx.base(ctx.db), "currencies": fx.enabled(ctx.db), "common": fx.COMMON, "auto": ctx.db.setting("fx_auto", "1") != "0",
+               "reval_auto": ctx.db.setting("fx_reval_auto", "0") == "1", "reval_due": fx.revaluation_due(ctx.db),
                "fetched_on": ctx.db.setting("fx_fetched_on", ""), "host": fx.FETCH_HOST,
                "rates": fx.rates(ctx.db, ctx.q.get("currency") or None, int(acc.num(ctx.q.get("limit") or 400)))})
 

@@ -158,7 +158,12 @@ def aging(db, date_to=None, side="all", subtypes=None):
         net, ag = _aging_of(lines, date_to)
         if not net or (side == "receivable" and net < 0) or (side == "payable" and net > 0):
             continue
-        out.append({"party": party, "balance": to_major(net), "aging": ag, "last": max(r["date"] for r in lines)})
+        fxo = {}      # still owed in each foreign currency (+ they owe us)
+        for r in lines:
+            if r["currency"] and r["fx_amount"]:
+                fxo[r["currency"]] = fxo.get(r["currency"], 0) + (r["fx_amount"] if r["debit"] > 0 else -r["fx_amount"])
+        out.append({"party": party, "balance": to_major(net), "aging": ag, "last": max(r["date"] for r in lines),
+                    "fx": {c: to_major(v) for c, v in fxo.items() if v}})
     out.sort(key=lambda r: -abs(r["balance"]))
     tot = lambda rows: [round(sum(r["aging"][i] for r in rows), 2) for i in range(len(BUCKETS))]  # noqa: E731
     rec = [r for r in out if r["balance"] > 0]

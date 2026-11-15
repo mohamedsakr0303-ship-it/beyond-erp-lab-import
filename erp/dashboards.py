@@ -361,7 +361,7 @@ def w_receivables_top(c, o):
     from . import statements
     ag = statements.aging(c.db, side="receivable")
     rows = [r for r in ag["rows"] if r["balance"] > 0][: int(o.get("count") or 8)]
-    return {"total": ag["receivable"]["balance"], "rows": [{"title": r["party"], "sub": f"{r['last']}", "value": r["balance"],
+    return {"total": ag["receivable"]["balance"], "rows": [{"title": r["party"], "sub": f"{r['last']}" + _fxs(r), "value": r["balance"],
                                                             "href": "#/statement?" + _q(r["party"]),
                                                             "level": "bad" if sum(r["aging"][2:]) > 0 else "info"} for r in rows]}
 
@@ -370,9 +370,32 @@ def w_payables_due(c, o):
     from . import statements
     ag = statements.aging(c.db, side="payable", subtypes=("payable",))    # suppliers and subcontractors, not loans or advances
     rows = [r for r in ag["rows"] if r["balance"] < 0][: int(o.get("count") or 8)]
-    return {"total": -ag["payable"]["balance"], "rows": [{"title": r["party"], "sub": r["last"], "value": -r["balance"],
+    return {"total": -ag["payable"]["balance"], "rows": [{"title": r["party"], "sub": r["last"] + _fxs(r), "value": -r["balance"],
                                                           "href": "#/statement?" + _q(r["party"]),
                                                           "level": "warn" if sum(r["aging"][2:]) else "info"} for r in rows]}
+
+
+def _fxs(r):
+    """' · USD 1,200.00' for a contact whose balance is (partly) in a foreign currency."""
+    return "".join(f" · {c} {abs(v):,.2f}" for c, v in sorted((r.get("fx") or {}).items()))
+
+
+def w_fx_balances(c, o):
+    """Open foreign balances per currency and side, valued at today's rate, and the exchange gain or loss not yet booked."""
+    from . import fx
+    today = acc.today()
+    subs = {r["code"]: r["subtype"] for r in c.db.q("SELECT code, subtype FROM accounts")}
+    groups = {}
+    for b in fx.open_balances(c.db, today):
+        st = subs.get(b["account"])
+        side = "cash" if st == "cash" else ("owed_us" if b["fx"] > 0 else "we_owe")
+        g = groups.setdefault((b["currency"], side), {"fx": 0, "book": 0, "now": 0})
+        g["fx"] += b["fx"]
+        g["book"] += b["home"]
+        g["now"] += b["revalued"]
+    rows = [{"currency": cur, "side": side, "fx": round(abs(g["fx"]), 2), "book": round(g["book"], 2), "now": round(g["now"], 2),
+             "diff": round(g["now"] - g["book"], 2)} for (cur, side), g in sorted(groups.items())]
+    return {"rows": rows, "total": round(sum(g["now"] - g["book"] for g in groups.values()), 2)}
 
 
 def _q(party):
@@ -579,6 +602,7 @@ _W = [
      {"days": ("Days ahead", "عدد الأيام القادمة", "number")}),
     ("recent_sales", "Latest sales", "أحدث المبيعات", "sales", ("shop.orders",), 2, w_recent_sales, {"count": ("How many", "العدد", "number")}),
     ("offers_open", "Open offers", "عروض الأسعار المفتوحة", "sales", ("sales.offers",), 2, w_offers_open, {}),
+    ("fx_balances", "Foreign-currency balances", "الأرصدة بالعملات الأجنبية", "overview", ("accounting.fx",), 2, w_fx_balances, {}),
     ("receivables_top", "Who owes us most", "أكبر المديونيات لنا", "sales", ("sales.receivables",), 2, w_receivables_top,
      {"count": ("How many", "العدد", "number")}),
     ("active_projects", "Active projects", "المشروعات الجارية", "projects", ("business_units.units",), 1, w_active_projects, {}),
@@ -679,6 +703,15 @@ def alerts(db, can, detail=False):
         due = recurring.due_list(db, acc.today(), lambda m: can(m, "add"))
         if due:
             add("info", f"Recurring entries due: {len(due)}", f"قيود متكررة مستحقة: {len(due)}", "#/recurring", len(due))
+    if can("accounting.fx", "edit"):
+        from . import fx
+        try:
+            r = fx.revaluation_due(db)
+        except Exception:  # noqa: BLE001 — an alert never breaks the list
+            r = None
+        if r:
+            add("warn", f"Foreign balances not revalued at {r['date']}", f"لم يُعَد تقييم الأرصدة بالعملات الأجنبية في {r['date']}",
+                f"#/fx?at={r['date']}", r["count"])
     if can("assets.depreciation", "add"):
         d = assets.due(db)
         if d:

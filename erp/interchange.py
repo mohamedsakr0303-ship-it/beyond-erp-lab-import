@@ -311,7 +311,9 @@ SHEETS = [
               C("name", "Name", "الاسم", width=28, required=True), C("name_ar", "Arabic Name", "الاسم بالعربية", width=24),
               C("kind", "Type", "النوع", width=9, choices=["item", "unit", "service"]),
               C("category", "Category", "التصنيف", width=14), C("unit", "Unit", "الوحدة", width=8),
-              C("price", "Price", "السعر", kind="money", required=True), C("cost", "Cost per Unit", "تكلفة الوحدة", kind="money"),
+              C("price", "Price", "السعر", kind="money", required=True),
+              C("price_currency", "Price Currency", "عملة السعر", width=8, note="blank = the company's currency; a sale in another currency converts it at the day's rates"),
+              C("cost", "Cost per Unit", "تكلفة الوحدة", kind="money"),
               C("vat_code", "VAT Code", "كود الضريبة", kind="tax", width=9),
               C("status", "Status", "الحالة", width=10, choices=["available", "reserved", "sold", "delivered", "hidden"]),
               C("bu_code", "Project / Business Unit", "المشروع", kind="bu"),
@@ -765,7 +767,7 @@ def export_data(db):
     bus_ = {b["id"]: b["code"] for b in db.q("SELECT id, code FROM business_units")}
     for p in db.q("SELECT * FROM products ORDER BY code"):
         out["Products"].append({k: p[k] for k in ("code", "name", "name_ar", "kind", "category", "unit", "vat_code", "status",
-                                                  "stock_item", "inventory_account", "description")}
+                                                  "stock_item", "inventory_account", "description", "price_currency")}
                                | {"price": to_major(p["price"]), "cost": to_major(p["cost"]) or "", "bu_code": bus_.get(p["bu_id"], ""),
                                   "warehouse": (db.one("SELECT name FROM warehouses WHERE id=?", (p["warehouse_id"],)) or {}).get("name", "") if p.get("warehouse_id") else "",
                                   "specs": "; ".join(f"{a}: {b}" for a, b in json.loads(p["specs"] or "[]"))})

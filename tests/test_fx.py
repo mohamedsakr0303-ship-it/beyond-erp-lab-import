@@ -321,7 +321,7 @@ class Documents(unittest.TestCase):
     def test_a_sale_in_dollars_collects_and_invoices_in_dollars_and_costs_in_pounds(self):
         from erp import sales
         db = books()
-        unit = sales.save_product(db, {"name": "Villa V-1", "kind": "unit", "price": 30000, "bu_code": "P1", "cost": 1000000, "inventory_account": "1210"})
+        unit = sales.save_product(db, {"name": "Villa V-1", "kind": "unit", "price": 30000, "price_currency": "USD", "bu_code": "P1", "cost": 1000000, "inventory_account": "1210"})
         sid = sales.save(db, {"customer": "Globex", "bu_code": "P1", "date": "2026-01-05", "revenue_on": "delivery", "currency": "USD",
                               "lines": [{"product_id": unit}], "plan": {"type": "full"}})
         with acc.in_currency("USD"):
@@ -549,6 +549,94 @@ class Files(unittest.TestCase):
                 self.assertEqual(db2.one("SELECT value FROM stock_moves WHERE kind='Receipt'")["value"], 1040000)
                 n2 = db2.one("SELECT id FROM journal_entries WHERE ref='JV-NAMED'")["id"]
                 self.assertEqual(fx.open_item(db2, n2, ar, "Globex", "USD")[0], 20000)       # the payment that named it still does
+
+
+class Ideas(unittest.TestCase):
+    """Balances shown per currency, the month-end reminder, and products priced in a currency."""
+    def setUp(self):
+        self.db = db = books()
+        ar, rev = db.acct("ar"), db.acct("revenue")
+        with acc.in_currency("USD"):
+            acc.record_journal(db, {"date": "2026-01-05", "party": "Globex", "memo": "USD invoice",
+                                    "lines": [{"account": ar, "debit": 1000}, {"account": rev, "credit": 1000}]})
+        acc.record_journal(db, {"date": "2026-01-06", "party": "Initech", "memo": "EGP invoice",
+                                "lines": [{"account": ar, "debit": 700}, {"account": rev, "credit": 700}]})
+
+    def test_aging_ledger_and_balances_show_what_is_owed_in_each_currency(self):
+        from erp import reports, statements
+        db = self.db
+        ag = {r["party"]: r for r in statements.aging(db, "2026-01-31")["rows"]}
+        self.assertEqual((ag["Globex"]["fx"], ag["Initech"]["fx"]), ({"USD": 1000.0}, {}))
+        t = reports.aging_table(db, "2026-01-31", lang="en")
+        self.assertEqual(t["columns"][-1]["label"], "In foreign currency")
+        row = next(r for r in t["rows"] if r["cells"][0] == "Globex")
+        self.assertEqual(row["cells"][-1], "USD 1,000.00")
+        self.assertTrue(all(len(r["cells"]) == len(t["columns"]) for r in t["rows"]))
+        gl = reports.general_ledger_table(db, account=db.acct("ar"), date_from="2026-01-01", date_to="2026-01-31")
+        self.assertEqual(gl["columns"][-1]["label"], "In foreign currency")
+        self.assertIn("USD 1,000.00 @ 50", [r["cells"][-1] for r in gl["rows"]])
+        self.assertTrue(all(len(r["cells"]) == len(gl["columns"]) for r in gl["rows"]))
+        pb = {r["party"]: r for r in acc.party_balances(db, subtypes=("receivable",))}
+        self.assertEqual(pb["Globex"]["fx"], {"USD": -1000.0})     # (credit side positive: payables' sign)
+
+    def test_the_dashboard_tile_values_open_balances_at_todays_rate(self):
+        from erp import dashboards
+        c = dashboards.Ctx(self.db, {"id": 1}, {}, lambda *a: True)
+        x = dashboards.w_fx_balances(c, {})
+        r = next(r for r in x["rows"] if r["side"] == "owed_us")
+        self.assertEqual((r["currency"], r["fx"], r["book"]), ("USD", 1000.0, 50000.0))
+        self.assertEqual(r["now"], 51000.0)                        # the last rate, 51
+        self.assertEqual(r["diff"], 1000.0)
+
+    def test_last_month_end_is_reminded_until_revalued_and_needs_fresh_rates_to_run_alone(self):
+        from erp import dashboards
+        db = self.db
+        due = fx.revaluation_due(db, "2026-02-15")
+        self.assertEqual((due["date"], due["count"], due["difference"], due["rates_ok"]), ("2026-01-31", 1, 3000.0, True))
+        texts = [a["en"] for a in dashboards.alerts(db, lambda *a: True)]
+        self.assertEqual(fx.revaluation_due(db, "2026-03-03")["rates_ok"], False)   # no rate in February's last week
+        fx.revalue(db, "2026-01-31")
+        self.assertIsNone(fx.revaluation_due(db, "2026-02-15"))
+        self.assertTrue(any(x.startswith("Foreign balances not revalued at ") for x in texts), texts)   # (as of today's last month-end)
+        db.set_setting("fx_currencies", "")
+        self.assertIsNone(fx.revaluation_due(db, "2026-02-15"))
+
+    def test_a_product_priced_in_dollars_is_converted_into_the_sales_currency(self):
+        from erp import sales
+        db = self.db
+        p = sales.save_product(db, {"name": "Laptop", "kind": "item", "price": 100, "price_currency": "USD"})
+        self.assertEqual(sales.get_product(db, p)["price_currency"], "USD")
+        self.assertEqual(sales.preview(db, {"date": "2026-01-20", "lines": [{"product_id": p}]})["net"], 5200)       # 100 × 52, in pounds
+        self.assertEqual(sales.preview(db, {"date": "2026-01-20", "currency": "USD", "lines": [{"product_id": p}]})["net"], 100)
+        self.assertEqual(sales.preview(db, {"date": "2026-01-20", "lines": [{"product_id": p, "price": 4000}]})["net"], 4000)  # typed wins
+        fx.set_rate(db, "2026-01-01", "EUR", 55)
+        self.assertEqual(sales.preview(db, {"date": "2026-01-20", "currency": "EUR", "lines": [{"product_id": p}]})["net"], 94.55)  # 5200 / 55
+        sales.save_product(db, {"name": "Laptop", "price": 100, "price_currency": "EGP"}, p)
+        self.assertEqual(sales.get_product(db, p)["price_currency"], "")                 # the company's own currency is blank
+        sales.save_product(db, {"name": "Laptop", "price": 100, "price_currency": "USD"}, p)
+        db2 = Database(":memory:")
+        db2.set_setting("fx_currencies", "USD,EUR")
+        interchange.import_data(db2, interchange.export_data(db), mode="replace")
+        self.assertEqual(db2.one("SELECT price_currency FROM products WHERE name='Laptop'")["price_currency"], "USD")
+
+    def test_the_month_end_setting_goes_through_the_server(self):
+        db = self.db
+        auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
+        app = App()
+        app.db, app.backup, app.backups = db, (lambda *a, **k: None), (lambda: [])
+        tok = auth.login(db, "boss", "pw123456")[0]
+        h = {"x-session": tok, "x-requested-with": "BeyondERP", "content-type": "application/json"}
+        r = server.handle(app, "PUT", "/api/settings", h, json.dumps({"fx_reval_auto": True}).encode())
+        self.assertEqual(r.status, 200, r.body)
+        self.assertEqual(db.setting("fx_reval_auto"), "1")
+        r = server.handle(app, "GET", "/api/fx", h, b"")
+        d = json.loads(r.body)
+        self.assertTrue(d["reval_auto"])
+        r = server.handle(app, "GET", "/api/bootstrap", h, b"")
+        self.assertEqual(r.status, 200)
+        b = json.loads(r.body)["fx"]
+        self.assertTrue(b["reval_auto"])
+        self.assertIn("reval_due", b)
 
 
 if __name__ == "__main__":

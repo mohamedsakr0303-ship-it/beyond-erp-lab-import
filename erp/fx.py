@@ -296,6 +296,27 @@ def open_balances(db, date):
     return out
 
 
+def revaluation_due(db, today=None):
+    """Last month's end, when foreign balances open on it were not revalued: {date, count, difference, rates_ok}, else
+    None. rates_ok: every currency has a rate dated in that month's last week (so an automatic run does not restate the
+    balances at a stale rate)."""
+    if not enabled(db):
+        return None
+    t = _dt.date.fromisoformat(acc.clean_date(today or acc.today()))
+    me = (t.replace(day=1) - _dt.timedelta(days=1)).isoformat()
+    if db.one("SELECT 1 FROM journal_entries WHERE kind='FX Revaluation' AND ref=? AND status='posted'", (f"FXR:{me}",)):
+        return None
+    try:
+        rows = [r for r in open_balances(db, me) if abs(r["difference"]) >= 0.01]
+    except acc.ValidationError:          # a currency with no rate at all yet: nothing to measure against
+        return None
+    if not rows:
+        return None
+    week = (_dt.date.fromisoformat(me) - _dt.timedelta(days=6)).isoformat()
+    fresh = all(db.one("SELECT 1 FROM fx_rates WHERE currency=? AND date>=? AND date<=?", (c, week, me)) for c in {r["currency"] for r in rows})
+    return {"date": me, "count": len(rows), "difference": round(sum(r["difference"] for r in rows), 2), "rates_ok": bool(fresh)}
+
+
 def revalue(db, date, user="", preview=False):
     """Revalue every open foreign balance at `date`'s rate: one entry dated `date` (each balance up or down, against the
     exchange-differences account), reversed on the next day so the next month starts from what the balances cost.

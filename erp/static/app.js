@@ -3317,6 +3317,10 @@ const WIDGET_DRAW = {
   recent_sales: x => wList(x.rows, L2("No sales.", "لا توجد مبيعات.")),
   offers_open: x => wList(x.rows, L2("No open offers.", "لا توجد عروض مفتوحة.")),
   receivables_top: x => `<div class="wsum">${esc(L2("Receivable", "مستحق لنا"))}: <b>${money(x.total)}</b></div>` + wList(x.rows),
+  fx_balances: x => `<div class="wsum">${esc(L2("Not yet booked at today's rates", "فروق لم تُسجل بأسعار اليوم"))}: <b class="${x.total < 0 ? "neg" : ""}">${money(x.total)}</b></div>` +
+    wList(x.rows.map(r => ({ title: `${r.currency} ${money(r.fx)} — ${r.side === "cash" ? L2("Cash and bank", "النقدية والبنوك") : r.side === "owed_us" ? L2("Owed to us", "مستحق لنا") : L2("We owe", "مستحق علينا")}`,
+      sub: `${L2("In the books", "بالدفاتر")} ${money(r.book)} · ${L2("difference", "الفرق")} ${money(r.diff)}`, value: r.now, href: "#/fx", level: Math.abs(r.diff) >= 0.01 ? "warn" : "info" })),
+      L2("No open foreign balances.", "لا توجد أرصدة مفتوحة بعملات أجنبية.")),
   payables_due: x => `<div class="wsum">${esc(L2("Payable", "مستحق علينا"))}: <b>${money(x.total)}</b></div>` + wList(x.rows),
   po_open: x => `<div class="wsum">${esc(L2("Awaiting approval", "بانتظار الاعتماد"))}: <b>${x.to_approve}</b> · ${esc(L2("Not received", "لم يُستلم"))}: <b>${money(x.open_value)}</b></div>` + wList(x.rows, L2("No open orders.", "لا توجد أوامر مفتوحة.")),
   custody_open: x => wList(x.rows, L2("No open custody.", "لا توجد عهد مفتوحة.")),
@@ -3546,7 +3550,9 @@ PAGES.payroll = voucherPage("payroll", ["Payroll Accrual"], { title: "m_payroll"
 
 PAGES.payables = async (view, parts, q) => {
   const d = await api("GET", "/api/parties?" + qs({ kind: q.kind || "all", date_to: q.date_to, rules: q.rules || "", match: q.match || "" }));
-  S.H.pay = el => openDoc("payment", { party: el.dataset.p, amount: el.dataset.b, against: el.dataset.acc });
+  // a balance owed in one foreign currency is paid in that currency, for what is owed in it
+  S.H.pay = el => { const fx = Object.entries(JSON.parse(el.dataset.fx || "{}")); const one = fx.length === 1 && fx[0][1] > 0 ? fx[0] : null;
+    openDoc("payment", { party: el.dataset.p, amount: one ? one[1] : el.dataset.b, against: el.dataset.acc, currency: one ? one[0] : "" }); };
   S.H.disc = el => supplierDiscountForm(el.dataset.p, el.dataset.acc, +el.dataset.b);
   const tot = d.rows.reduce((s, r) => s + r.balance, 0);
   const owedBy = {}; d.rows.forEach(r => { owedBy[r.party] = (owedBy[r.party] || 0) + r.balance; });
@@ -3554,8 +3560,8 @@ PAGES.payables = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/aging?side=payable">⏳ ${t("m_aging")}</a><a class="btn" href="#/statement">☰ ${t("m_statement")}</a><span class="spacer"></span>${exportMenu("payables", q)}</div>` +
     filterBar(q, ["asof", ["select", "kind", t("type"), [["payable", t("payable")], ["payroll", t("m_payroll")]]], ["rules", LIST_RULES("parties")]]) +
     `<div class="card"><h2>${t("m_payables")} — ${money(tot)}</h2>${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("party")}</th><th>${t("account")}</th><th class="num">${t("amount")}</th><th class="num">${t("paid_now")}</th><th class="num">${t("balance")}</th><th>${t("date")}</th><th></th></tr></thead><tbody>
-      ${d.rows.map(r => `<tr class="click" data-href="#/ledger?${qs({ party: r.party, account: r.account })}"><td>${esc(r.party || "—")}</td><td>${esc(r.account)}</td><td class="num">${money(r.owed)}</td><td class="num">${money(r.paid)}</td><td class="num ${r.balance < 0 ? "neg" : ""}"><b>${money(r.balance)}</b></td><td>${fd(r.last_date)}</td>
-      <td style="white-space:nowrap">${can("purchasing.payments", "edit") && r.balance > 0 ? `<button class="btn sm" data-a="pay" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}">${t("m_payments")}</button>
+      ${d.rows.map(r => `<tr class="click" data-href="#/ledger?${qs({ party: r.party, account: r.account })}"><td>${esc(r.party || "—")}</td><td>${esc(r.account)}</td><td class="num">${money(r.owed)}</td><td class="num">${money(r.paid)}</td><td class="num ${r.balance < 0 ? "neg" : ""}"><b>${money(r.balance)}</b>${Object.entries(r.fx || {}).map(([c, v]) => `<div class="muted small">${esc(c)} ${money(v)}</div>`).join("")}</td><td>${fd(r.last_date)}</td>
+      <td style="white-space:nowrap">${can("purchasing.payments", "edit") && r.balance > 0 ? `<button class="btn sm" data-a="pay" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}" data-fx="${esc(JSON.stringify(r.fx || {}))}">${t("m_payments")}</button>
         ${(S.boot.accounts.find(x => String(x.code) === String(r.account)) || {}).subtype === "payable" ? `<button class="btn sm" data-a="disc" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}" title="${ar ? "قبل المورد مبلغاً أقل: إقفال الباقي كخصم" : "The supplier accepted a lower amount: close the balance as a discount"}">${ar ? "تسوية بخصم" : "Settle with discount"}</button>` : ""}` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>
     ${dealsCard(d.deals)}`;
   S.H.dealpay = el => { const g = d.deals.deals.find(x => x.ref === el.dataset.ref);
@@ -9237,7 +9243,7 @@ PAGES.products = async (view, parts, q) => {
     (d.rows.length ? `<div class="pgrid">${d.rows.map(p => `<a class="card pcard" href="#/product/${p.id}">
         <div class="pimg">${p.cover_thumb ? `<img src="${esc(p.cover_thumb)}" alt="" loading="lazy">` : `<span>${p.kind === "unit" ? "⌂" : p.kind === "service" ? "✦" : "▣"}</span>`}${p.kind === "unit" || p.status === "hidden" ? `<div class="pst">${pStatus(p.status)}</div>` : ""}</div>
         <div class="pbody"><b>${esc(pname(p))}</b><div class="muted">${esc([p.code, p.category, p.bu_code].filter(Boolean).join(" · "))}</div>
-        <div class="row" style="justify-content:space-between;align-items:baseline;margin-top:6px"><span class="pprice">${money(p.price)}</span>
+        <div class="row" style="justify-content:space-between;align-items:baseline;margin-top:6px"><span class="pprice">${p.price_currency ? `<small>${esc(p.price_currency)}</small> ` : ""}${money(p.price)}</span>
         <span class="muted">${Object.entries(p.media_counts || {}).map(([k, n]) => `${MEDIA_ICON[k] || ""}${n}`).join(" ")}${p.in_stock != null ? ` · ${L2("Stock", "مخزون")} ${numf(p.in_stock)}` : ""}</span></div></div></a>`).join("")}</div>`
       : `<div class="card"><div class="empty">${L2("No products. Add items, property units, vehicles, equipment or services with images, video and 3D models, then sell for cash, on deferred terms or by instalments.", "لا توجد منتجات. أضف الأصناف أو الوحدات العقارية أو المركبات أو المعدات أو الخدمات مع الصور والفيديو والنماذج ثلاثية الأبعاد، ثم بِعها نقداً أو آجلاً أو بالتقسيط.")}</div></div>`);
 };
@@ -9260,7 +9266,7 @@ PAGES.product = async (view, parts) => {
         <div id="pmtools" class="row muted" style="gap:6px;margin-top:6px;font-size:.85em"></div>`
       : `<div class="empty">${L2("No images, video or 3D models.", "لا توجد صور أو فيديو أو نماذج ثلاثية الأبعاد.")}${add ? ` <button class="btn sm" data-a="padd">+ ${L2("Add", "إضافة")}</button>` : ""}</div>`}</div>
       <div class="pinfo card"><h2 style="margin-top:0">${esc(pname(p))}</h2><div class="row" style="gap:6px;flex-wrap:wrap">${pStatus(p.status)}<span class="chip">${esc((P_KINDS().find(k => k[0] === p.kind) || ["", p.kind])[1].split(" (")[0])}</span>${p.category ? `<span class="chip">${esc(p.category)}</span>` : ""}</div>
-        <div class="pprice big">${money(p.price)} <span class="muted">${esc(cur$())}</span></div>
+        <div class="pprice big">${money(p.price)} <span class="muted">${esc(p.price_currency || cur$())}</span></div>
         <div class="tbl"><table><tbody>${[[t("code"), p.code], [L2("Project", "المشروع"), p.bu_code ? `${p.bu_code} — ${p.bu_name}` : ""], [t("unit"), p.unit],
           ...(p.in_stock != null ? [[L2("In stock", "بالمخزن"), numf(p.in_stock)]] : []), ...p.specs].filter(r => r[1] !== "" && r[1] != null).map(([k, v]) => `<tr><th style="width:40%">${esc(k)}</th><td>${esc(v)}</td></tr>`).join("")}</tbody></table></div>
         ${p.description ? `<p class="pre" style="white-space:pre-line">${esc(p.description)}</p>` : ""}<div id="pplanbox"></div></div></div>`;
@@ -9306,7 +9312,10 @@ function productForm(p) {
     { k: "kind", l: L2("Type", "النوع"), type: "select", opts: P_KINDS(), v: p.kind, change: "pkind", span: "spanall" },
     ...inLang(["name", p.name], ["name_ar", p.name_ar], t("name"), { req: 1 }),
     { k: "code", l: t("code"), v: p.code, ph: L2("Automatic", "تلقائي") }, { k: "category", l: L2("Category", "التصنيف"), v: p.category, list: "pcatl", ph: L2("e.g. Category name", "مثال: اسم التصنيف") },
-    { k: "price", l: L2("Price", "السعر"), type: "number", v: p.price, req: 1 }, { k: "unit", l: t("unit"), v: p.unit, list: "units", ph: "m², pcs, set" },
+    { k: "price", l: L2("Price", "السعر"), type: "number", v: p.price, req: 1 },
+    ...fxFields(p.price_currency || "").filter(fl => fl.k === "currency").map(fl => ({ ...fl, k: "price_currency", change: "", l: L2("Price currency", "عملة السعر"),
+      help: L2("A sale in another currency converts it at the day's rates", "يُحوَّل في البيع بعملة أخرى بأسعار اليوم") })),
+    { k: "unit", l: t("unit"), v: p.unit, list: "units", ph: "m², pcs, set" },
     { k: "status", l: t("status"), type: "select", opts: Object.keys(P_ST).map(k => [k, L2(P_ST[k][0], P_ST[k][1])]), v: p.status },
     { k: "bu_id", l: L2("Project / business unit", "المشروع / وحدة الأعمال"), type: "select", opts: buOpts("—"), v: p.bu_id || "" },
     { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: p.vat_code },
@@ -9466,7 +9475,11 @@ async function saleForm(s, pre = {}) {
   let lines = (s.lines || pre.lines || [{ qty: 1 }]).map(l => ({ product_id: l.product_id || "", description: l.description || "", qty: l.qty ?? 1, unit: l.unit || "", price: l.price ?? "", discount: l.discount || "" }));
   const pl = s.plan || pre.plan || { type: "full" };
   const popt = sel => `<option value="">— ${L2("Free text", "بند حر")} —</option>` + prods.filter(p => p.kind !== "unit" || ["available", "reserved"].includes(p.status) && (!p.sale || p.sale === s.code) || String(p.id) === String(sel))
-    .map(p => `<option value="${p.id}" ${String(p.id) === String(sel) ? "selected" : ""}>${esc(p.code)} — ${esc(pname(p))} · ${money(p.price)}</option>`).join("");
+    .map(p => `<option value="${p.id}" ${String(p.id) === String(sel) ? "selected" : ""}>${esc(p.code)} — ${esc(pname(p))} · ${p.price_currency ? esc(p.price_currency) + " " : ""}${money(p.price)}</option>`).join("");
+  // a product priced in another currency than the sale's: converted at the sale date's rates (through the company's)
+  const priceIn = async (p, cur, date) => { const pc = p.price_currency || ""; cur = cur || ""; if (pc === cur) return p.price;
+    const rate = async c => c ? (await api("GET", "/api/fx/rate?" + qs({ currency: c, date }))).rate : 1;
+    return Math.round(p.price * await rate(pc) / await rate(cur) * 100) / 100; };
   const lineRows = () => lines.map((l, i) => `<tr><td><select data-skip="1" data-change="slp" data-i="${i}" style="max-width:220px">${popt(l.product_id)}</select><input data-skip="1" value="${esc(l.description)}" data-input="sl" data-i="${i}" data-k="description" placeholder="${esc(L2("Description", "البيان"))}" style="margin-top:4px"></td>
     <td><input data-skip="1" class="num" type="number" step="any" value="${l.qty}" data-input="sl" data-i="${i}" data-k="qty" style="width:70px"></td><td><input data-skip="1" value="${esc(l.unit)}" data-input="sl" data-i="${i}" data-k="unit" style="width:60px"></td>
     <td><input data-skip="1" class="num" type="number" step="any" value="${l.price}" data-input="sl" data-i="${i}" data-k="price" style="width:110px"></td><td><input data-skip="1" class="num" type="number" step="any" value="${l.discount}" data-input="sl" data-i="${i}" data-k="discount" style="width:90px"></td>
@@ -9495,10 +9508,17 @@ async function saleForm(s, pre = {}) {
     const redraw = () => { $("#slt tbody", f).innerHTML = lineRows(); prev(); };
     Object.assign(S.H, { sl: el => { lines[+el.dataset.i][el.dataset.k] = el.value; prev(); }, sladd: () => { lines.push({ product_id: "", description: "", qty: 1, unit: "", price: "", discount: "" }); redraw(); },
       sldel: el => { lines.splice(+el.dataset.i, 1); if (!lines.length) lines.push({ qty: 1, description: "", price: "" }); redraw(); },
-      slp: el => { const p = prods.find(x => String(x.id) === el.value), l = lines[+el.dataset.i]; l.product_id = el.value;
-        if (p) { l.description = `${p.name} (${p.code})`; l.price = p.price; l.unit = p.unit; l.qty = 1; if (p.vat_code && !$("[name=vat_code]", f).value) $("[name=vat_code]", f).value = p.vat_code; if (p.bu_id && !$("[name=bu_id]", f).value) $("[name=bu_id]", f).value = p.bu_id; }
+      slp: async el => { const p = prods.find(x => String(x.id) === el.value), l = lines[+el.dataset.i]; l.product_id = el.value;
+        if (p) { const v = readForm(f); try { l.price = await priceIn(p, v.currency, v.date); l.auto = l.price; } catch (e) { l.price = ""; fail(e); }
+          l.description = `${p.name} (${p.code})`; l.unit = p.unit; l.qty = 1; if (p.vat_code && !$("[name=vat_code]", f).value) $("[name=vat_code]", f).value = p.vat_code; if (p.bu_id && !$("[name=bu_id]", f).value) $("[name=bu_id]", f).value = p.bu_id; }
         redraw(); } });
     getPlan = wirePlan(f, pl, prev);
+    // the sale's currency or date changed: prices still as filled from the catalogue follow it
+    const reprice = async () => { const v = readForm(f); let n = 0;
+      for (const l of lines) { const p = l.product_id && l.auto != null && String(l.price) === String(l.auto) && prods.find(x => String(x.id) === String(l.product_id));
+        if (p) { try { l.price = l.auto = await priceIn(p, v.currency, v.date); n++; } catch (e) { fail(e); return; } } }
+      if (n) redraw(); };
+    ["currency", "date"].forEach(k => { const el = $(`[name=${k}]`, f); if (el) el.addEventListener("change", reprice); });
     nc.push(offerContact(f, "customer", "customer"));
     f.addEventListener("change", prev); prev(); } });
 }
@@ -14335,13 +14355,22 @@ const FC_MIX = () => [["local", L2("Local", "محلي")], ["imported", L2("Impor
 async function fxAutoFetch(force) {
   const fx = S.boot && S.boot.fx;
   if (!fx || !(fx.currencies || []).length || !can("accounting.fx")) return null;
-  if (!force && (!fx.auto || fx.fetched_on === today() || S.fxTried === today())) return null;
+  if (!force && (!fx.auto || fx.fetched_on === today() || S.fxTried === today())) { fxAutoRevalue(); return null; }
   S.fxTried = today();
   let payload = null;
   try { const r = await fetch(`https://${fx.host}/v6/latest/${encodeURIComponent(fx.base)}`, { cache: "no-store", credentials: "omit" });
     if (r.ok) payload = await r.json(); } catch { payload = null; }
-  try { const got = await api("POST", "/api/fx/fetch", payload ? { payload } : {}); fx.fetched_on = got.date; return got; }
+  try { const got = await api("POST", "/api/fx/fetch", payload ? { payload } : {}); fx.fetched_on = got.date; fxAutoRevalue(); return got; }
   catch (e) { if (force) throw e; return null; }
+}
+// the company chose to revalue each month-end on its own: post last month's once its rates are in (else the bell reminds)
+async function fxAutoRevalue() {
+  const fx = S.boot && S.boot.fx, due = fx && fx.reval_due;
+  if (!fx || !fx.reval_auto || !due || !due.rates_ok || !can("accounting.fx", "edit") || S.fxRevTried === due.date) return;
+  S.fxRevTried = due.date;
+  try { const r = await api("POST", "/api/fx/revalue", { date: due.date }); fx.reval_due = null;
+    toast(L2(`Foreign balances revalued at ${due.date} (entry #${r.entry}).`, `أُعيد تقييم الأرصدة بالعملات الأجنبية في ${due.date} (قيد #${r.entry}).`)); }
+  catch { /* left to the reminder */ }
 }
 PAGES.fx = async (view, parts, q) => {
   const d = await api("GET", "/api/fx" + (q.currency ? "?" + qs({ currency: q.currency }) : ""));
@@ -14359,7 +14388,9 @@ PAGES.fx = async (view, parts, q) => {
           <datalist id="fxclist">${d.common.filter(c => c !== d.base && !cur.includes(c)).map(c => `<option value="${c}">`).join("")}</datalist><button class="btn sm" data-a="fxcadd">+ ${esc(L2("Add", "إضافة"))}</button>` : ""}</div>
       ${setOk ? `<label class="f chk" style="margin-top:10px"><input type="checkbox" id="fxauto" ${d.auto ? "checked" : ""}>${esc(L2(`Fetch the rates automatically each day (from ${d.host}, free). A rate entered by hand always wins.`,
         `جلب الأسعار تلقائياً كل يوم (من ${d.host}، مجاناً). السعر المُدخل يدوياً له الأولوية دائماً.`))}</label>` : ""}
-      ${d.fetched_on ? `<p class="muted">${esc(L2("Last fetched", "آخر جلب"))}: ${fd(d.fetched_on)}</p>` : ""}</div>
+      ${d.fetched_on ? `<p class="muted">${esc(L2("Last fetched", "آخر جلب"))}: ${fd(d.fetched_on)}</p>` : ""}
+      ${setOk ? `<label class="f chk"><input type="checkbox" id="fxrevauto" ${d.reval_auto ? "checked" : ""}>${esc(L2("Revalue foreign balances at each month-end automatically (once that month's rates are in; otherwise you get a reminder).",
+        "إعادة تقييم الأرصدة بالعملات الأجنبية تلقائياً في نهاية كل شهر (بعد توفر أسعار ذلك الشهر؛ وإلا يصلك تذكير)."))}</label>` : ""}</div>
     ${cur.length ? `<div class="card"><h2>${esc(L2("Rates", "الأسعار"))}</h2>
       <p class="muted">${esc(L2(`How much ${d.base} one unit is worth. A form uses the last rate on or before its date.`, `قيمة الوحدة الواحدة بعملة ${d.base}. يستخدم النموذج آخر سعر في تاريخه أو قبله.`))}</p>
       ${add ? `<div class="row" style="gap:6px;flex-wrap:wrap;align-items:flex-end">
@@ -14373,6 +14404,8 @@ PAGES.fx = async (view, parts, q) => {
         <td>${ed ? `<button class="btn sm danger" data-a="fxdel" data-d="${esc(r.date)}" data-c="${esc(r.currency)}" aria-label="${esc(t("delete"))}">✕</button>` : ""}</td></tr>`).join("") ||
         `<tr><td colspan="5" class="muted">${esc(L2("No rates yet: fetch today's, or enter one.", "لا توجد أسعار بعد: اجلب أسعار اليوم أو أدخل سعراً."))}</td></tr>`}</tbody></table></div></div>
     <div class="card"><h2>${esc(L2("Month-end revaluation", "إعادة التقييم في نهاية الشهر"))}</h2>
+      ${d.reval_due ? `<div class="banner warn">${esc(L2(`Not revalued at ${d.reval_due.date} yet: ${d.reval_due.count} open balance(s), a difference of ${money(d.reval_due.difference)}.`,
+        `لم يُعَد التقييم في ${d.reval_due.date} بعد: ${d.reval_due.count} رصيد مفتوح، بفرق ${money(d.reval_due.difference)}.`))}${d.reval_due.rates_ok ? "" : " " + esc(L2("Add that month's closing rates first.", "أضف أسعار إقفال ذلك الشهر أولاً."))}</div>` : ""}
       <p class="muted">${esc(L2("Money held or owed in a foreign currency (bank and cash, customers, suppliers) is restated at that day's rate; the difference goes to exchange gains / losses. It is reversed the next day, so each month starts from what the balances cost.",
         "تُعاد قيمة الأموال المحتفظ بها أو المستحقة بعملة أجنبية (البنوك والخزينة والعملاء والموردين) بسعر ذلك اليوم، ويُسجل الفرق في أرباح / خسائر فروق العملة. ويُعكس القيد في اليوم التالي فيبدأ كل شهر من تكلفة الأرصدة."))}</p>
       <div class="row" style="gap:6px;align-items:flex-end;flex-wrap:wrap"><label class="f"><span class="fl">${esc(L2("As at", "في تاريخ"))}</span><input type="date" id="fxvd" value="${esc(q.at || lastMonthEnd)}"></label>
@@ -14404,6 +14437,7 @@ PAGES.fx = async (view, parts, q) => {
     fxpost: async () => { const at = $("#fxvd").value; if (!await uiConfirm(L2(`Post the revaluation at ${at}? It is reversed on the next day.`, `ترحيل إعادة التقييم في ${at}؟ يُعكس في اليوم التالي.`))) return;
       try { const r = await api("POST", "/api/fx/revalue", { date: at }); toast(r.entry ? L2(`Posted #${r.entry}, reversed by #${r.reversal}.`, `رُحّل القيد #${r.entry} وعُكس بالقيد #${r.reversal}.`) : L2("Nothing to revalue.", "لا يوجد ما يُعاد تقييمه.")); if (r.entry) openVoucher(r.entry); } catch (e) { fail(e); } },
   });
+  const ra = $("#fxrevauto"); if (ra) ra.addEventListener("change", async () => { try { await api("PUT", "/api/settings", { fx_reval_auto: ra.checked ? "1" : "0" }); await refreshBoot(); toast(t("saved")); fxAutoRevalue(); } catch (e) { fail(e); } });
   const au = $("#fxauto"); if (au) au.addEventListener("change", async () => { try { await api("PUT", "/api/settings", { fx_auto: au.checked ? "1" : "0" }); await refreshBoot(); toast(t("saved")); } catch (e) { fail(e); } });
 };
 PAGES["year-end"] = async (view, parts, q) => {

@@ -157,7 +157,11 @@ def save_product(db, d, pid=None):
     stock_item = text(d.get("stock_item"))
     if stock_item and not db.one("SELECT 1 FROM stock_items WHERE name=?", (stock_item,)):
         raise ValidationError(f"No stock item called {stock_item!r}")
-    vals = dict(code=code, name=name, name_ar=text(d.get("name_ar"), maxlen=200), kind=kind,
+    from . import fx
+    pcur = fx.code(d.get("price_currency")) if "price_currency" in d else ((old or {}).get("price_currency") or "")
+    if pcur == fx.base(db):
+        pcur = ""
+    vals = dict(code=code, name=name, name_ar=text(d.get("name_ar"), maxlen=200), kind=kind, price_currency=pcur,
                 category=text(d.get("category"), maxlen=80), unit=text(d.get("unit"), maxlen=30),
                 price=to_minor(num(d.get("price"), "price")), cost=to_minor(num(d.get("cost"), "cost")), vat_code=vat,
                 revenue_account=rev, inventory_account=inv, bu_id=acc.bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")),
@@ -384,7 +388,18 @@ def build_schedule(price, plan, sale_date):
     return sorted(rows, key=lambda r: (r["due"], {"down": 0, "extra": 1}.get(r["kind"], 2))), markup
 
 
-def _lines_in(db, lines):
+def price_in(db, p, cur="", date=None):
+    """A product's list price (minor units) in the currency `cur` ('' = the company's), converted through the company's
+    currency at the rates of `date` when the product is priced in another one."""
+    from . import fx
+    pc, cur = p.get("price_currency") or "", cur or ""
+    if pc == cur:
+        return p["price"]
+    date = date or _today()
+    return round(p["price"] * fx.rate_on(db, pc, date) / fx.rate_on(db, cur, date))
+
+
+def _lines_in(db, lines, cur="", date=None):
     out = []
     for i, ln in enumerate(lines or []):
         if not isinstance(ln, dict):
@@ -398,7 +413,7 @@ def _lines_in(db, lines):
             raise ValidationError("Quantity must be more than zero")
         if p and p["kind"] == "unit" and qty != 1:
             raise ValidationError(f"{p['code']} is a single unit; the quantity must be 1.")
-        price = to_minor(num(ln.get("price") if ln.get("price") not in (None, "") else (to_major(p["price"]) if p else 0), "price"))
+        price = to_minor(num(ln.get("price"), "price")) if ln.get("price") not in (None, "") else (price_in(db, p, cur, date) if p else 0)
         disc = to_minor(num(ln.get("discount"), "discount"))
         if disc < 0 or disc > round(qty * price):
             raise ValidationError("The discount must be between zero and the line total")
@@ -407,6 +422,12 @@ def _lines_in(db, lines):
     if not out:
         raise ValidationError("Add at least one line")
     return out
+
+
+def _cur_of(db, d, old=None):
+    from . import fx
+    cur = fx.code(d.get("currency")) if d.get("currency") else ((old or {}).get("currency") or "")
+    return "" if cur == fx.base(db) else cur
 
 
 def line_net(qty, price, discount):
@@ -425,7 +446,7 @@ def _totals(db, lines, vat_code, wht_code):
 
 def preview(db, d):
     """Totals and payment schedule for an unsaved sale (the form's live preview, also the plan calculator)."""
-    lines = _lines_in(db, d.get("lines"))
+    lines = _lines_in(db, d.get("lines"), _cur_of(db, d), d.get("date"))
     t = _totals(db, lines, text(d.get("vat_code")), text(d.get("wht_code")))
     rows, markup = build_schedule(t["price"], d.get("plan") or {}, d.get("date") or _today())
     return {**{k: to_major(v) for k, v in t.items()}, "markup": to_major(markup), "total": to_major(t["price"] + markup),
@@ -464,7 +485,7 @@ def save(db, d, sid=None):
         raise ValidationError("Revenue must be recognised on sale or on delivery")
     vat_code, _ = acc.tax_code(db, d.get("vat_code"), "vat")
     wht_code, _ = acc.tax_code(db, d.get("wht_code"), "wht")
-    lines = _lines_in(db, d.get("lines"))
+    lines = _lines_in(db, d.get("lines"), _cur_of(db, d, old), d.get("date") or (old or {}).get("date"))
     plan = d.get("plan") or {"type": "full"}
     if not isinstance(plan, dict):
         raise ValidationError("Payment plan is not valid")
