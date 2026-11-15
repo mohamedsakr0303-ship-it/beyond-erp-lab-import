@@ -1999,6 +1999,22 @@ function fxWire(f) {
   };
   cur.addEventListener("change", upd); if (dateEl) dateEl.addEventListener("change", upd);
   upd();
+  // a payment that can name the foreign invoice it settles: the contact's open ones in that currency
+  const st = $('select[name="settles"]', f);
+  if (st) {
+    const lab = st.closest("label"), first = st.options[0].outerHTML;
+    const who = () => ($('[name="party"]', f) || {}).value || "", acct = () => ($('[name="credit_account"]', f) || $('[name="against"]', f) || {}).value || "";
+    const load = async () => {
+      st.innerHTML = first; lab.style.display = "none";
+      if (!cur.value || !who()) return;
+      try { const r = await api("GET", "/api/fx/open-items?" + qs({ party: who(), currency: cur.value, account: acct() }));
+        if (!r.rows.length) return;
+        st.innerHTML = first + r.rows.map(x => `<option value="${x.id}">${esc(`${fd(x.date)} · ${x.ref || "#" + x.id} · ${cur.value} ${money(x.open)} @ ${x.rate}`)}</option>`).join("");
+        lab.style.display = ""; } catch { /* no list: the average is used */ }
+    };
+    ["change", "blur"].forEach(ev => [cur, $('[name="party"]', f), $('[name="credit_account"]', f), $('[name="against"]', f)].forEach(el => el && el.addEventListener(ev, load)));
+    load();
+  }
 }
 S.H.fxcur = () => {};
 function form(fields, cols = 2) {
@@ -2413,7 +2429,14 @@ function reportTable(tb) {
   const row = r => `<tr class="${r.style}${r.entry ? " click" : ""}"${r.entry ? ` data-a="openv" data-id="${r.entry}"` : ""}>${r.cells.map((v, i) => `<td class="${tb.columns[i].align === "right" ? "num" : ""} ${typeof v === "number" && v < 0 ? "neg" : ""}" ${i === 0 && r.indent ? `style="padding-inline-start:${10 + 16 * r.indent}px"` : ""}>${fmtCell(v, tb.columns[i], r)}</td>`).join("")}</tr>`;
   // a long report (a whole year's ledger) shows in pages so the screen stays quick; totals at the end stay visible and exports hold every row
   let rows = tb.rows, more = "";
-  if (rows.length > (tb.shown || RT_PAGE)) {
+  if (tb.total_rows && tb.total_rows > tb.rows.length - (tb.tail_rows || 0)) {
+    // the server sent the first rows only: show them, and fetch the next ones when asked
+    const id = "rt" + (++RT_SEQ); RT_TABLES[id] = tb; delete RT_TABLES["rt" + (RT_SEQ - 6)];
+    const have = tb.rows.length - (tb.tail_rows || 0);
+    more = `<div class="rt-more"><span class="muted">${esc(L2(`Showing ${numf(have)} of ${numf(tb.total_rows)} rows. Narrow the filters or export the full list.`, `عرض ${numf(have)} من ${numf(tb.total_rows)} سطر. ضيّق الفلاتر أو صدّر القائمة كاملة.`))}</span>
+      <button class="btn sm" data-a="rtmore" data-rt="${id}">${esc(L2(`Show ${numf(Math.min(RT_PAGE, tb.total_rows - have))} more`, `عرض ${numf(Math.min(RT_PAGE, tb.total_rows - have))} أخرى`))}</button>
+      ${tb.total_rows <= 8000 ? `<button class="btn sm" data-a="rtmore" data-rt="${id}" data-all="1">${esc(L2("Show all", "عرض الكل"))}</button>` : ""}</div>`;
+  } else if (rows.length > (tb.shown || RT_PAGE)) {
     const shown = tb.shown || RT_PAGE, tail = [];
     for (let i = rows.length - 1; i >= shown && tail.length < 3 && /total|grand/.test(rows[i].style || ""); i--) tail.unshift(rows[i]);
     const id = "rt" + (++RT_SEQ); RT_TABLES[id] = tb; delete RT_TABLES["rt" + (RT_SEQ - 6)];
@@ -2435,12 +2458,19 @@ function capRows(rows, key) {
 }
 Object.assign(S.GLOBAL_H, BELL_H);
 S.GLOBAL_H.capall = el => { S.showAll[el.dataset.k] = location.hash; route(); };
-const RT_PAGE = 1500, RT_TABLES = {};
+const RT_PAGE = 1500, RT_FIRST = 300, RT_TABLES = {};
 let RT_SEQ = 0;
 S.GLOBAL_H.rtmore = el => {
   const tb = RT_TABLES[el.dataset.rt], box = el.closest(".rt-wrap");
   if (!tb || !box) return;
   delete RT_TABLES[el.dataset.rt];
+  if (tb.total_rows && tb._src) {          // the next rows from the server (or all of them)
+    const want = el.dataset.all ? tb.total_rows : tb.rows.length - (tb.tail_rows || 0) + RT_PAGE;
+    el.disabled = true;
+    api("GET", `/api/reports/${tb._src.name}?` + qs({ ...tb._src.params, rows: want })).then(nt => { nt._src = tb._src; box.outerHTML = reportTable(nt); })
+      .catch(e => { el.disabled = false; fail(e); });
+    return;
+  }
   tb.shown = el.dataset.all ? tb.rows.length : (tb.shown || RT_PAGE) + RT_PAGE;
   box.outerHTML = reportTable(tb);
 };
@@ -2724,13 +2754,14 @@ const DOCS = {
     calc: f => { const g = n => Number($(`[name=${n}]`, f).value) || 0; $("#calc", f).innerHTML = `${t("gross_pay")}: <b>${money(g("qty") * g("rate"))}</b> · ${t("unpaid")}: <b>${money(g("qty") * g("rate") - g("paid"))}</b>`; } },
   payment: { title: "m_payments", fields: pre => [
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "against", l: t("pay_against"), type: "select", opts: accts(["Liability"]), v: (pre && pre.against) || accByRole("ap") },
-    { k: "party", l: t("payee"), list: "parties", req: 1, v: pre && pre.party }, { k: "amount", l: t("amount"), type: "number", req: 1, v: pre && pre.amount }, ...fxFields(pre && pre.currency),
+    { k: "party", l: t("payee"), list: "parties", req: 1, v: pre && pre.party }, { k: "amount", l: t("amount"), type: "number", req: 1, v: pre && pre.amount }, ...fxFields(pre && pre.currency), ...(fxOn() ? [{ k: "settles", l: L2("Settles (foreign invoice)", "يسدد (فاتورة بعملة أجنبية)"), type: "select", opts: [["", L2("The oldest balance (average rate)", "الرصيد الأقدم (بمتوسط السعر)")]], help: L2("Valued at that invoice's own rate, so its exchange gain or loss is exact", "يُقيَّم بسعر تلك الفاتورة فيكون فرق العملة لها دقيقاً") }] : []),
     { k: "method", l: t("method"), type: "select", opts: payMethodOpts() }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—") },
     { k: "deal_ref", l: t("deal_ref"), v: pre && pre.deal_ref, help: L2("The deal this payment settles", "الاتفاق الذي يسدده هذا السند") },
     { k: "ref", l: t("ref") }, { k: "memo", l: t("memo") }, { k: "allow_overpay", l: t("allow_over"), type: "checkbox", span: "spanall" }] },
   receipt: { title: "m_receipts", fields: () => [
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts(), req: 1 },
     { k: "amount", l: t("amount"), type: "number", req: 1 }, { k: "method", l: t("method"), type: "select", opts: payMethodOpts() }, ...fxFields(),
+    ...(fxOn() ? [{ k: "settles", l: L2("Settles (foreign invoice)", "يسدد (فاتورة بعملة أجنبية)"), type: "select", opts: [["", L2("The oldest balance (average rate)", "الرصيد الأقدم (بمتوسط السعر)")]], help: L2("Valued at that invoice's own rate, so its exchange gain or loss is exact", "يُقيَّم بسعر تلك الفاتورة فيكون فرق العملة لها دقيقاً") }] : []),
     // settling an invoice is the usual case: revenue was booked by the invoice, so a receipt booked as revenue again counts it twice
     { k: "credit_account", l: t("credit_account"), type: "select", v: accByRole("ar"), opts: [[accByRole("ar"), t("cr_ar")], [accByRole("revenue"), t("cr_revenue")], [accByRole("client_advances"), t("cr_adv")], ...accts(["Revenue", "Liability"]).filter(a => ![accByRole("revenue"), accByRole("client_advances")].includes(a[0]))],
       help: S.lang === "ar" ? "تسوية مديونية لعميل صدرت له فاتورة؛ إيراد (أساس نقدي) فقط لبيع بلا فاتورة؛ دفعة مقدمة لمال يُستلم قبل تنفيذ العمل"
@@ -5737,18 +5768,29 @@ PAGES.coa = async (view, parts, q) => {
   const drawTree = () => { const box = $("#coatree", view); if (!box) return;
     const find = S.coaFind || "", hit = a => !find || [a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase().includes(find);
     const gHit = g => [g.code, g.name, g.name_ar].join(" ").toLowerCase().includes(find);
-    const kids = c => groups.filter(g => (g.parent || "") === c), accs = c => rows.filter(a => (a.parent || "") === c && pass(a) && hit(a));
+    // indexed once per drawing (a big chart has a thousand accounts under dozens of groups)
+    const kidsOf = new Map(), accsOf = new Map();
+    groups.forEach(g => { const k = g.parent || ""; if (!kidsOf.has(k)) kidsOf.set(k, []); kidsOf.get(k).push(g); });
+    rows.forEach(a => { if (!pass(a) || !hit(a)) return; const k = a.parent || ""; if (!accsOf.has(k)) accsOf.set(k, []); accsOf.get(k).push(a); });
+    const kids = c => kidsOf.get(c) || [], accs = c => accsOf.get(c) || [];
     // while searching or filtering: only the groups with a matching account (or, searching, a matching name), all open
     const narrow = !!find || filtering;
-    const has = c => !narrow || accs(c).length > 0 || kids(c).some(g => (find && !filtering && gHit(g)) || has(g.code));
+    const hasMemo = new Map();
+    const has = c => { if (!narrow) return true; if (hasMemo.has(c)) return hasMemo.get(c);
+      hasMemo.set(c, false); const v = accs(c).length > 0 || kids(c).some(g => (find && !filtering && gHit(g)) || has(g.code)); hasMemo.set(c, v); return v; };
     const open = c => narrow || !shut.has(c);
     const branch = (c, depth) => kids(c).filter(g => !narrow || (find && !filtering && gHit(g)) || has(g.code)).map(g => `<tr class="coa-grp" data-gid="${esc(g.code)}"><td style="padding-inline-start:${10 + depth * 18}px">
         <button type="button" class="btn sm ghost" data-a="gtoggle" data-id="${esc(g.code)}" aria-label="${esc(L2("Open or close", "فتح أو إغلاق"))}">${open(g.code) ? "▾" : "▸"}</button> <b>${esc(g.code)}</b></td>
         <td><b>${esc(grpName(g))}</b> <span class="muted small">(${g.accounts})</span>${ed ? ` <button type="button" class="btn sm ghost" data-a="gedit" data-id="${esc(g.code)}">${esc(L2("Edit", "تعديل"))}</button>` : ""}</td>
         <td>${g.type ? esc(tl(g.type)) : ""}</td><td class="num"><b>${g.total == null ? "" : money(g.total)}</b></td></tr>` + (open(g.code) ? accs(g.code).map(a => rowHtml(a, depth + 1)).join("") + branch(g.code, depth + 1) : "")).join("");
     const loose = accs("");
-    box.innerHTML = `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>${branch("", 0)}
-      ${loose.length ? `<tr class="coa-grp"><td colspan="4"><b>${esc(L2("Not in a group", "خارج المجموعات"))}</b></td></tr>${loose.map(a => rowHtml(a, 1)).join("")}` : ""}</tbody></table></div>`;
+    // a big chart: the first rows at once, the rest a batch at a time, so the screen never freezes
+    const all = (branch("", 0) + (loose.length ? `<tr class="coa-grp"><td colspan="4"><b>${esc(L2("Not in a group", "خارج المجموعات"))}</b></td></tr>${loose.map(a => rowHtml(a, 1)).join("")}` : ""))
+      .split(/(?<=<\/tr>)/);
+    box.innerHTML = `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>${all.slice(0, 250).join("")}</tbody></table></div>`;
+    const tb = $("tbody", box), stamp = box.dataset.draw = String(Date.now() + Math.random());
+    const more = i => { if (i >= all.length || box.dataset.draw !== stamp) return; tb.insertAdjacentHTML("beforeend", all.slice(i, i + 250).join("")); setTimeout(() => more(i + 250), 0); };
+    setTimeout(() => more(250), 0);
     if (narrow && !$(".coa-row", box)) box.insertAdjacentHTML("beforeend", `<div class="empty">${esc(L2("No account matches.", "لا يوجد حساب مطابق."))}</div>`); };
   const inactive = rows.filter(a => !a.active).length;
   S.H.coainact = el => setQ({ ...q, inactive: el.checked ? "1" : "" });
@@ -5982,7 +6024,8 @@ PAGES.offertype = async (view, parts) => {
 // --------------------------------------------------------------- reports
 async function reportPage(view, name, q, fields) {
   const params = { date_from: q.date_from ?? (["balance_sheet", "payables", "general_ledger"].includes(name) ? "" : yearStart()), ...q, lang: q.lang || S.lang };
-  const tb = await api("GET", `/api/reports/${name}?` + qs(params));
+  const tb = await api("GET", `/api/reports/${name}?` + qs({ ...params, rows: RT_FIRST }));   // the first rows; more on request
+  tb._src = { name, params };
   view.innerHTML = `<div class="toolbar"><span class="spacer"></span><button class="btn" data-a="doprint">${t("print")}</button>${exportMenu(name, params)}</div>` +
     filterBar(params, fields) + `<div class="card"><h2>${esc(tb.title)}</h2><div class="muted" style="margin:-4px 0 10px;font-size:.85em">${esc(tb.subtitle || "")}</div>${reportTable(tb)}</div>`;
   S.H.doprint = () => openApi(`/api/reports/${name}?` + qs({ ...params, format: "pdf" }), true);

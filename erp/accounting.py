@@ -200,7 +200,8 @@ def _validate_lines(db, lines):
             fx_rate = float(ln.get("fx_rate") or 0) if cur else 0.0
         except (TypeError, ValueError):
             fx_rate = 0.0
-        extra.append((text(ln.get("memo") or ln.get("line_memo"), maxlen=500), item, cur, abs(fx_amt), fx_rate))
+        settles = int(num(ln.get("settles") or 0)) if cur and str(ln.get("settles") or "").strip().isdigit() else 0
+        extra.append((text(ln.get("memo") or ln.get("line_memo"), maxlen=500), item, cur, abs(fx_amt), fx_rate, settles))
         touched.add((acc, party))
         dr += d
         cr += c
@@ -221,10 +222,10 @@ class _Lines(list):
 
 
 def _insert_lines(db, eid, vlines):
-    extra = getattr(vlines, "extra", None) or [("", "", "", 0, 0.0)] * len(vlines)
-    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party,memo,cost_item,currency,fx_amount,fx_rate) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                        [(eid, a, d, c, p, *x[:2], *(tuple(x[2:5]) if len(x) >= 5 else ("", 0, 0.0)))
+    extra = getattr(vlines, "extra", None) or [("", "", "", 0, 0.0, 0)] * len(vlines)
+    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party,memo,cost_item,currency,fx_amount,fx_rate,settles) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        [(eid, a, d, c, p, *x[:2], *(tuple(x[2:5]) if len(x) >= 5 else ("", 0, 0.0)), x[5] if len(x) >= 6 else 0)
                          for (a, d, c, p), x in zip(vlines, extra)])
 
 
@@ -396,7 +397,7 @@ def get_entry(db, eid):
     e["lines"] = [{"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
                    "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {}),
                    **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {}),
-                   **({"currency": r["currency"], "fx_amount": to_major(r["fx_amount"]), "fx_rate": r["fx_rate"]} if r["currency"] else {})}
+                   **({"currency": r["currency"], "fx_amount": to_major(r["fx_amount"]), "fx_rate": r["fx_rate"], **({"settles": r["settles"]} if r.get("settles") else {})} if r["currency"] else {})}
                   for r in db.q("SELECT l.*, a.name, a.name_ar FROM journal_lines l JOIN accounts a ON a.code=l.account "
                                 "WHERE entry_id=? ORDER BY l.id", (eid,))]
     e["amount"] = round(sum(ln["debit"] for ln in e["lines"]), 2)
@@ -423,7 +424,7 @@ def get_entries(db, ids):
             {"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
              "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {}),
              **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {}),
-                   **({"currency": r["currency"], "fx_amount": to_major(r["fx_amount"]), "fx_rate": r["fx_rate"]} if r["currency"] else {})})
+                   **({"currency": r["currency"], "fx_amount": to_major(r["fx_amount"]), "fx_rate": r["fx_rate"], **({"settles": r["settles"]} if r.get("settles") else {})} if r["currency"] else {})})
     for r in db.q(f"SELECT entry_id, tag FROM entry_tags WHERE entry_id IN ({marks}) ORDER BY tag", ids):
         tags.setdefault(r["entry_id"], []).append(r["tag"])
     out = []
@@ -607,7 +608,7 @@ def record_payment(db, d, user=""):
         raise ValidationError(f"{party} is owed {owed:,.2f}{unit} on {account}. Tick 'allow overpayment' to pay more.")
     return post_entry(db, date=d.get("date"), kind="Payment Voucher", memo=text(d.get("memo")) or f"Payment to {party}",
                       bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=party, ref=text(d.get("ref")),
-                      lines=[{"account": account, "debit": amount},
+                      lines=[{"account": account, "debit": amount, **({"settles": d["settles"]} if str(d.get("settles") or "").isdigit() else {})},
                              {"account": money_account(db, d.get("method"), d.get("paid_from")), "credit": amount}],
                       meta={"method": text(d.get("method")), **({"deal_ref": text(d["deal_ref"])} if text(d.get("deal_ref")) else {})},
                       user=user, **fxd)
@@ -698,7 +699,7 @@ def record_collection(db, d, user=""):
     lines = [{"account": money_account(db, d.get("method"), d.get("received_into")), "debit": to_major(received)}]
     if withheld:
         lines.append({"account": db.acct("wht_receivable"), "debit": to_major(withheld)})
-    lines.append({"account": credit, "credit": to_major(gross - vat)})
+    lines.append({"account": credit, "credit": to_major(gross - vat), **({"settles": d["settles"]} if str(d.get("settles") or "").isdigit() else {})})
     if vat:
         lines.append({"account": db.acct("vat_output"), "credit": to_major(vat)})
     return post_entry(db, date=d.get("date"), kind="Receipt Voucher", memo=text(d.get("memo")) or "Client payment",
@@ -926,7 +927,7 @@ def reverse_entry(db, eid, date=None, user=""):
             raise ValidationError(f"This invoice is in the closed books (up to {lock}). Issue a credit note in the open period instead.")
         _stock_undo_guard(db, eid)
         lines = [{"account": ln["account"], "debit": ln["credit"], "credit": ln["debit"], "party": ln.get("party", ""),
-                  **({k: ln[k] for k in ("currency", "fx_amount", "fx_rate")} if ln.get("currency") else {})}
+                  **({k: ln[k] for k in ("currency", "fx_amount", "fx_rate", "settles") if k in ln} if ln.get("currency") else {})}
                  for ln in e["lines"]]
         rid = _insert_entry(db, date=date or today(), kind="Reversing Entry", memo=f"Reversal of #{eid}: {e['memo']}",
                             bu_id=e["bu_id"], party=e["party"], ref=e["ref"], lines=lines, reversal_of=eid, user=user)

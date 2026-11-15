@@ -659,6 +659,19 @@ def fx_rate(ctx):
                "rate": fx.rate_on(ctx.db, ctx.q.get("currency"), ctx.q.get("date") or acc.today())})
 
 
+@route("GET", "/api/fx/open-items")
+def fx_open_items(ctx):
+    """A contact's open invoices / bills in a foreign currency on an account, for a payment form to settle one."""
+    from . import fx
+    party, cur = acc.text(ctx.q.get("party")), fx.code(ctx.q.get("currency"))
+    account = acc.account_code(ctx.db, ctx.q.get("account") or ctx.db.acct("ar"), field="account")
+    if not party or not cur:
+        return ok({"rows": []})
+    if not (ctx.can("sales.receipts") or ctx.can("purchasing.payments") or ctx.can("accounting.journal")):
+        raise PermissionError()
+    return ok({"rows": fx.open_items(ctx.db, party, account, cur)})
+
+
 @route("POST", "/api/fx/rates", "accounting.fx", "add")
 def fx_add_rates(ctx):
     """One rate {date, currency, rate}, or many {rows: [...]} (pasted or read from a spreadsheet): all or none."""
@@ -5264,6 +5277,18 @@ def report(ctx, name):
         else:
             ctx.require(perm, "view")
         table = reports.build(ctx.db, name, ctx.q)
+    # a screen asks for the first rows only (a whole year's ledger is thousands): those, the totals at the end, and how
+    # many there are in all; "show more" asks again. Exports always hold every row.
+    cut = ctx.q.get("rows")
+    if cut and str(cut).isdigit() and (ctx.q.get("format") or "json") == "json" and len(table["rows"]) > int(cut):
+        rows, n = table["rows"], int(cut)
+        tail = []
+        for r in reversed(rows[n:]):
+            if len(tail) < 3 and re.search(r"total|grand", r.get("style") or ""):
+                tail.insert(0, r)
+            else:
+                break
+        table = {**table, "rows": rows[:n] + tail, "total_rows": len(rows), "tail_rows": len(tail)}
     # texts the app wrote (memos, kinds) in the report's language
     table = textl10n.table(table, "ar" if (ctx.q.get("lang") or ctx.lang) == "ar" else "en")
     fmt = ctx.q.get("format") or "json"

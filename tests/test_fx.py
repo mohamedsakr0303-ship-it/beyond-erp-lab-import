@@ -147,6 +147,24 @@ class Posting(unittest.TestCase):
         self.assertEqual(fx.carried(db, ar, "Globex", "USD", "2026-12-31"), (0, 0))
 
 
+    def test_paying_a_named_invoice_values_it_at_that_invoices_rate(self):
+        db = books()
+        ar, rev = db.acct("ar"), db.acct("revenue")
+        a = acc.record_journal(db, {"date": "2026-01-05", "party": "Globex", "currency": "USD", "lines": [{"account": ar, "debit": 1000}, {"account": rev, "credit": 1000}]}, "t")
+        b = acc.record_journal(db, {"date": "2026-01-20", "party": "Globex", "currency": "USD", "lines": [{"account": ar, "debit": 1000}, {"account": rev, "credit": 1000}]}, "t")
+        self.assertEqual([(x["id"], x["open"], x["rate"]) for x in fx.open_items(db, "Globex", ar, "USD")], [(a, 1000.0, 50.0), (b, 1000.0, 52.0)])
+        eid = acc.record_collection(db, {"date": "2026-01-31", "bu_code": "P1", "party": "Globex", "mode": "invoice", "amount": 400, "received_into": "1015",
+                                         "currency": "USD", "settles": b}, "t")
+        lines = {ln["account"]: ln for ln in acc.get_entry(db, eid)["lines"]}
+        self.assertEqual(lines[ar]["credit"], 20800.0)                              # at the 52 of the invoice it pays, not the 51 average
+        self.assertEqual(lines[fx.diff_account(db)]["credit"], 400.0)              # 400 × (53 − 52): that invoice's gain, exactly
+        self.assertEqual([(x["id"], x["open"]) for x in fx.open_items(db, "Globex", ar, "USD")], [(a, 1000.0), (b, 600.0)])
+        acc.record_collection(db, {"date": "2026-01-31", "bu_code": "P1", "party": "Globex", "mode": "invoice", "amount": 1000, "received_into": "1015",
+                                   "currency": "USD", "settles": a}, "t")
+        self.assertEqual([(x["id"], x["open"]) for x in fx.open_items(db, "Globex", ar, "USD")], [(b, 600.0)])
+        self.assertEqual(fx.carried(db, ar, "Globex", "USD", "2026-12-31"), (60000, 3120000))   # what is left is the rest of b, at 52
+        self.assertTrue(balanced(db))
+
 class Revaluation(unittest.TestCase):
     def test_restated_at_month_end_reversed_the_next_day_once_only(self):
         db = books()
@@ -165,7 +183,8 @@ class Revaluation(unittest.TestCase):
         self.assertEqual((e["kind"], e["date"], rv["date"], rv["reversal_of"]), ("FX Revaluation", "2026-01-31", "2026-02-01", r["entry"]))
         self.assertEqual(bal(db, ar, upto="2026-01-31"), 53000)
         self.assertEqual(bal(db, "1015", upto="2026-01-31"), 10600)
-        self.assertEqual(bal(db, fx.diff_account(db), upto="2026-01-31"), -3600)            # a gain
+        self.assertEqual(bal(db, fx.unrealised_account(db), upto="2026-01-31"), -3600)      # an unrealised gain, apart from realised ones
+        self.assertEqual(bal(db, fx.diff_account(db), upto="2026-01-31"), 0)
         self.assertEqual(bal(db, ar, upto="2026-02-01"), 50000)                              # back to cost on the 1st
         self.assertEqual(fx.carried(db, ar, "Globex", "USD", "2026-02-01"), (100000, 5000000))
         with self.assertRaisesRegex(acc.ValidationError, "already revalued on 2026-01-31"):
@@ -493,6 +512,10 @@ class Files(unittest.TestCase):
                                 "lines": [{"account": ar, "debit": 1000}, {"account": rev, "credit": 1000}]}, "t")
         acc.record_collection(db, {"date": "2026-01-21", "bu_code": "P1", "party": "Globex", "mode": "invoice", "amount": 400,
                                    "received_into": "1015", "currency": "USD"}, "t")
+        named = acc.record_journal(db, {"date": "2026-01-06", "party": "Globex", "currency": "USD", "ref": "JV-NAMED",
+                                        "lines": [{"account": ar, "debit": 300}, {"account": rev, "credit": 300}]}, "t")
+        acc.record_collection(db, {"date": "2026-01-22", "bu_code": "P1", "party": "Globex", "mode": "invoice", "amount": 100,
+                                   "received_into": "1015", "currency": "USD", "settles": named}, "t")
         # a USD invoice partly billed out of work booked as done (unbilled revenue), and stock bought in USD
         acc.record_journal(db, {"date": "2026-01-10", "bu_code": "P1", "lines": [{"account": db.acct("unbilled_revenue"), "debit": 10400},
                                                                                 {"account": rev, "credit": 10400}]}, "t")
@@ -524,6 +547,8 @@ class Files(unittest.TestCase):
                 self.assertEqual(db2.one("SELECT currency FROM accounts WHERE code='1015'")["currency"], "USD")
                 self.assertEqual(db2.one("SELECT COUNT(*) n FROM fx_rates")["n"], 4)
                 self.assertEqual(db2.one("SELECT value FROM stock_moves WHERE kind='Receipt'")["value"], 1040000)
+                n2 = db2.one("SELECT id FROM journal_entries WHERE ref='JV-NAMED'")["id"]
+                self.assertEqual(fx.open_item(db2, n2, ar, "Globex", "USD")[0], 20000)       # the payment that named it still does
 
 
 if __name__ == "__main__":

@@ -88,6 +88,26 @@ def rates(db, cur=None, limit=400):
 
 
 # ------------------------------------------------------------------ posting
+def unrealised_account(db):
+    """Where the month-end revaluation goes: unrealised exchange differences (balances still open), kept apart from the
+    realised ones (money actually paid or received), as financial statements show them."""
+    r = db.one("SELECT code FROM accounts WHERE role='fx_unrealised'")
+    if r:
+        return r["code"]
+    r = db.one("SELECT code FROM accounts WHERE code='7041' AND type='Expense' AND (role IS NULL OR role='')")
+    if r:
+        db.conn.execute("UPDATE accounts SET role='fx_unrealised' WHERE code='7041'")
+        return "7041"
+    c = 7041
+    while db.one("SELECT 1 FROM accounts WHERE code=?", (str(c),)):
+        c += 1
+    parent = (db.one("SELECT parent FROM accounts WHERE code=?", (diff_account(db),)) or {}).get("parent") or ""
+    db.conn.execute("INSERT INTO accounts(code, name, name_ar, type, subtype, normal, role, parent) VALUES (?,?,?,?,?,?,?,?)",
+                    (str(c), "Unrealised Exchange Loss / (Gain)", "خسائر (أرباح) فروق عملة غير محققة", "Expense", "other_nonoperating", "Debit",
+                     "fx_unrealised", parent))
+    return str(c)
+
+
 def diff_account(db):
     """The exchange-differences account: the one with that role, else the chart's 7040 "Foreign Exchange Loss / (Gain)",
     else a new one."""
@@ -124,6 +144,37 @@ def carried(db, account, party, cur, date, exclude_eid=None):
                      AND COALESCE(NULLIF(l.party,''), e.party, '')=?""",
                (account, cur, date, *((exclude_eid,) if exclude_eid else ()), party or ""))
     return int(r["fx"]), int(r["home"])
+
+
+def open_item(db, eid, account, party, cur, exclude_eid=None):
+    """What is still open on one invoice / bill in its currency: (foreign, company currency), debit positive — its own
+    lines on the account, less the payments that named it."""
+    try:
+        eid = int(eid)
+    except (TypeError, ValueError):
+        return None
+    ex = "AND e.id<>?" if exclude_eid else ""
+    w = "AND COALESCE(NULLIF(l.party,''), e.party, '')=?" if party is not None else ""
+    r = db.one(f"""SELECT COALESCE(SUM(CASE WHEN l.debit>0 THEN l.fx_amount ELSE -l.fx_amount END),0) fx, COALESCE(SUM(l.debit-l.credit),0) home
+                   FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                   WHERE {acc.LIVE} AND l.account=? AND l.currency=? AND (e.id=? OR l.settles=?) {ex} {w}""",
+               (account, cur, eid, eid, *((exclude_eid,) if exclude_eid else ()), *((party or "",) if party is not None else ())))
+    return int(r["fx"]), int(r["home"])
+
+
+def open_items(db, party, account, cur):
+    """A contact's open invoices / bills in a currency on an account: [{id, date, ref, memo, open, rate}] (foreign, major)."""
+    out = []
+    for e in db.q(f"""SELECT DISTINCT e.id, e.date, e.ref, e.memo, e.kind FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                     WHERE {acc.LIVE} AND l.account=? AND l.currency=? AND l.settles=0 AND l.fx_amount<>0
+                       AND COALESCE(NULLIF(l.party,''), e.party, '')=? AND e.kind<>'FX Revaluation' AND e.reversal_of IS NULL
+                     ORDER BY e.date, e.id""", (account, cur, party)):
+        fx_, home = open_item(db, e["id"], account, party, cur)
+        own = db.one("SELECT SUM(CASE WHEN debit>0 THEN fx_amount ELSE -fx_amount END) f FROM journal_lines WHERE entry_id=? AND account=?",
+                     (e["id"], account))["f"] or 0
+        if fx_ and (fx_ > 0) == (own > 0):           # still open, on the side it was booked
+            out.append({**e, "open": to_major(abs(fx_)), "rate": round(abs(home) / abs(fx_), 6)})
+    return out
 
 
 def convert(db, date, lines, party="", currency=None, rate=None, exclude_eid=None):
@@ -186,7 +237,12 @@ def convert(db, date, lines, party="", currency=None, rate=None, exclude_eid=Non
                 running[key] = carried(db, a["code"], who, cur, acc.clean_date(date), exclude_eid)
             bal_fx, bal_home = running[key]
             move = amount if is_debit else -amount
-            if bal_fx and (bal_fx > 0) != (move > 0):        # it reduces a balance: valued at the rate it is carried at
+            inv = open_item(db, ln.get("settles"), a["code"], who, cur, exclude_eid) if ln.get("settles") else None
+            if inv and inv[0] and (inv[0] > 0) != (move > 0):
+                # it pays a named invoice / bill: valued at that document's own rate, so its gain or loss is exact
+                part = min(amount, abs(inv[0]))
+                home = round(abs(inv[1]) * part / abs(inv[0])) + round((amount - part) * r)
+            elif bal_fx and (bal_fx > 0) != (move > 0):        # it reduces a balance: valued at the rate it is carried at
                 part = min(amount, abs(bal_fx))
                 home = round(abs(bal_home) * part / abs(bal_fx)) + round((amount - part) * r)
             running[key] = (bal_fx + move, bal_home + (home if is_debit else -home))
@@ -252,7 +308,7 @@ def revalue(db, date, user="", preview=False):
     rows = [r for r in open_balances(db, date) if abs(r["difference"]) >= 0.01]
     if preview or not rows:
         return {"date": date, "rows": rows, "entry": None, "reversal": None}
-    da = diff_account(db)
+    da = unrealised_account(db)
     lines = []
     for r in rows:
         d = r["difference"]

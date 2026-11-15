@@ -638,7 +638,9 @@ SHEETS = [
               C("currency", "Currency", "العملة", width=8,
                 note="A line in a foreign currency: its code (e.g. USD). Debit / Credit stay in the company's currency"),
               C("fx_amount", "Foreign Amount", "المبلغ بالعملة", kind="num", note="The line's amount in that currency"),
-              C("fx_rate", "Exchange Rate", "سعر الصرف", kind="num", note="Company currency per 1 unit, as used on the line")],
+              C("fx_rate", "Exchange Rate", "سعر الصرف", kind="num", note="Company currency per 1 unit, as used on the line"),
+              C("settles", "Settles", "يسدد", width=12,
+                note="A payment of one invoice / bill in a foreign currency: its invoice no. (INV:number) or voucher no. (JV:number)")],
      "legs": [("debit", "account", "D"), ("credit", "account", "C")]},
     {"name": "Exchange Rates", "ar": "أسعار الصرف", "module": "accounting",
      "title": "Exchange rates: how much of the company's currency 1 unit of each foreign currency is worth on a day "
@@ -887,6 +889,7 @@ def export_data(db):
     refs = {}
     for r in db.q("SELECT ref, COUNT(*) n FROM journal_entries WHERE status='posted' AND ref<>'' GROUP BY ref"):
         refs[r["ref"]] = r["n"]
+    settles_ref = _settles_ref(db, refs)
     for e in (acc.get_entry(db, r["id"]) for r in
               db.q("SELECT id FROM journal_entries WHERE status='posted' ORDER BY date, id")):
         if e["id"] in invoice_entries or e["id"] in stock_entries or e["id"] in recost_entries:
@@ -913,8 +916,21 @@ def export_data(db):
                                                 "line_party": ln.get("party", ""), "line_memo": ln.get("memo", ""),
                                                 "cost_item": ln.get("cost_item", ""), **_alloc_cols(e),
                                                 **({"currency": ln["currency"], "fx_amount": ln.get("fx_amount") or 0,
-                                                    "fx_rate": ln.get("fx_rate") or 0} if ln.get("currency") else {})})
+                                                    "fx_rate": ln.get("fx_rate") or 0, "settles": settles_ref(ln.get("settles"))} if ln.get("currency") else {})})
     return out
+
+
+def _settles_ref(db, refs):
+    """The reference a settled invoice / bill is written as: INV:<invoice no.> or JV:<voucher no.>."""
+    def ref(eid):
+        if not eid:
+            return ""
+        x = db.one("SELECT number FROM extracts WHERE entry_id=?", (eid,))
+        if x:
+            return "INV:" + x["number"]
+        e = db.one("SELECT ref FROM journal_entries WHERE id=?", (eid,)) or {}
+        return "JV:" + (e["ref"] if e.get("ref") and refs.get(e["ref"]) == 1 and len(e["ref"]) <= 30 else f"JV-{eid}")
+    return ref
 
 
 def _alloc_cols(e):
@@ -2855,15 +2871,31 @@ def _stock_phase(r):
     return 0 if r.get("type") == "Receipt" or gain else 1
 
 
+def _settled_id(db, ref, made):
+    """An exported 'settles' reference back to the entry it names in these books."""
+    ref = acc.text(ref)
+    if ref.startswith("INV:"):
+        x = db.one("SELECT entry_id FROM extracts WHERE number=? AND status='posted'", (ref[4:],))
+        return x["entry_id"] if x else None
+    if ref.startswith("JV:"):
+        v = ref[3:]
+        if v in made:
+            return made[v]
+        e = db.one("SELECT id FROM journal_entries WHERE ref=? AND status='posted' ORDER BY id DESC LIMIT 1", (v,))
+        return e["id"] if e else None
+    return None
+
+
 def _imp_journal(db, rows, errors, counts, user):
     groups = {}
+    made = {}
     for i, r in enumerate(rows, start=FIRST_DATA_ROW):
         groups.setdefault(acc.text(r.get("voucher")), []).append((i, r))
     n = 0
     for v, items in groups.items():
         first = items[0][1]
         try:
-            acc.record_journal(db, {"date": first.get("date"), "kind": first.get("kind") or "Journal Voucher",
+            made[v] = acc.record_journal(db, {"date": first.get("date"), "kind": first.get("kind") or "Journal Voucher",
                                     "bu_code": first.get("bu_code"), "party": first.get("party"),
                                     "ref": first.get("ref") or ("" if re.fullmatch(r"JV-\d+", v) else v), "memo": first.get("memo"),
                                     "deal_ref": first.get("deal_ref"), "quoted": first.get("quoted"), "savings": first.get("savings"),
@@ -2877,7 +2909,9 @@ def _imp_journal(db, rows, errors, counts, user):
                                     "lines": [{"account": r.get("account"), "debit": r.get("debit"), "credit": r.get("credit"),
                                                "memo": r.get("line_memo"), "cost_item": r.get("cost_item"),
                                                **({"currency": acc.text(r.get("currency")).upper(), "fx_amount": r.get("fx_amount") or 0,
-                                                   "fx_rate": r.get("fx_rate") or 0} if acc.text(r.get("currency")) else {}),
+                                                   "fx_rate": r.get("fx_rate") or 0,
+                                                   **({"settles": _settled_id(db, r["settles"], made)} if acc.text(r.get("settles")) and _settled_id(db, r["settles"], made) else {})}
+                                                if acc.text(r.get("currency")) else {}),
                                                "party": r.get("line_party") or (r.get("party") if acc.text(r.get("party")) not in
                                                                                 ("", acc.text(first.get("party"))) else None)}
                                               for _, r in items if not acc.text(r.get("item"))]}, user)
