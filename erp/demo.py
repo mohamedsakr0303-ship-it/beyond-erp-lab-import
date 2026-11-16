@@ -738,10 +738,14 @@ def _extra(S, key, d, eom):
             [{"ref": "R3", "client": "Atlas Builders", "site": "Villas cluster C", "site_location": "West District", "quote_date": d(0, 5),
               "start_date": d(0, 12), "duration_months": 8, "min_days": 30, "line_kind": "item", "item": it, "qty": q, "rate": rt,
               "po_number": "PO-ATL-52", "signed_client": "Mr. Baker (Atlas)", "signed_us": "David Lewis"}
-             for it, q, rt in (("SC-FRM2", 150, 60), ("SC-BRD36", 60, 25), ("SC-CLF", 250, 5), ("SC-CLS", 250, 5), ("SC-TUB6", 100, 30))] +
+             for it, q, rt in (("SC-FRM2", 150, 75), ("SC-BRD36", 60, 30), ("SC-CLF", 250, 6), ("SC-CLS", 250, 6), ("SC-TUB6", 100, 36))] +
             [{"ref": "R4", "client": "Delta Tech Solutions", "site": "Branch façade", "site_location": "South District", "quote_date": d(0, 15),
-              "start_date": d(0, 20), "duration_months": 6, "line_kind": "item", "item": "CR-MOT", "qty": 1, "rate": 12000,
-              "po_number": "PO-DT-288", "signed_client": "Ms. Fisher (Delta Tech)", "signed_us": "David Lewis"}])
+              "start_date": d(0, 20), "duration_months": 6, "line_kind": "item", "item": "CR-MOT", "qty": 1, "rate": 16000,
+              "po_number": "PO-DT-288", "signed_client": "Ms. Fisher (Delta Tech)", "signed_us": "David Lewis"}] +
+            [{"ref": "R5", "client": "Atlas Builders", "site": "Hotel façade renovation", "site_location": "Central District", "quote_date": d(1, 1),
+              "start_date": d(1, 5), "duration_months": 6, "min_days": 30, "line_kind": "item", "item": it, "qty": q, "rate": rt,
+              "po_number": "PO-ATL-61", "signed_client": "Mr. Baker (Atlas)", "signed_us": "David Lewis"}
+             for it, q, rt in (("SC-FRM2", 50, 75), ("SC-BRD36", 10, 30), ("SC-CLF", 50, 6), ("SC-CLS", 50, 6))])
         for r in S["Operating Expenses"] + S["Recurring Entries"]:      # a yard, not a design office
             if r.get("account") == "6010":
                 r.update(amount=12000, description=r["description"].replace("Office rent", "Yard & office rent"))
