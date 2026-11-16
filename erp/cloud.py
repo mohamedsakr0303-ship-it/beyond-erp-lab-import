@@ -270,16 +270,29 @@ def followups(db, method, target, body):
     return out
 
 
-def ensure_app_user(db, email, admin=False):
-    """A workspace account signs in as the app user whose username is its email."""
+def ensure_app_user(db, email, admin=False, super_=False, link_uid=None):
+    """A workspace account signs in as the app user whose username is its email.
+
+    link_uid: the person signed in on this device as it connects (a desktop set up on its own first). The workspace
+    account becomes theirs (their email set) instead of a second user, so what they do is recorded under them, with
+    their own rights. super_: the workspace makes the account the company's super administrator (it created it)."""
     from . import auth
     email = email.strip().lower()
     u = db.one("SELECT * FROM users WHERE lower(email)=? OR lower(username)=?", (email, email))
+    if not u and link_uid:
+        me = db.one("SELECT * FROM users WHERE id=? AND active=1", (link_uid,))
+        if me and not (me.get("email") or "").strip():
+            db.x("UPDATE users SET email=?, is_admin=MAX(is_admin, ?), is_super=MAX(is_super, ?) WHERE id=?",
+                 (email, 1 if admin or super_ else 0, 1 if super_ else 0, me["id"]))
+            return
+    if u and super_ and not u["is_super"]:
+        db.x("UPDATE users SET is_admin=1, is_super=1, active=1 WHERE id=?", (u["id"],))
+        return
     if not u:
         name = email.split("@")[0]
         username = name if not db.one("SELECT 1 FROM users WHERE lower(username)=?", (name.lower(),)) else email
         # the company's first administrator owns the books (super administrator); later ones are administrators
-        first = admin and not db.one("SELECT 1 FROM users WHERE is_super=1 AND active=1")
+        first = super_ or (admin and not db.one("SELECT 1 FROM users WHERE is_super=1 AND active=1"))
         auth.create_user(db, {"username": username, "email": email, "full_name": name, "is_admin": admin,
                               "_no_password": True, "perms": {"dashboard": "view"}}, first=first)
     elif admin and not u["is_admin"]:
@@ -460,6 +473,7 @@ class CloudSync:
         self._token, self._token_exp = None, 0
         self._stop = threading.Event()
         self._thread = None
+        self._gateway = None       # this device's account relays its local users (learnt from the workspace)
 
     # -- configuration
     @property
@@ -589,8 +603,9 @@ class CloudSync:
         return self.rpc("new_invite_code", {"p_company": self._co()})
 
     # -- joining
-    def claim(self, name=None):
-        """Start a new company from this device's books (you become its administrator)."""
+    def claim(self, name=None, local_uid=None):
+        """Start a new company from this device's books (you become its administrator — and its super administrator,
+        as the workspace counts the company's creator). local_uid: who is signed in here, to link the account to."""
         with self.lock:
             if self.active:
                 raise RuntimeError("This device is already connected to a company. Disconnect it first.")
@@ -598,7 +613,7 @@ class CloudSync:
             name = (name or self.db.setting("company_name") or "My company").strip()
             co = c.rpc("create_company", {"p_name": name}, tok)
             local_set(self.db, "company", co["id"])
-            ensure_app_user(self.db, local_get(self.db, "email") or "", admin=True)
+            ensure_app_user(self.db, local_get(self.db, "email") or "", admin=True, super_=True, link_uid=local_uid)
             c.rpc("put_snapshot", {"p_company": co["id"], "p_seq": 0, "p_version": __version__,
                                    "p_data": self.put_big(snapshot_native(self.db), "copy")}, self.token())
             local_set(self.db, "last_seq", 0)
@@ -625,7 +640,7 @@ class CloudSync:
                 if hasattr(self.app, "backup"):
                     self.app.backup("before-new-company")
                 restore_native(self.db, snapshot_native(fresh_books(info.get("company_name") or "")))
-                ensure_app_user(self.db, info.get("email") or "", admin=True)
+                ensure_app_user(self.db, info.get("email") or "", admin=True, super_=self._my_super())
                 c.rpc("put_snapshot", {"p_company": self.company, "p_seq": 0, "p_version": __version__,
                                        "p_data": self.put_big(snapshot_native(self.db), "copy")}, self.token())
                 local_set(self.db, "last_seq", 0)
@@ -673,9 +688,45 @@ class CloudSync:
             self.status.update(state="ok", error="", last_sync=_dt.datetime.now().isoformat(timespec="seconds"))
             return n
 
+    def _my_super(self):
+        try:
+            return bool(self.rpc("my_super", {"p_company": self._co()}))
+        except Exception:      # an older workspace, or offline: nothing to add
+            return False
+
+    def recorded_as(self, user):
+        """Who a change from `user` on this device is recorded as in the workspace log, and so replayed as on every
+        device: the user themselves when this device's account is a gateway (it relays local users), otherwise the
+        workspace account's own app user. Checking a change as anyone else would let through what fails everywhere."""
+        if self._gateway is None:
+            try:
+                self._gateway = bool((self.info() or {}).get("gateway"))
+            except Exception:
+                return user
+        if self._gateway:
+            return user
+        from . import auth
+        email = (local_get(self.db, "email") or "").strip().lower()
+        row = self.db.one("SELECT * FROM users WHERE active=1 AND (username=? OR (email<>'' AND lower(email)=?)) "
+                          "ORDER BY username=? DESC LIMIT 1", (username_for(email) or email, email, username_for(email) or email)) if email else None
+        return auth.public_user(row) if row else user
+
+    def sync_role(self):
+        """The workspace makes this account the company's super administrator (it created the company, or a super
+        administrator marked it) but this device's books do not: say so through the log, so every device agrees. The
+        workspace stores that change only from an account it counts as a super administrator."""
+        if not self.active or not self._my_super():
+            return False
+        u = self.recorded_as(None)
+        if not u or u.get("is_super"):
+            return False
+        r = self.write("POST", "/api/users/workspace-role", {"x-requested-with": "BeyondERP", "content-type": "application/json"}, b"{}", u)
+        return r.status < 400
+
     def write(self, method, target, headers, raw, user):
         """Make a change through the workspace; returns the reply the screen expects."""
         from .server import ok
+        user = self.recorded_as(user) or user
         with self.lock:
             try:
                 ask, sent = (method, target, bytes(raw or b"")), [None, None]
@@ -801,6 +852,10 @@ class CloudSync:
 
         def loop():
             last = 0.0
+            try:
+                self.sync_role()
+            except Exception:          # offline, or an older workspace: tried again next start
+                pass
             while not self._stop.wait(every):
                 if not self.active:
                     continue

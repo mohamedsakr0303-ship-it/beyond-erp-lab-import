@@ -634,6 +634,8 @@ class Handler(BaseHTTPRequestHandler):
                          "is_member": bool(cur and cur["active"] and not cur["pending"])}
         if fn == "workspace_info":
             return 200, info()
+        if fn == "my_super":
+            return 200, bool(m and (m.get("is_super") or st.companies[cid].get("created_by") == email))
         def take_parts(ref, kind):
             if not str(ref or "").startswith("parts:"):
                 return None
@@ -670,6 +672,8 @@ class Handler(BaseHTTPRequestHandler):
             bad = take_parts(p["p_body"], "op")
             if bad:
                 return bad
+            if str(p["p_path"]).split("?")[0] == "/api/users/workspace-role" and not (m.get("is_super") or st.companies[cid].get("created_by") == email):
+                return _err("42501", "only a super administrator of this company can say so", 403)
             who = p["p_app_user"] if m["gateway"] and p["p_app_user"] else email
             ops.append({"company_id": cid, "seq": p["p_seq"], "version": p["p_version"], "actor": email, "app_user": who,
                         "device": p["p_device"], "method": p["p_method"], "path": p["p_path"], "body": p["p_body"],

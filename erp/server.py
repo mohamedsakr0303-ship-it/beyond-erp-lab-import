@@ -5755,6 +5755,17 @@ def user_edit(ctx, uid):
     return ok()
 
 
+@route("POST", "/api/users/workspace-role")
+def user_workspace_role(ctx):
+    """The workspace counts this account as the company's super administrator: the books say so too. Only through
+    the shared workspace, which stores this change only from such an account (supabase/migrations/*_workspace_role.sql)."""
+    if not cloud.joined(ctx.db):                 # (this device's books follow a company of the workspace)
+        raise PermissionError("Only through the shared workspace")
+    ctx.db.x("UPDATE users SET is_admin=1, is_super=1, active=1 WHERE id=?", (ctx.user["id"],))
+    ctx.log("user.workspace_role", ctx.user["username"])
+    return ok({"username": ctx.user["username"], "is_super": True})
+
+
 @route("DELETE", "/api/users/<uid>", "users.users", "edit")
 def user_del(ctx, uid):
     _need_super(ctx, "remove users")
@@ -6727,7 +6738,7 @@ def cloud_info(ctx):
 @route("POST", "/api/cloud/claim")
 def cloud_claim(ctx):
     c = _cloud(ctx)
-    return _cloud_call(lambda: c.claim(acc.text(ctx.body.get("name")) or None))
+    return _cloud_call(lambda: c.claim(acc.text(ctx.body.get("name")) or None, local_uid=ctx.user["id"] if ctx.user else None))
 
 
 @route("POST", "/api/cloud/join")
