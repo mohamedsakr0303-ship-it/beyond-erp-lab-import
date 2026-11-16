@@ -140,6 +140,30 @@ class ImportChoices(unittest.TestCase):
             interchange.import_data(Database(":memory:"), d, mode="replace")
         self.assertEqual(cm.exception.errors[0]["row"], interchange.FIRST_DATA_ROW + 2)    # …but the message names the file's row
 
+    def test_a_stock_error_names_its_own_row_though_the_sheet_is_read_in_date_order(self):
+        import copy
+        d = copy.deepcopy(interchange.export_data(self.db))
+        sm = d["Stock Moves"]
+        late = max(range(len(sm)), key=lambda k: str(sm[k]["date"]))
+        sm.insert(0, {**sm[late], "type": "Issue", "qty": 999999, "bu_code": next(r["bu_code"] for r in sm if r["bu_code"])})
+        with self.assertRaises(interchange.ImportErrors) as cm:
+            interchange.import_data(Database(":memory:"), d, mode="replace")
+        bad = [e for e in cm.exception.errors if e["sheet"] == "Stock Moves"]
+        self.assertEqual(bad[0]["row"], interchange.FIRST_DATA_ROW)           # the first row of the file, not its place by date
+
+    def test_a_receipt_naming_a_project_says_the_project_is_not_used(self):
+        import copy
+        d = copy.deepcopy(interchange.export_data(self.db))
+        k = next(i for i, r in enumerate(d["Stock Moves"]) if r["type"] == "Receipt")
+        d["Stock Moves"][k]["bu_code"] = next(r["bu_code"] for r in d["Stock Moves"] if r["bu_code"])
+        r = interchange.import_data(Database(":memory:"), d, mode="replace")
+        notes = [n for n in r.get("notes", []) if "only used on an Issue" in n]
+        self.assertEqual(len(notes), 1)
+        self.assertIn(f"row {interchange.FIRST_DATA_ROW + k}", notes[0])
+        self.assertIn("الصرف", notes[0].ar)
+        clean = interchange.import_data(Database(":memory:"), copy.deepcopy(interchange.export_data(self.db)), mode="replace")
+        self.assertFalse([n for n in clean.get("notes", []) if "only used on an Issue" in n])     # a round trip says nothing
+
     def test_the_import_screen_shows_formats_and_allowed_values_in_both_languages(self):
         cols = {c["key"]: c for c in importkit.describe("Chart of Accounts")["columns"]}
         self.assertIn(["Yes", "نعم"], cols["active"]["choice_words"])

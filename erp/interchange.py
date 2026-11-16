@@ -2363,6 +2363,7 @@ def _import_data(db, data, mode="append", dry_run=False, user=""):
         rows = data.get(name) or []
         n = 0
         for i, row in enumerate(rows, start=FIRST_DATA_ROW):
+            i = row.pop("_sheet_row", i)      # a sheet sorted before it is read: its own row number still
             sheet = SHEET_BY_NAME[name]
             missing = [c["en"] for c in sheet["cols"] if c["required"] and row.get(c["key"]) in ("", None)]
             if missing:
@@ -2432,6 +2433,12 @@ def _import_data(db, data, mode="append", dry_run=False, user=""):
             _imp_invoices(db, data, errors, counts, user, stats)
             run("Partner Transactions", lambda r: acc.record_partner_tx(db, {**r, "type": "Capital" if str(
                 r.get("type", "")).startswith("Capital") else "Distribution"}, user))
+            for i, r in enumerate(data.get("Stock Moves") or [], start=FIRST_DATA_ROW):
+                r["_sheet_row"] = i
+                if acc.text(r.get("bu_code")) and acc.text(r.get("type")) not in ("Issue", ""):
+                    stats.setdefault("notes", []).append(Note(
+                        f"Stock Moves row {i}: the project '{acc.text(r['bu_code'])}' is only used on an Issue — this {acc.text(r['type'])} does not carry it",
+                        f"حركات المخزون، الصف {i}: المشروع '{acc.text(r['bu_code'])}' يُستخدم في الصرف فقط — هذه الحركة لا تحمله"))
             data["Stock Moves"] = sorted(data.get("Stock Moves") or [],
                                          key=lambda r: (str(r.get("date") or "")[:10], _stock_phase(r)))
             run("Stock Moves", lambda r: _imp_stock(db, r, user))

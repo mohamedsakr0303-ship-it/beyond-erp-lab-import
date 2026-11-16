@@ -16,6 +16,7 @@ rewritten: each changed movement gets a "Stock Cost Adjustment" entry for the di
 date (always an open period, as the earlier movement itself could only be posted in one), linked in stock_recosts so it
 is undone with its movement. Stock that would fall below zero at any point from the change on is refused.
 """
+import bisect
 import datetime as _dt
 import math
 
@@ -61,6 +62,8 @@ class _Store:
 
     def __init__(self):
         self.batches = []        # (units in before this batch, units, unit value) — FIFO
+        self.starts = []         # units in before each batch, to find a batch by bisection
+        self.whole = [0.0]       # the cost of the first k whole batches, summed in the same order as one by one
         self.qin = self.qout = 0.0
         self.vin = self.vout = 0   # minor units
         self.qty, self.avg = 0.0, 0.0
@@ -68,11 +71,11 @@ class _Store:
 
     def first_cost(self, x):
         """C(x): the cost of the first x units that came in (minor units, not rounded)."""
-        c = 0.0
-        for before, q, unit in self.batches:
-            if x <= before:
-                break
-            c += min(q, x - before) * unit
+        k = bisect.bisect_left(self.starts, x)      # batches 0 … k-1 begin before x
+        c = self.whole[k - 1] if k else 0.0         # the whole batches before the last one touched …
+        if k:
+            before, q, unit = self.batches[k - 1]
+            c += min(q, x - before) * unit          # … and as much of that one as x reaches
         if x > self.qin + EPS:               # more out than ever came in (an older, already short history)
             c += (x - self.qin) * self.last_unit
         return c
@@ -80,6 +83,8 @@ class _Store:
     def take_in(self, q, value, unit_avg):
         unit = value / q if q > EPS else 0.0
         self.batches.append((self.qin, q, unit))
+        self.starts.append(self.qin)
+        self.whole.append(self.whole[-1] + q * unit)
         self.qin += q
         self.vin += value
         self.last_unit = unit
