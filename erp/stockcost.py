@@ -204,13 +204,14 @@ def short_message(db, short, new_ids=()):
             f"left. Undo or move the later movements first, or correct the quantity with a count.")
 
 
-def apply(db, item_id, after=None, why="", user="", new_ids=(), check=True):
+def apply(db, item_id, after=None, why="", user="", new_ids=(), check=True, computed=None):
     """Re-cost the item after a change at position `after` (an order_key; None = every movement): refuse stock that
     runs short from there on, bring each later movement's value up to date and post the difference of those already
-    in the books. Caller holds a transaction. Returns the adjustment entries posted."""
+    in the books. Caller holds a transaction. Returns the adjustment entries posted. computed: compute()'s answer
+    when the caller has just worked it out and only booked the new movement since (nothing it depends on changed)."""
     from .accounting import ValidationError
     how = method(db)
-    r = compute(db, item_id, how)
+    r = computed or compute(db, item_id, how)
     for sh in r["short"] if check else ():
         if after is None or order_key(sh[0]) >= after:
             raise ValidationError(short_message(db, sh, new_ids))

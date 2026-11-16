@@ -2625,23 +2625,43 @@ class Database:
 
 
 class _Tx:
-    """`with db.tx():` — an atomic transaction that also holds the lock. Nests safely."""
+    """`with db.tx():` — an atomic transaction that also holds the lock. Nests safely: an inner one is a savepoint, so
+    when it fails and its caller carries on (a visit that skips a consumable that is out of stock), what the failed
+    step had already written is undone too — never left half-done inside the outer transaction."""
 
     def __init__(self, db):
         self.db = db
         self.outer = False
+        self.sp = None
 
     def __enter__(self):
         self.db.lock.acquire()
-        self.outer = not self.db.conn.in_transaction
-        if self.outer:
-            self.db.conn.execute("BEGIN IMMEDIATE")
+        try:
+            self.outer = not self.db.conn.in_transaction
+            if self.outer:
+                self.db.conn.execute("BEGIN IMMEDIATE")
+            else:
+                n = getattr(self.db, "_sp_depth", 0) + 1
+                self.db._sp_depth = n
+                self.sp = f"beyond_sp{n}"
+                self.db.conn.execute(f"SAVEPOINT {self.sp}")
+        except BaseException:
+            self.db.lock.release()
+            raise
         return self.db
 
     def __exit__(self, exc_type, exc, tb):
         try:
             if self.outer:
                 self.db.conn.execute("ROLLBACK" if exc_type else "COMMIT")
+            elif self.sp:
+                try:
+                    if exc_type and self.db.conn.in_transaction:
+                        self.db.conn.execute(f"ROLLBACK TO {self.sp}")
+                    if self.db.conn.in_transaction:
+                        self.db.conn.execute(f"RELEASE {self.sp}")
+                finally:
+                    self.db._sp_depth = getattr(self.db, "_sp_depth", 1) - 1
         finally:
             self.db.lock.release()
         return False

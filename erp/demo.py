@@ -664,20 +664,20 @@ def _extra(S, key, d, eom):
         S["Stock Items"] = [{"name": n, "unit": u, "sku": k, "reorder_level": r} for k, n, u, r in _CARE_ITEMS]
         S["Stock Moves"] = [{"date": d(m, 1), "type": "Receipt", "warehouse": "Main Store", "item": n, "unit": u, "qty": q, "rate": rt,
                              "vendor": "Pharma Supplies Co. (demo)", "paid": round(q * rt * (1 if m == 0 else 0.5), 2)}
-                            for m in (0, 3) for (k, n, u, _), q, rt in zip(_CARE_ITEMS, (400, 300, 120, 150), (6, 4, 18, 35))]
+                            for m in (0, 2, 4) for (k, n, u, _), q, rt in zip(_CARE_ITEMS, (400, 300, 120, 150), (6, 4, 18, 35))]
         S["Fixed Assets"] = ([{"code": "FA-H01", "name": "Nurses' car — compact hatchback", "account": "1420", "acquired": d(0, 4), "cost": 820000,
                                "salvage": 150000, "life_months": 60},
                               {"code": "FA-H02", "name": "Portable patient monitors ×3", "account": "1412", "acquired": d(0, 6), "cost": 135000, "life_months": 48},
                               {"code": "FA-H03", "name": "Hospital beds & oxygen concentrators (loan pool)", "account": "1412", "acquired": d(1, 2),
                                "cost": 210000, "life_months": 60}] if home else
-                             [{"code": "FA-H01", "name": "Ultrasound machine", "account": "1412", "acquired": d(0, 4), "cost": 950000, "salvage": 100000,
+                             [{"code": "FA-H01", "name": "Ultrasound machine", "account": "1412", "acquired": d(0, 4), "cost": 650000, "salvage": 80000,
                                "life_months": 84},
                               {"code": "FA-H02", "name": "Clinic furniture & examination couches", "account": "1400", "acquired": d(0, 2), "cost": 160000,
                                "life_months": 84},
                               {"code": "FA-H03", "name": "Lab analyser (CBC)", "account": "1412", "acquired": d(1, 2), "cost": 380000, "life_months": 60}])
         for r in S["Operating Expenses"] + S["Recurring Entries"]:
             if r.get("account") == "6010":
-                r.update(amount=30000 if not home else 12000, description=r["description"].replace(
+                r.update(amount=20000 if not home else 10000, description=r["description"].replace(
                     "Office rent", "Clinic rent" if not home else "Office & dispatch rent"))
                 if "name" in r:
                     r["name"] = r["name"].replace("Office rent", "Clinic rent" if not home else "Office & dispatch rent")
@@ -691,8 +691,8 @@ def _extra(S, key, d, eom):
                                                                              (("Grace Young", "Care coordinator (dispatch)", 9000),))]
     if key == "investment":
         S["Journal Vouchers"] += [
-            {"voucher": "JV-I01", "date": d(0, 10), "kind": "Journal Voucher", "memo": "Treasury bills — 182 days", "account": "1720", "debit": 1200000},
-            {"voucher": "JV-I01", "date": d(0, 10), "kind": "Journal Voucher", "memo": "Treasury bills — 182 days", "account": "1020", "credit": 1200000},
+            {"voucher": "JV-I01", "date": d(0, 10), "kind": "Journal Voucher", "memo": "Treasury bills — 182 days", "account": "1720", "debit": 2000000},
+            {"voucher": "JV-I01", "date": d(0, 10), "kind": "Journal Voucher", "memo": "Treasury bills — 182 days", "account": "1020", "credit": 2000000},
             {"voucher": "JV-I02", "date": d(1, 6), "kind": "Journal Voucher", "memo": "Listed shares — 20,000 × 32.50", "account": "1705", "debit": 650000},
             {"voucher": "JV-I02", "date": d(1, 6), "kind": "Journal Voucher", "memo": "Listed shares — 20,000 × 32.50", "account": "1020", "credit": 650000},
             {"voucher": "JV-I03", "date": d(3, 20), "kind": "Journal Voucher", "memo": "Dividend received", "account": "1020", "debit": 36000},
@@ -701,8 +701,8 @@ def _extra(S, key, d, eom):
             {"voucher": "JV-I04", "date": eom(4), "kind": "Journal Voucher", "memo": "Shares revalued to market (34.10)", "account": "4093", "credit": 32000}]
     if key == "investment":
         S["Journal Vouchers"] += [
-            {"voucher": "JV-I05", "date": eom(4), "kind": "Journal Voucher", "memo": "Treasury-bill interest earned to date", "account": "1720", "debit": 118000},
-            {"voucher": "JV-I05", "date": eom(4), "kind": "Journal Voucher", "memo": "Treasury-bill interest earned to date", "account": "4095", "credit": 118000},
+            {"voucher": "JV-I05", "date": eom(4), "kind": "Journal Voucher", "memo": "Treasury-bill interest earned to date", "account": "1720", "debit": 196000},
+            {"voucher": "JV-I05", "date": eom(4), "kind": "Journal Voucher", "memo": "Treasury-bill interest earned to date", "account": "4095", "credit": 196000},
             {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00", "account": "1020", "debit": 180000},
             {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00", "line_memo": "Sold 5,000 shares × 36.00 — cost", "account": "1705", "credit": 162500},
             {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00", "line_memo": "Sold 5,000 shares × 36.00 — gain", "account": "4092", "credit": 17500}]
@@ -931,19 +931,19 @@ def _bank_lines(db, account, date_from, date_to, skip_last=True):
 # ---- healthcare / home healthcare: patients, services, six months of visits billed, claims, packages (all invented)
 _INSURERS = (("Sample Health TPA (demo)", 80), ("Sample Medical Insurance (demo)", 90), ("Delta Tech Solutions", 100))
 _CARE_SERVICES = {
-    "healthcare": [("Consultation — general practitioner", "كشف ممارس عام", "consultation", 400, 300, 40, 20, 0, []),
-                   ("Consultation — cardiology", "كشف قلب", "consultation", 700, 550, 50, 30, 0, []),
-                   ("Follow-up consultation", "استشارة متابعة", "consultation", 200, 150, 40, 15, 0, []),
-                   ("Complete blood count (CBC)", "صورة دم كاملة", "lab", 150, 120, 0, 10, 0, [("SYRINGE", 1), ("GLOVES", 1)]),
-                   ("Abdominal ultrasound", "سونار على البطن", "radiology", 600, 450, 30, 20, 0, [("GLOVES", 1)]),
-                   ("Physiotherapy session", "جلسة علاج طبيعي", "physiotherapy", 350, 280, 50, 45, 0, []),
-                   ("Wound dressing", "غيار على جرح", "nursing", 250, 200, 30, 20, 0, [("DRESS", 1), ("GLOVES", 2)]),
-                   ("IV cannula & injection", "تركيب كانيولا وحقن", "nursing", 150, 120, 30, 15, 0, [("CANNULA", 1), ("SYRINGE", 1), ("GLOVES", 1)])],
-    "homecare": [("Doctor home visit", "زيارة طبيب منزلية", "home_visit", 1200, 900, 60, 45, 1, []),
-                 ("Nurse visit — injection / cannula", "زيارة تمريض — حقن / كانيولا", "nursing", 350, 300, 50, 30, 1, [("CANNULA", 1), ("SYRINGE", 1), ("GLOVES", 1)]),
-                 ("Wound dressing at home", "غيار على جرح بالمنزل", "nursing", 450, 380, 50, 40, 1, [("DRESS", 1), ("GLOVES", 2)]),
-                 ("Physiotherapy session at home", "جلسة علاج طبيعي بالمنزل", "physiotherapy", 500, 420, 55, 60, 1, []),
-                 ("Sample collection at home (lab)", "سحب عينة بالمنزل", "lab", 300, 250, 20, 20, 1, [("SYRINGE", 1), ("GLOVES", 1)]),
+    "healthcare": [("Consultation — general practitioner", "كشف ممارس عام", "consultation", 600, 450, 40, 20, 0, []),
+                   ("Consultation — cardiology", "كشف قلب", "consultation", 1000, 800, 50, 30, 0, []),
+                   ("Follow-up consultation", "استشارة متابعة", "consultation", 300, 240, 40, 15, 0, []),
+                   ("Complete blood count (CBC)", "صورة دم كاملة", "lab", 200, 160, 0, 10, 0, [("SYRINGE", 1), ("GLOVES", 1)]),
+                   ("Abdominal ultrasound", "سونار على البطن", "radiology", 900, 700, 30, 20, 0, [("GLOVES", 1)]),
+                   ("Physiotherapy session", "جلسة علاج طبيعي", "physiotherapy", 500, 400, 50, 45, 0, []),
+                   ("Wound dressing", "غيار على جرح", "nursing", 300, 240, 30, 20, 0, [("DRESS", 1), ("GLOVES", 2)]),
+                   ("IV cannula & injection", "تركيب كانيولا وحقن", "nursing", 200, 160, 30, 15, 0, [("CANNULA", 1), ("SYRINGE", 1), ("GLOVES", 1)])],
+    "homecare": [("Doctor home visit", "زيارة طبيب منزلية", "home_visit", 1800, 1400, 60, 45, 1, []),
+                 ("Nurse visit — injection / cannula", "زيارة تمريض — حقن / كانيولا", "nursing", 450, 380, 50, 30, 1, [("CANNULA", 1), ("SYRINGE", 1), ("GLOVES", 1)]),
+                 ("Wound dressing at home", "غيار على جرح بالمنزل", "nursing", 550, 460, 50, 40, 1, [("DRESS", 1), ("GLOVES", 2)]),
+                 ("Physiotherapy session at home", "جلسة علاج طبيعي بالمنزل", "physiotherapy", 650, 540, 55, 60, 1, []),
+                 ("Sample collection at home (lab)", "سحب عينة بالمنزل", "lab", 400, 330, 20, 20, 1, [("SYRINGE", 1), ("GLOVES", 1)]),
                  ("Elderly-care nurse — 12-hour shift", "ممرضة رعاية مسنين — وردية 12 ساعة", "nursing", 900, 0, 70, 720, 1, []),
                  ("Elderly-care nurse — 24-hour shift", "ممرضة رعاية مسنين — 24 ساعة", "nursing", 1600, 0, 70, 1440, 1, [])]}
 _CARE_PEOPLE = {"healthcare": ["Dr. Robert King (GP)", "Dr. Helen Ross (Cardiology)", "Dr. Simon Gray (Radiology)", "PT Kate Morris", "Nurse Amy Cole"],
@@ -997,7 +997,7 @@ def _care_demo(db, industry, user, a0, today):
     n = 0
     while day <= today + _dt.timedelta(days=3):
         if day.weekday() != 4:                     # closed on Fridays
-            for _ in range(rnd.randint(2, 4) if not home else rnd.randint(1, 3)):
+            for _ in range(rnd.randint(10, 14) if not home else rnd.randint(5, 7)):     # two busy clinics / a steady home-care list
                 k = rnd.randrange(len(sv) - (2 if home else 0))
                 pid = rnd.choice(pats)
                 p = db.one("SELECT * FROM care_patients WHERE id=?", (pid,))

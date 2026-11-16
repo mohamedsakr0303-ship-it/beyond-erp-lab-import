@@ -128,6 +128,18 @@ class ImportChoices(unittest.TestCase):
             interchange.import_data(Database(":memory:"), interchange.SheetData(copy.deepcopy(data)), mode="replace")
         self.assertIn("on the first line of " + prs[0]["code"], cm.exception.errors[0]["error"])
 
+    def test_an_invoice_error_names_its_own_row_when_credit_notes_come_first(self):
+        import copy
+        d = copy.deepcopy(interchange.export_data(self.db))
+        si = d["Sales Invoices"]
+        cn = {**si[0], "number": "CN-T1", "doc_type": "C", "original": si[0]["number"], "reason": "Discount", "status": "Draft"}
+        d["Sales Invoices"] = [cn] + si                              # credit notes are imported after invoices…
+        d["Invoice Lines"] += [{**next(ln for ln in d["Invoice Lines"] if ln["number"] == si[0]["number"]), "number": "CN-T1"}]
+        d["Sales Invoices"][2]["vat_code"] = "VAT99"
+        with self.assertRaises(interchange.ImportErrors) as cm:
+            interchange.import_data(Database(":memory:"), d, mode="replace")
+        self.assertEqual(cm.exception.errors[0]["row"], interchange.FIRST_DATA_ROW + 2)    # …but the message names the file's row
+
     def test_the_import_screen_shows_formats_and_allowed_values_in_both_languages(self):
         cols = {c["key"]: c for c in importkit.describe("Chart of Accounts")["columns"]}
         self.assertIn(["Yes", "نعم"], cols["active"]["choice_words"])

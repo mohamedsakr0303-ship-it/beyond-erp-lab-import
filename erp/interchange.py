@@ -2836,11 +2836,13 @@ def _imp_invoices(db, data, errors, counts, user, stats):
             errors.append({"sheet": "Invoice Lines", "row": first_row[num_],      # the row of its first line, where the user looks
                            "error": f"Invoice {num_} is not in 'Sales Invoices' or in the books"})
     # invoices first, then the credit / debit notes that name them
-    heads_rows = sorted(data.get("Sales Invoices") or [], key=lambda r: "دائن" in str(r.get("doc_type") or "") or "مدين" in str(r.get("doc_type") or "")
-                        or str(r.get("doc_type") or "").strip()[:1].upper() in ("C", "D"))
-    rows = heads_rows + [{"number": k, "_lines_only": True} for k in lines if k and k not in heads
+    # (each keeps its own row in its own sheet for the messages, whatever order they are imported in)
+    heads_rows = sorted(enumerate(data.get("Sales Invoices") or [], start=FIRST_DATA_ROW),
+                        key=lambda p: "دائن" in str(p[1].get("doc_type") or "") or "مدين" in str(p[1].get("doc_type") or "")
+                        or str(p[1].get("doc_type") or "").strip()[:1].upper() in ("C", "D"))
+    rows = heads_rows + [(first_row[k], {"number": k, "_lines_only": True}) for k in lines if k and k not in heads
                          and db.one("SELECT 1 FROM extracts WHERE number=?", (k,))]
-    for i, r in enumerate(rows, start=FIRST_DATA_ROW):
+    for i, r in rows:
         sheet = "Invoice Lines" if r.get("_lines_only") else "Sales Invoices"
         try:
             number = acc.text(r.get("number"), "invoice number", required=True)

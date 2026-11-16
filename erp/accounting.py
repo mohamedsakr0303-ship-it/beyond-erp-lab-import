@@ -1271,16 +1271,20 @@ def stock_move(db, d, user=""):
         item = _item(db, d, create=(typ == "Receipt"))
         inv = _wh_account(db, wh)
 
+        last = {}
+
         def cost_of(mid, new_ids):
-            r = stockcost.compute(db, item["id"])
-            for sh in r["short"]:
-                if stockcost.order_key(sh[0]) >= stockcost.order_key(next(m for m in r["rows"] if m["id"] == mid)):
-                    raise ValidationError(stockcost.short_message(db, sh, new_ids))
+            r = last["r"] = stockcost.compute(db, item["id"])
+            if r["short"]:              # (this movement's place, found once — not again for each older shortage)
+                here = stockcost.order_key(next(m for m in r["rows"] if m["id"] == mid))
+                for sh in r["short"]:
+                    if stockcost.order_key(sh[0]) >= here:
+                        raise ValidationError(stockcost.short_message(db, sh, new_ids))
             return r["values"][mid], r["units"][mid]
 
-        def settle(mid, why):
+        def settle(mid, why, reuse=False):
             m = db.one("SELECT * FROM stock_moves WHERE id=?", (mid,))
-            stockcost.apply(db, item["id"], stockcost.order_key(m), why=why, user=user)
+            stockcost.apply(db, item["id"], stockcost.order_key(m), why=why, user=user, computed=last.get("r") if reuse else None)
 
         if typ == "Receipt":
             qty = num(d.get("qty"), "quantity", allow_zero=False)
@@ -1317,7 +1321,7 @@ def stock_move(db, d, user=""):
                                        {"account": inv, "credit": to_major(value)}],
                                 meta={"qty": qty, "item": item["name"], "warehouse": wh["name"]})
             _booked_now(db, mid, value, eid)
-            settle(mid, f"material issued on {date}")
+            settle(mid, f"material issued on {date}", reuse=True)     # only this issue's booking changed since
         elif typ == "Transfer":
             qty = num(d.get("qty"), "quantity", allow_zero=False)
             to = _warehouse(db, d.get("to_warehouse_id") or d.get("to_warehouse"))
