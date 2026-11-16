@@ -120,6 +120,13 @@ class ImportChoices(unittest.TestCase):
         self.assertIn("السطر الأول", textl10n.import_row_error(e["error"], e["sheet"], "ar"))
         jv[i]["date"] = ""                                                    # blank on a later line: fine
         interchange.import_data(Database(":memory:"), interchange.SheetData(copy.deepcopy(data)), mode="replace")
+        prs = data["Purchase Requests"]                                       # a value only on a later line would be ignored: refused
+        j = next(n for n, r in enumerate(prs) if n and r["code"] == prs[0]["code"])
+        prs[j]["needed_by"] = "2026-12-01"
+        prs[0]["needed_by"] = ""
+        with self.assertRaises(interchange.ImportErrors) as cm:
+            interchange.import_data(Database(":memory:"), interchange.SheetData(copy.deepcopy(data)), mode="replace")
+        self.assertIn("on the first line of " + prs[0]["code"], cm.exception.errors[0]["error"])
 
     def test_the_import_screen_shows_formats_and_allowed_values_in_both_languages(self):
         cols = {c["key"]: c for c in importkit.describe("Chart of Accounts")["columns"]}

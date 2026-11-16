@@ -2307,8 +2307,8 @@ def multi_line_conflicts(data):
             f = first[k]
             for h in heads:
                 v, v0 = r.get(h), f.get(h)
-                if v in ("", None) or v0 in ("", None) or _same_cell(v, v0):
-                    continue
+                if v in ("", None) or (v0 not in ("", None) and _same_cell(v, v0)):
+                    continue                     # (a value only on a later line is ignored too: say so)
                 out.append({"sheet": name, "row": i, "error": f"{cols[h]['en'] if h in cols else h} is '{acc.text(v)}' on this line but "
                             f"'{acc.text(v0)}' on the first line of {' / '.join(x for x in k if x)} — only the first line's counts: "
                             f"make them the same or leave it blank"})
