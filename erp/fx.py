@@ -397,6 +397,15 @@ def fetch_now(db):
 
 
 # ------------------------------------------------------------------ amounts priced in the company's currency, owed in another
+def check_new_currency(db, cur, old=""):
+    """A currency someone picks for a contact (on its form, or in a spreadsheet): one the company works in. One it
+    already had stays (the company may have stopped using it since)."""
+    cur = code(cur)
+    if not cur or cur == base(db) or cur in enabled(db) or cur == code(old):
+        return
+    raise acc.ValidationError(f"{cur} is not one of the company's currencies ({', '.join(enabled(db)) or base(db)}): add it under Exchange rates first")
+
+
 def party_currency(db, party):
     cur = (db.one("SELECT currency FROM parties WHERE name=?", (party or "",)) or {}).get("currency") or "" \
         or (db.one("SELECT currency FROM care_patients WHERE name=? AND currency<>''", (party or "",)) or {}).get("currency") or ""

@@ -104,6 +104,23 @@ class ImportChoices(unittest.TestCase):
         src, back = interchange.read_parsed(gzip.decompress(interchange.pack_read(dict(d), "json")))
         self.assertFalse(getattr(back, "strict", False))                    # a backup stays a backup
 
+    def test_a_line_that_disagrees_with_its_documents_first_line_is_refused(self):
+        import copy
+        from erp import textl10n
+        data = interchange.export_data(self.db)
+        self.assertEqual(interchange.multi_line_conflicts(data), [])            # the app's own files always agree
+        jv = data["Journal Vouchers"]
+        v0 = jv[0]["voucher"]
+        i = next(n for n, r in enumerate(jv) if n and r["voucher"] == v0)
+        jv[i]["date"] = "2026-06-02"
+        with self.assertRaises(interchange.ImportErrors) as cm:
+            interchange.import_data(Database(":memory:"), interchange.SheetData(copy.deepcopy(data)), mode="replace")
+        e = cm.exception.errors[0]
+        self.assertIn("is '2026-06-02' on this line but", e["error"])
+        self.assertIn("السطر الأول", textl10n.import_row_error(e["error"], e["sheet"], "ar"))
+        jv[i]["date"] = ""                                                    # blank on a later line: fine
+        interchange.import_data(Database(":memory:"), interchange.SheetData(copy.deepcopy(data)), mode="replace")
+
     def test_the_import_screen_shows_formats_and_allowed_values_in_both_languages(self):
         cols = {c["key"]: c for c in importkit.describe("Chart of Accounts")["columns"]}
         self.assertIn(["Yes", "نعم"], cols["active"]["choice_words"])

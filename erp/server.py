@@ -4397,6 +4397,8 @@ def party_add(ctx):
     if not (ctx.can("sales.parties", "add") or ctx.can("sales.invoices", "add") or ctx.can("purchasing", "add")
             or ctx.can("purchasing.contacts", "add")):
         raise PermissionError()
+    from . import fx
+    fx.check_new_currency(ctx.db, ctx.body.get("currency"))
     return ok({"id": acc.save_party(ctx.db, ctx.body)})
 
 
@@ -4405,6 +4407,9 @@ def party_edit(ctx, pid):
     if not (ctx.can("sales.parties", "edit") or ctx.can("sales.invoices", "edit") or ctx.can("purchasing", "edit")
             or ctx.can("purchasing.contacts", "edit")):
         raise PermissionError()
+    from . import fx
+    if "currency" in ctx.body:
+        fx.check_new_currency(ctx.db, ctx.body.get("currency"), (ctx.db.one("SELECT currency FROM parties WHERE id=?", (int(pid),)) or {}).get("currency"))
     return ok({"id": acc.save_party(ctx.db, ctx.body, int(pid))})
 
 

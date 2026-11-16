@@ -2267,6 +2267,55 @@ def docs_to_rows(db, data):
     return notes
 
 
+# Documents of several lines: a sheet's grouping column(s), and the header cells only its first line's count
+MULTI_LINE = {
+    "Journal Vouchers": (("voucher",), ("date", "kind", "bu_code", "ref", "memo", "deal_ref")),
+    "Purchase Requests": (("code",), ("date", "requested_by", "bu_code", "warehouse", "needed_by", "status", "notes")),
+    "Supplier Quotes": (("request", "supplier"), ("date", "valid_until", "delivery_days", "vat_code", "terms")),
+    "BOQ Lines": (("title", "bu_code"), ("rev", "date", "client", "location")),
+    "Contracts": (("code",), ("kind", "party", "bu_code", "title", "value", "signed_on", "start", "finish", "retention_pct",
+                              "advance", "vat_code", "wht_code", "status")),
+}
+
+
+def _same_cell(a, b):
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) < 1e-9
+    return acc.text(a) == acc.text(b)
+
+
+def multi_line_conflicts(data):
+    """A later line of a document that says something else in a header cell than its first line (a date changed on one
+    line only): the importer reads the first line's, so the file must not quietly disagree with itself. A blank cell on
+    a later line is fine. [{sheet, row, error}]"""
+    out = []
+    for name, (keys, heads) in MULTI_LINE.items():
+        rows = data.get(name) if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            continue
+        cols = {c["key"]: c for c in SHEET_BY_NAME[name]["cols"]}
+        first = {}
+        for i, r in enumerate(rows, start=FIRST_DATA_ROW):
+            if not isinstance(r, dict):
+                continue
+            k = tuple(acc.text(r.get(x)) for x in keys)
+            if not any(k):
+                continue
+            if k not in first:
+                first[k] = r
+                continue
+            f = first[k]
+            for h in heads:
+                v, v0 = r.get(h), f.get(h)
+                if v in ("", None) or v0 in ("", None) or _same_cell(v, v0):
+                    continue
+                out.append({"sheet": name, "row": i, "error": f"{cols[h]['en'] if h in cols else h} is '{acc.text(v)}' on this line but "
+                            f"'{acc.text(v0)}' on the first line of {' / '.join(x for x in k if x)} — only the first line's counts: "
+                            f"make them the same or leave it blank"})
+                break
+    return out
+
+
 def _choice_words_to_codes(data):
     """Every way rows reach the importer (a file, the JSON backup, a demo or industry template in Arabic) carries the
     words of a choice column the same way: turned back into its code here, whatever the source."""
@@ -2301,6 +2350,8 @@ def _import_data(db, data, mode="append", dry_run=False, user=""):
     skipped = None
     strict = getattr(data, "strict", False)
     _choice_words_to_codes(data)
+    if strict:              # a spreadsheet someone filled in: its documents' lines must agree with their first line
+        errors.extend(multi_line_conflicts(data))
     doc_notes = docs_to_rows(db, data)       # invoice / BOQ sheets in the client's own layout
     asked = mode
     if mode == "new":
@@ -2359,7 +2410,7 @@ def _import_data(db, data, mode="append", dry_run=False, user=""):
             from . import costitems
             run("Cost Items", lambda r: costitems.save(db, {**r, "active": 0 if str(r.get("active") or "").lower() in ("no", "0", "false") else 1}))
             run("Cost Budgets", lambda r: costitems.save_budget(db, r.get("bu_code"), r.get("item"), r.get("amount"), r.get("qty")))
-            run("Parties", lambda r: _imp_party(db, r))
+            run("Parties", lambda r: _imp_party(db, r, strict))
             run("Partners", lambda r: _imp_partner(db, r))
             run("Partner Shares", lambda r: _imp_share(db, r))
             run("Partner Stage Shares", lambda r: _imp_stage_share(db, r))
@@ -2525,8 +2576,11 @@ def _imp_tax_code(db, r):
     acc.save_tax_code(db, {**r, "code": code, "rate": _pct(r.get("rate"))}, old_code=old)
 
 
-def _imp_party(db, r):
-    p = db.one("SELECT id FROM parties WHERE name=?", (acc.text(r.get("name")),))
+def _imp_party(db, r, strict=False):
+    p = db.one("SELECT id, currency FROM parties WHERE name=?", (acc.text(r.get("name")),))
+    if strict and acc.text(r.get("currency")):       # a spreadsheet: one of the company's currencies (a backup keeps its own)
+        from . import fx
+        fx.check_new_currency(db, r.get("currency"), (p or {}).get("currency") or "")
     acc.save_party(db, r, p["id"] if p else None)
 
 

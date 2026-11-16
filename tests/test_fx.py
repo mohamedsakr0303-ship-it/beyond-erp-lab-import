@@ -619,6 +619,15 @@ class Ideas(unittest.TestCase):
         interchange.import_data(db2, interchange.export_data(db), mode="replace")
         self.assertEqual(db2.one("SELECT price_currency FROM products WHERE name='Laptop'")["price_currency"], "USD")
 
+    def test_a_contacts_currency_is_one_the_company_works_in(self):
+        db = self.db
+        fx.check_new_currency(db, "USD")
+        fx.check_new_currency(db, "")
+        fx.check_new_currency(db, "EGP")
+        with self.assertRaisesRegex(acc.ValidationError, "XYZ is not one of the company's currencies"):
+            fx.check_new_currency(db, "XYZ")
+        fx.check_new_currency(db, "GBP", old="GBP")          # one it already had stays, even if no longer used
+
     def test_the_month_end_setting_goes_through_the_server(self):
         db = self.db
         auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
