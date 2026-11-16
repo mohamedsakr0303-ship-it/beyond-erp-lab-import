@@ -247,7 +247,10 @@ def cloud_new_books(name, email):
             body: body === undefined ? undefined : JSON.stringify(body) });
         } catch (e) { throw new CloudError("Cannot reach the workspace — check your internet connection", "offline"); }
         const text = await r.text(); let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = { message: text }; }
-        if (!r.ok) { const d = data || {}; throw new CloudError(d.message || d.msg || d.error_description || d.error || ("HTTP " + r.status), d.error_code || (typeof d.code === "string" ? d.code : ""), r.status); }
+        if (!r.ok) { const d = data || {};
+          // over a limit (too many tries): the database says it in Arabic too, for an Arabic screen
+          const ar = r.status === 429 && d.hint && /^ar/i.test(document.documentElement.lang || "");
+          throw new CloudError(ar ? d.hint : (d.message || d.msg || d.error_description || d.error || ("HTTP " + r.status)), d.error_code || (typeof d.code === "string" ? d.code : ""), r.status); }
         return data;
       }
       // Plain-language versions of Supabase's sign-in errors
@@ -296,7 +299,7 @@ def cloud_new_books(name, email):
       async function retry(fn) {
         for (let i = 0; ; i++) {
           try { return await fn(); }
-          catch (e) { if (i >= 4 || e.status === 401 || e.status === 403 || e.code === "42501" || e.code === "22023") throw e;
+          catch (e) { if (i >= 4 || e.status === 401 || e.status === 403 || e.status === 429 || e.code === "42501" || e.code === "22023") throw e;
                       await new Promise(r => setTimeout(r, Math.min(8000, 500 * 2 ** i))); }
         }
       }

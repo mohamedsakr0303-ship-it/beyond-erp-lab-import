@@ -7071,6 +7071,7 @@ PAGES.users = async (view) => {
   const edit = u => drawer(t("m_users") + (u.username ? " — " + u.username : ""), form([{ k: "username", l: t("username"), v: u.username, req: 1, dis: !!u.id,
     help: cloudOn() && !u.id ? (S.lang === "ar" ? "أسماء المستخدمين فريدة في جميع الشركات. إن كان الاسم مستخدماً يُقترح بديل (مثل name.company)." : "Usernames are unique across all companies. If taken, an alternative is suggested (e.g. name.company).") : "" }, { k: "full_name", l: t("full_name"), v: u.full_name },
     ...(gr.groups.length ? [{ k: "group_key", l: L2("Group (determines the dashboard)", "المجموعة (تحدد لوحة التحكم)"), type: "select", v: u.group_key || "general",
+      dis: !S.boot.user.is_super,     // (a group decides whose approvals someone sees: super administrators place people)
       opts: gr.groups.map(g => [g.key, (ar && g.name_ar) || g.name]), help: L2("Super administrators define each group's dashboard (Dashboard → Customise).", "يحدد المسؤول الأعلى لوحة كل مجموعة (لوحة التحكم ← تخصيص).") }] : []),
     { k: "email", l: t("email") + (cloudOn() ? (ar ? " (اختياري)" : " (optional)") : ""), type: "email", v: u.email, span: "spanall", help: cloudOn()
       ? (ar ? "اتركه فارغاً لتسجيل الدخول باسم المستخدم وكلمة المرور فقط. أضف بريداً إلكترونياً لتسجيل الدخول بحساب Google أو إعادة تعيين كلمة المرور ذاتياً." : "Leave blank to sign in with username and password only. Add an email for Google sign-in or self-service password reset.")

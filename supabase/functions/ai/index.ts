@@ -129,6 +129,9 @@ Deno.serve(async (req) => {
   const calls = used.ok && used.data.length ? Number(used.data[0].calls) || 0 : 0;
   const limit = Number(s.daily_limit) || 0;
   if (!isSuper && limit && calls >= limit) return fail(429, `Daily limit reached (${limit} requests) — try again tomorrow`);
+  // and never more than 12 a minute, for anyone (a stuck page or a script would spend the company's key)
+  const burst = await call("POST", "/rest/v1/rpc/ai_rate", { p_company: company, p_email: caller });
+  if (burst.ok && burst.data && burst.data.ok === false) return fail(429, "Too many requests in a minute — wait a moment and try again");
 
   // 3. the request: policy from the database, conversation from the page
   const test = !!b.test && isSuper;   // Settings → Test connection (super administrators): one short question, no tools

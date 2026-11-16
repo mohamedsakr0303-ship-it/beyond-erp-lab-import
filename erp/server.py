@@ -5715,6 +5715,10 @@ def _no_more_than_me(ctx):
         b["projects"] = asked or list(my_bus)
     if ctx.user.get("needs_approval"):
         b["needs_approval"] = True
+    # a group shows its people the approvals of that group and its dashboard (with widgets a super administrator may
+    # show even without access): a new person goes in the maker's own group, or none
+    if (b.get("group_key") or "") not in ("", ctx.user.get("group_key") or ""):
+        b["group_key"] = ctx.user.get("group_key") or ""
 
 
 @route("PUT", "/api/users/<uid>", "users.users", "edit")
@@ -5731,6 +5735,7 @@ def user_edit(ctx, uid):
         b.pop("grants", None)             # special rights: given by a super administrator only
         b.pop("projects", None)           # which projects someone sees: set by a super administrator
         b.pop("perms", None)
+        b.pop("group_key", None)          # the group decides whose approvals they see and their dashboard: likewise
     raises = bool(b.get("is_admin")) and not target["is_admin"] or bool(b.get("is_super")) and not target["is_super"]
     lowers = ("is_admin" in b and not b["is_admin"] and target["is_admin"]) or ("is_super" in b and not b["is_super"] and target["is_super"])
     if raises or ((target["is_admin"] or target["is_super"]) and int(uid) != ctx.user["id"]) or (lowers and int(uid) != ctx.user["id"]):

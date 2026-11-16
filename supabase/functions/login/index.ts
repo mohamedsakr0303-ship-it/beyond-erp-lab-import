@@ -19,6 +19,8 @@ const cors = {
 const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const invalid = () => reply(400, { code: 400, error_code: "invalid_credentials", msg: "Invalid login credentials" });
+const busy = () => reply(429, { code: 429, error_code: "over_request_rate_limit",
+  msg: "Too many sign-in attempts — wait 15 minutes and try again", hint: "محاولات دخول كثيرة — انتظر 15 دقيقة ثم حاول مرة أخرى" });
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -33,12 +35,21 @@ Deno.serve(async (req) => {
   }
   if (!username || !password || username.length > 100) return invalid();
 
+  // too many wrong tries for this username or from this address: wait (the same answer whether the username exists)
+  const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim().slice(0, 64);
+  const gate = (result: string) => fetch(`${URL_}/rest/v1/rpc/login_gate`, {
+    method: "POST", headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ p_username: username, p_ip: ip, p_result: result }),
+  }).then((r) => r.ok ? r.json() : { ok: true }).catch(() => ({ ok: true }));
+  if ((await gate("check")).ok === false) return busy();
+
   const found = await fetch(
     `${URL_}/rest/v1/people?select=email&username=ilike.${encodeURIComponent(username.replace(/[%_*,()]/g, ""))}&limit=1`,
     { headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` } },
   );
   const rows = found.ok ? await found.json() : [];
   if (!rows.length) {
+    await gate("failed");
     await new Promise((r) => setTimeout(r, 200 + Math.random() * 200)); // same timing as a real attempt
     return invalid();
   }
@@ -47,5 +58,7 @@ Deno.serve(async (req) => {
     headers: { apikey: ANON, "Content-Type": "application/json" },
     body: JSON.stringify({ email: rows[0].email, password }),
   });
+  if (auth.status === 400) await gate("failed");
+  else if (auth.ok) await gate("ok");
   return new Response(await auth.text(), { status: auth.status, headers: { ...cors, "Content-Type": "application/json" } });
 });

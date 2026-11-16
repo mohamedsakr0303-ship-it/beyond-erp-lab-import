@@ -160,6 +160,13 @@ saves a full copy (`snapshots`) every 300 changes so new devices start fast.
   stores: someone with the technical know-how could read the full copy on their own device. Give a workspace seat
   only to people who may hold the company's whole books; for others, use the desktop edition on a company computer.
   Secrets never go into the log or the copies (passwords, two-step secrets, tool keys, e-invoice keys).
+* **Signed-out visitors** (the public key every web page carries) can run only the public site's functions: its texts,
+  prices, help, patch notes and the public booking/form pages. Every other database function is for signed-in
+  people only, and a function added by a later migration is closed to visitors unless that migration grants it to
+  `anon` on purpose.
+* **Limits on repeated tries** (HTTP 429, "wait a few minutes"): 10 wrong sign-ins for one username or 50 from one
+  address in 15 minutes; 12 AI requests a minute per person; 10 support tickets an hour; 20 public-page
+  submissions from one address in 10 minutes. The platform team is not limited.
 * Passwords never go to Supabase's tables: people sign in with Supabase accounts; local desktop passwords stay on the
   device where they were set.
 * After an app update, reload the page; a device with an older version stops writing until updated.

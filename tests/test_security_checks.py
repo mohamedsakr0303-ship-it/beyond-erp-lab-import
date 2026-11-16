@@ -47,6 +47,21 @@ class Local(unittest.TestCase):
         u = auth.public_user(self.db.one("SELECT * FROM users WHERE username='puppet'"))
         self.assertEqual((auth.level_of(u, "accounting"), auth.level_of(u, "sales"), auth.level_of(u, "users.users")), ("none", "view", "add"))
 
+    def test_only_a_super_administrator_puts_people_in_a_group(self):
+        # a group decides whose approvals someone sees and their dashboard (widgets may be shown even without access)
+        self.db.x("INSERT OR IGNORE INTO user_groups(key, name, layout) VALUES ('finance', 'Finance', '[{\"w\": \"cash\", \"grant\": true}]')")
+        auth.create_user(self.db, {"username": "lead", "password": "pw123456", "perms": {"users.users": "edit"}})
+        self.tok["lead"] = auth.login(self.db, "lead", "pw123456")[0]
+        lead = self.db.one("SELECT id FROM users WHERE username='lead'")["id"]
+        group = lambda u: self.db.one("SELECT group_key FROM users WHERE username=?", (u,))["group_key"]
+        st, r = self.call("PUT", f"/api/users/{lead}", {"full_name": "Lead", "group_key": "finance"}, "lead")
+        self.assertEqual(st, 200, r)
+        self.assertEqual((group("lead"), self.db.one("SELECT full_name FROM users WHERE id=?", (lead,))["full_name"]), ("", "Lead"))
+        st, r = self.call("POST", "/api/users", {"username": "friend", "password": "pw123456", "group_key": "finance"}, "hr")
+        self.assertEqual((st, group("friend")), (200, ""))
+        st, r = self.call("PUT", f"/api/users/{lead}", {"group_key": "finance"}, "boss")
+        self.assertEqual((st, group("lead")), (200, "finance"))
+
     def test_two_step_cannot_be_replaced_with_only_a_session(self):
         secret = auth.new_totp_secret()
         auth.totp_enable(self.db, self.db.one("SELECT id FROM users WHERE username='dev'")["id"], secret,

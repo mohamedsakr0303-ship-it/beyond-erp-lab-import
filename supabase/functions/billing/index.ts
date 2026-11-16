@@ -65,6 +65,20 @@ function sameHex(a: string, b: string) {
   return d === 0;
 }
 
+// Where Paymob sends the customer after paying: only back to the page that asked (the app on our site, or the
+// desktop app on this computer), never to an address a crafted link put in — a look-alike page could ask for more.
+const SITE = Deno.env.get("SITE_URL") || Deno.env.get("PUSH_SUBJECT") || "https://mybeyonderp.com/";
+function safeBack(req: Request, raw: unknown): string | undefined {
+  let u: URL;
+  try { u = new URL(String(raw || "")); } catch { return undefined; }
+  if (!/^https?:$/.test(u.protocol)) return undefined;
+  const local = u.protocol === "http:" && (u.hostname === "127.0.0.1" || u.hostname === "localhost");
+  let site = "";
+  try { site = new URL(SITE).origin; } catch { /* not set */ }
+  const asking = req.headers.get("Origin") || "";
+  return local || u.origin === site || (u.protocol === "https:" && u.origin === asking) ? u.toString() : undefined;
+}
+
 async function webhook(req: Request, url: URL) {
   if (!PM_HMAC) return fail(503, "Paymob HMAC secret not set");
   let b: any;
@@ -91,7 +105,7 @@ async function checkout(req: Request) {
   const me = await call("GET", "/auth/v1/user", undefined, user);
   const email = String(me.data?.email || "").toLowerCase();
   if (!me.ok || !email) return fail(401, "Sign in to the workspace again");
-  if (b.order) return await checkoutOrder(b, email);
+  if (b.order) return await checkoutOrder(req, b, email);
   const company = String(b.company || "");
   if (!/^[0-9a-f-]{36}$/i.test(company)) return fail(400, "Say which company");
   const months = Number(b.months) === 12 ? 12 : 1, extra = Math.max(0, Math.floor(Number(b.extra_users) || 0));
@@ -106,7 +120,7 @@ async function checkout(req: Request) {
     { p_company: company, p_plan: q.data.plan, p_months: months, p_extra_users: extra, p_reference: reference, p_email: email });
   if (!open.ok) return fail(400, msgOf(open.data));
   const amountCents = Math.round(Number(open.data.amount) * 100);
-  const back = /^https?:\/\//i.test(String(b.return_url || "")) ? String(b.return_url) : undefined;
+  const back = safeBack(req, b.return_url);
   const name = String(b.name || email.split("@")[0]).trim().split(/\s+/);
   const intent = await fetch(`${PM_BASE}/v1/intention/`, {
     method: "POST",
@@ -129,7 +143,7 @@ async function checkout(req: Request) {
 }
 
 // An order (one or several companies, placed in the app with the card method): its amount comes from the database.
-async function checkoutOrder(b: any, email: string) {
+async function checkoutOrder(req: Request, b: any, email: string) {
   const id = Number(b.order) || 0;
   const o = await call("GET", `/rest/v1/billing_orders?select=id,ref,email,amount,currency,status,method_kind,plan,months,lines&id=eq.${id}`);
   const od = o.data?.[0];
@@ -139,7 +153,7 @@ async function checkoutOrder(b: any, email: string) {
     return fail(503, "Card payments are not set up yet. Choose another payment method on this screen.");
   }
   const amountCents = Math.round(Number(od.amount) * 100);
-  const back = /^https?:\/\//i.test(String(b.return_url || "")) ? String(b.return_url) : undefined;
+  const back = safeBack(req, b.return_url);
   const name = String(b.name || email.split("@")[0]).trim().split(/\s+/);
   const n = Array.isArray(od.lines) ? od.lines.length : 1;
   const intent = await fetch(`${PM_BASE}/v1/intention/`, {
