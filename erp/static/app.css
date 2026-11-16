@@ -2382,7 +2382,10 @@ input[type=range]:active::-moz-range-thumb{transform:scale(1.4)}
 .lp-dots button{transition:height .32s var(--spring) .13s,width .32s,transform .25s,background .25s}
 .lp-dots button.on{height:22px;border-radius:6px;transform:none;transition:height .32s var(--spring),transform .25s,background .25s}
 @media (max-width:900px){
-  #ttl{transform-origin:left center;transform:scale(calc(1.28 - .28 * var(--tt,1)));transition:transform .08s linear}
+  /* (its box narrowed by the same factor, so enlarged it still ends where the header's buttons begin; a long title
+     shows … while large and all of it once shrunk) */
+  #ttl{transform-origin:left center;transform:scale(calc(1.28 - .28 * var(--tt,1)));transition:transform .08s linear;
+    max-width:calc(100% / (1.28 - .28 * var(--tt,1)));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   [dir=rtl] #ttl{transform-origin:right center}
   .app.pm-overlay .main{transition:transform .42s var(--settle),border-radius .42s,box-shadow .42s;transform-origin:left center}
   [dir=rtl] .app.pm-overlay .main{transform-origin:right center}
