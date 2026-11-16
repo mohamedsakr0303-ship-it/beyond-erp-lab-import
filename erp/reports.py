@@ -451,7 +451,7 @@ def chart_of_accounts_table(db, date_to=None, lang="en", inactive=False):
 
 
 def general_ledger_table(db, account=None, date_from=None, date_to=None, bu_id=None, party=None, lang="en", group=None):
-    gl = acc.general_ledger(db, account, date_from, date_to, bu_id, party, limit=100000, group=group or None)
+    gl = acc.general_ledger(db, account, date_from, date_to, bu_id, party, limit=None, group=group or None)
     nm = _names(db, lang)
     cols = [{"label": L("date", lang), "align": "left"}, {"label": L("voucher", lang), "align": "left"},
             {"label": L("description", lang), "align": "left"}, {"label": L("party", lang), "align": "left"},

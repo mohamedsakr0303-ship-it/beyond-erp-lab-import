@@ -2176,6 +2176,9 @@ def cash_flow(db, date_from=None, date_to=None, bu_id=None):
 
 
 def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, party=None, limit=500, offset=0, group=None):
+    """An account's (or several accounts') lines with a running balance. limit=None: every line. The opening, running
+    balance and closing always count every line before and in the period (a contact's own when a contact is chosen),
+    whatever part of the list is returned."""
     w, p = _where(date_from=date_from, date_to=date_to, bu_id=bu_id)
     acc = None
     if group:                                # every account under a group of the chart, however deep
@@ -2200,6 +2203,9 @@ def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, p
     opening = 0
     if acc and date_from:
         w0, p0 = _where(date_to=_day_before(date_from), bu_id=bu_id)
+        if party:                    # a contact's ledger opens at what that contact owed, not the whole account
+            w0 += f" AND {PARTY_IS}"
+            p0 = p0 + [party]
         r = db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e "
                    f"ON e.id=l.entry_id WHERE l.account=? AND {w0}", [account] + p0)
         opening = r["n"]
@@ -2207,14 +2213,22 @@ def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, p
     rows = db.q(f"""SELECT e.id, e.date, e.kind, e.memo, {PARTY} AS party, b.code AS bu_code, l.account, a.name AS account_name,
                     l.debit, l.credit, l.currency, l.fx_amount, l.fx_rate FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                     JOIN accounts a ON a.code=l.account LEFT JOIN business_units b ON b.id=e.bu_id
-                    WHERE {w} ORDER BY e.date, e.id, l.id LIMIT ? OFFSET ?""", p + [int(limit), int(offset)])
+                    WHERE {w} ORDER BY e.date, e.id, l.id LIMIT ? OFFSET ?""", p + [-1 if limit is None else int(limit), int(offset)])
     run = opening
+    if offset:                       # a later page: carry what the lines before it added
+        run += db.one(f"""SELECT COALESCE(SUM(n),0) n FROM (SELECT l.debit-l.credit n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                          JOIN accounts a ON a.code=l.account LEFT JOIN business_units b ON b.id=e.bu_id
+                          WHERE {w} ORDER BY e.date, e.id, l.id LIMIT ?)""", p + [int(offset)])["n"]
     for r in rows:
         run += r["debit"] - r["credit"]
         r["debit"], r["credit"] = to_major(r["debit"]), to_major(r["credit"])
         r["balance"] = to_major(sign * run) if acc else None
+    closing = run
+    if acc and limit is not None and (offset or len(rows) >= int(limit)):    # part of the list: the closing counts all of it
+        closing = opening + db.one(f"""SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                                       JOIN accounts a ON a.code=l.account LEFT JOIN business_units b ON b.id=e.bu_id WHERE {w}""", p)["n"]
     return {"account": acc, "opening": to_major(sign * opening), "rows": rows,
-            "closing": to_major(sign * run) if acc else None}
+            "closing": to_major(sign * closing) if acc else None}
 
 
 def party_balance(db, account, party):
