@@ -697,7 +697,7 @@ class CloudSync:
     def recorded_as(self, user):
         """Who a change from `user` on this device is recorded as in the workspace log, and so replayed as on every
         device: the user themselves when this device's account is a gateway (it relays local users), otherwise the
-        workspace account's own app user. Checking a change as anyone else would let through what fails everywhere."""
+        workspace account's own app user. A change is checked as both: the person's own rights, and what replays."""
         if self._gateway is None:
             try:
                 self._gateway = bool((self.info() or {}).get("gateway"))
@@ -726,7 +726,7 @@ class CloudSync:
     def write(self, method, target, headers, raw, user):
         """Make a change through the workspace; returns the reply the screen expects."""
         from .server import ok
-        user = self.recorded_as(user) or user
+        rec = self.recorded_as(user) or user     # who the log will replay it as (a gateway: the person themselves)
         with self.lock:
             try:
                 ask, sent = (method, target, bytes(raw or b"")), [None, None]
@@ -736,9 +736,14 @@ class CloudSync:
                     if u and u.get("reply") is not None and u["ask"] == ask and time.time() - u["at"] < UNSURE_FOR:
                         self._unsure = None       # the same request again: it was saved the first time
                         return u["reply"]
-                    reply, op = prepare(self.app, method, target, headers, raw, user)
+                    reply, op = prepare(self.app, method, target, headers, raw, user)    # the person's own rights
                     if op is None:
                         return reply
+                    if rec and rec.get("id") != user.get("id"):
+                        # and as the account it will be replayed as, on every device: what fails there is not stored
+                        r2, _ = prepare(self.app, method, target, headers, raw, rec)
+                        if r2.status >= 400:
+                            return r2
                     op["seq"] = last_seq(self.db) + 1
                     if sent[0] != op["body"]:          # a large change goes up in pieces, once (not again on a retry)
                         sent[:] = [op["body"], self.put_big(op["body"])]
