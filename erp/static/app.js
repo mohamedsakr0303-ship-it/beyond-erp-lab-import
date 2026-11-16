@@ -193,8 +193,13 @@ function pullToRefresh() {
   const FULL = 64, K = .35;
   let y0 = null, x0 = 0, pull = 0, busy = false, down = false;
   // not while a form or dialog is open, nor from a field, a chat or a map (they have their own dragging)
-  const blocked = t => !t.closest || t.closest(".drawer-bg,.dlg-bg,input,textarea,select,[contenteditable],.chat,.leaflet-container,.ptr-off") ||
-                       document.querySelector(".drawer-bg,.dlg-bg");
+  // something that scrolls on its own (the side menu, a list, a panel, a menu): a pull there scrolls it, never the page
+  const ownScroll = t => { for (let el = t; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+      const oy = getComputedStyle(el).overflowY;
+      if ((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1) return true; }
+    return false; };
+  const blocked = t => !t.closest || t.closest(".drawer-bg,.dlg-bg,input,textarea,select,[contenteditable],.chat,.leaflet-container,.ptr-off,.side,#nav,.dd-menu,.bottombar") ||
+                       document.querySelector(".drawer-bg,.dlg-bg,.app.menu,.dd.open,.pal-bg") || ownScroll(t);
   const set = (d, back) => { const v = $("#view"); if (!v) return;
     v.classList.toggle("ptr-back", !!back); ring.classList.toggle("back", !!back);
     v.style.transform = d ? `translateY(${d}px)` : "";
