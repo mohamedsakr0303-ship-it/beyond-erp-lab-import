@@ -327,8 +327,17 @@ class Handler(BaseHTTPRequestHandler):
                                 f"by all companies). Choose another one, for example “{u}.{tag}”."}
         if e and st.people.get(e) and st.people[e] != u and (cid, e) not in st.members:
             return 409, {"msg": f"This email already has a sign-in account with the username “{st.people[e]}” — use that username to add them."}
+        if body.get("check") == "username":            # (as the function: is the username free for this company)
+            return 200, {"ok": True, "taken_here": bool(old)}
         target = old or wanted
         shared = bool(others(target)) and target in st.accounts
+        if body.get("check"):                          # would saving work? nothing is created or changed
+            if shared and body.get("password"):
+                return 400, {"msg": "This person already has a sign-in account (used by another company too). They keep "
+                                    "their own password — leave the password empty to add them."}
+            if not shared and st.accounts.get(target) is None and st.accounts.get(wanted) is None and not body.get("password"):
+                return 400, {"msg": "Set a password for this person (they have no sign-in account yet)"}
+            return 200, {"ok": True, "exists": target in st.accounts}
         if shared:
             if body.get("password"):
                 return 400, {"msg": "This person already has a sign-in account (used by another company too). They keep "

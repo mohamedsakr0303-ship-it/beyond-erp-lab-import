@@ -232,6 +232,41 @@ def update_user(db, uid, d, acting_user_id):
         db.x("DELETE FROM sessions WHERE user_id=?", (uid,))
 
 
+USER_COLS = ("username", "created_by", "posted_by", "approved_by", "requested_by", "by_user", "author", "actor")
+
+
+def used_names(db):
+    """Every username anything in the books carries: the log of what people did (signing in included) and each
+    record's maker / approver, whatever the table."""
+    out = set()
+    for t in [r["name"] for r in db.q("SELECT name FROM sqlite_master WHERE type='table'")]:
+        if t in ("users", "sessions"):
+            continue
+        for c in [r["name"] for r in db.q(f"PRAGMA table_info({t})") if r["name"] in USER_COLS]:
+            out |= {str(r["u"]).lower() for r in db.q(f"SELECT DISTINCT {c} u FROM {t} WHERE {c} IS NOT NULL AND {c}<>''")}
+    return out
+
+
+def never_used(db, username):
+    """Never signed in and never did anything: nothing in the books carries this username yet."""
+    return str(username).lower() not in used_names(db)
+
+
+def rename_user(db, uid, new):
+    """A new username for someone who has never signed in (a typo, or a name another company already has in the
+    shared workspace). Refused once the person has used the app: their name is on what they recorded."""
+    u = db.one("SELECT username FROM users WHERE id=?", (uid,))
+    if not u:
+        raise ValidationError("User not found")
+    new = text(new, "username", required=True, maxlen=60)
+    if not never_used(db, u["username"]):
+        raise ValidationError("This person has already signed in and used the app — their username is on what they recorded and "
+                              "cannot change. Add them again under another username if you must.")
+    if db.one("SELECT 1 FROM users WHERE username=? AND id<>?", (new, uid)):
+        raise ValidationError("Username already exists")
+    db.x("UPDATE users SET username=? WHERE id=?", (new, uid))
+
+
 def delete_user(db, uid, acting_user_id):
     """Remove a user. Their name stays on everything they recorded (entries and the audit log keep the username)."""
     u = db.one("SELECT * FROM users WHERE id=?", (uid,))

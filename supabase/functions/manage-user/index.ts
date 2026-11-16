@@ -23,7 +23,7 @@ const cors = {
 };
 const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
-const fail = (status: number, msg: string) => reply(status, { msg, error: msg });
+const fail = (status: number, msg: string, ar = "") => reply(status, { msg, error: msg, ...(ar ? { hint: ar } : {}) });
 const svc = { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" };
 const enc = encodeURIComponent;
 
@@ -186,9 +186,13 @@ Deno.serve(async (req) => {
   };
   const byName = await person(`username=ilike.${enc(username)}`);
   if (byName && !(await inThis(byName.email)) && !(email && email === byName.email && !password)) {
+    const alt = await suggest();
     return fail(409, `The username “${username}” is already taken by someone in another company (usernames are shared by all companies). ` +
-      `Choose another one, for example “${await suggest()}”.`);
+      `Choose another one, for example “${alt}”.`,
+      `اسم المستخدم «${username}» مستخدم بالفعل في شركة أخرى (أسماء المستخدمين مشتركة بين كل الشركات). اختر اسماً آخر، مثل «${alt}».`);
   }
+  // check "username": is this username free for this company (the Users form asks as the field is left)
+  if (b.check === "username") return reply(200, { ok: true, taken_here: !!byName });
   const byEmail = email ? await person(`email=eq.${enc(email)}`) : null;
   if (byEmail && byEmail.username && byEmail.username !== username && !(await inThis(email))) {
     return fail(409, `This email already has a sign-in account with the username “${byEmail.username}” — use that username to add them.`);
@@ -198,6 +202,21 @@ Deno.serve(async (req) => {
   let id = await idOf(target);
   if (!id && target !== wanted) id = await idOf(wanted);
   const shared = id ? await otherCompanies(target) : 0;
+
+  // check: would saving work? The same questions as below, answered without creating or changing anything — the app
+  // asks before it saves the person in the books, so nobody is saved without a sign-in they can use
+  if (b.check) {
+    if (!id && !password) return fail(400, "Set a password for this person (they have no sign-in account yet)", "حدد كلمة مرور لهذا الشخص (ليس له حساب دخول بعد)");
+    if (id && shared && password) {
+      return fail(400, "This person already has a sign-in account (used by another company too). They keep their own password — leave the password empty to add them.");
+    }
+    if (id && !shared && target !== caller && !(await inThis(target))) {
+      if (password) return fail(400, "This person already has a sign-in account. They keep their own password — leave the password empty to add them.");
+    } else if (id && !shared && !isSuper && target !== caller) {
+      return fail(403, "Only a super administrator can change someone's sign-in account — administrators may add people");
+    }
+    return reply(200, { ok: true, exists: !!id });
+  }
 
   let created = false;
   let untouched = false;

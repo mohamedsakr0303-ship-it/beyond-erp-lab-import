@@ -2891,6 +2891,20 @@ class Companies(unittest.TestCase):
                     fn(body)
                 self.assertIn("already taken", str(cm.exception))
                 self.assertIn("ali.beta", str(cm.exception))                              # a free name is suggested
+            # asked before anyone is saved: taken, free, or missing what the sign-in needs — and nothing is created
+            with self.assertRaises(RuntimeError) as cm:
+                fn({"username": "ali", "check": "username"})
+            self.assertIn("already taken", str(cm.exception))
+            self.assertTrue(fn({"username": "ali.beta2", "check": "username"})["ok"])
+            with self.assertRaises(RuntimeError) as cm:
+                fn({"username": "newperson", "check": True})
+            self.assertIn("Set a password", str(cm.exception))
+            self.assertTrue(fn({"username": "newperson", "password": "newpw123", "check": True})["ok"])
+            self.assertNotIn("newperson@users.beyond-erp.invalid", sb.state.accounts)
+            self.assertNotIn((beta, "newperson@users.beyond-erp.invalid"), sb.state.members)
+            st_, r_ = api(0, a, "PUT", "/api/cloud/account", {"username": "nobody.here", "check": True})   # the desktop path too
+            self.assertNotEqual(st_, 200, r_)
+            self.assertIn("Set a password", str(r_))
             self.assertIsNone(sb.state.members.get((beta, "ali@users.beyond-erp.invalid")))
             self.assertEqual(sb.state.accounts["ali@users.beyond-erp.invalid"], "alipw123")  # Alpha's ali untouched
             self.assertEqual(fn({"username": "ali.beta", "password": "betapw1"})["username"], "ali.beta")

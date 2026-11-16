@@ -7158,7 +7158,7 @@ PAGES.users = async (view) => {
   const ed = can("users.users", "edit");
   const ar = S.lang === "ar";
   const groupName = k => { const g = gr.groups.find(x => x.key === (k || "general")); return g ? (ar && g.name_ar) || g.name : ""; };
-  const edit = u => drawer(t("m_users") + (u.username ? " — " + u.username : ""), form([{ k: "username", l: t("username"), v: u.username, req: 1, dis: !!u.id,
+  const edit = u => drawer(t("m_users") + (u.username ? " — " + u.username : ""), form([{ k: "username", l: t("username"), v: u.username, req: 1, dis: !!u.id && !(S.boot.user.is_super && u.never_used),
     help: cloudOn() && !u.id ? (S.lang === "ar" ? "أسماء المستخدمين فريدة في جميع الشركات. إن كان الاسم مستخدماً يُقترح بديل (مثل name.company)." : "Usernames are unique across all companies. If taken, an alternative is suggested (e.g. name.company).") : "" }, { k: "full_name", l: t("full_name"), v: u.full_name },
     ...(gr.groups.length ? [{ k: "group_key", l: L2("Group (determines the dashboard)", "المجموعة (تحدد لوحة التحكم)"), type: "select", v: u.group_key || "general",
       dis: !S.boot.user.is_super,     // (a group decides whose approvals someone sees: super administrators place people)
@@ -7198,12 +7198,18 @@ PAGES.users = async (view) => {
     if (body.projects && !$("#ubusall", f).checked && !body.projects.length) throw new Error(L2("Choose at least one project or select All projects.", "اختر مشروعاً واحداً على الأقل أو حدد «جميع المشروعات»."));
     if (v.group_key !== undefined) body.group_key = v.group_key === "general" ? "" : v.group_key;
     if (S.boot.user.is_super) body.is_super = !!v.is_super; else { body.is_admin = !!u.is_admin; }
+    const renamed = !!u.id && body.username !== u.username;
+    if (cloudOn()) {     // the shared workspace: ask first whether their sign-in can be made, so nobody is saved without one
+      try { await CloudAPI.manageUser({ username: body.username, email: v.email, password: v.password, full_name: v.full_name, active: v.active !== false, check: true }); }
+      catch (e) { if (e.status !== 404) throw new Error(e.message); }       // (404: a workspace without the check yet)
+    }
     if (u.id) await api("PUT", "/api/users/" + u.id, body); else await api("POST", "/api/users", body);
     if (!cloudOn()) { toast(t("saved")); return; }
     setTimeout(deskSyncPublishers, 1500);     // after their workspace account exists
     // shared workspace: create / update their sign-in account so they can sign in with username + password now
     try {
       const r = await CloudAPI.manageUser({ username: body.username, email: v.email, password: v.password, full_name: v.full_name, active: v.active !== false });
+      if (renamed && !v.email) await CloudAPI.deleteAccount({ username: u.username }).catch(() => {});
       // the workspace keeps its own list of super administrators (chat between companies, the AI assistant's key)
       if (S.boot.user.is_super && !!v.is_super !== !!u.is_super)
         await CloudAPI.call("rpc", "set_member_super", { p_email: v.email || `${body.username}@users.beyond-erp.invalid`, p_super: !!v.is_super }).catch(() => {});
@@ -7216,6 +7222,20 @@ PAGES.users = async (view) => {
       } else toast((ar ? "تم حفظ المستخدم، لكن لم يُنشأ حساب الدخول:" : "User saved, but the sign-in account was not created: ") + e.message, true);
     } },
   { onOpen: f => { wirePerms(f); pwWire(f);
+    const un = f.querySelector('[name="username"]');
+    if (un && !un.disabled && cloudOn()) {
+      const say = document.createElement("div"); say.className = "uname-say muted"; say.setAttribute("role", "status"); un.after(say);
+      let seq = 0;
+      const ask = async () => { const name = un.value.trim(), n = ++seq;
+        if (!name || name === u.username) { say.textContent = ""; say.className = "uname-say muted"; un.removeAttribute("aria-invalid"); return; }
+        say.className = "uname-say muted"; say.textContent = L2("Checking…", "جارٍ التحقق…");
+        try { await CloudAPI.manageUser({ username: name, check: "username" }); if (n !== seq) return;
+          say.className = "uname-say ok"; say.textContent = L2("✓ Available", "✓ متاح"); un.removeAttribute("aria-invalid"); }
+        catch (e) { if (n !== seq) return;
+          if (e.status === 404) { say.textContent = ""; return; }
+          say.className = "uname-say bad"; say.textContent = e.message; un.setAttribute("aria-invalid", "true"); } };
+      un.addEventListener("change", ask); un.addEventListener("blur", ask);
+    }
     if (!planHasPerms()) {           // the plan does not include user permissions: the grid and project access are not offered
       ["#permwrap", "#ubus"].forEach(sel => { const x = $(sel, f); if (x) x.hidden = true; });
       const pw = $("#permwrap", f);

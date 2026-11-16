@@ -5660,7 +5660,9 @@ def do_import(ctx):
 # ==================================================================== users
 @route("GET", "/api/users", "users.users")
 def users(ctx):
-    return ok([auth.public_user(u) for u in ctx.db.q("SELECT * FROM users ORDER BY id")])
+    used = auth.used_names(ctx.db)
+    # never_used: never signed in nor did anything, so a super administrator may still correct the username
+    return ok([{**auth.public_user(u), "never_used": u["username"].lower() not in used} for u in ctx.db.q("SELECT * FROM users ORDER BY id")])
 
 
 class SuperOnly(PermissionError):
@@ -5742,6 +5744,12 @@ def user_edit(ctx, uid):
         _need_super(ctx, "change administrators")   # an administrator may still edit their own name, email, password
     if ctx.body.get("active") and not ctx.db.one("SELECT active FROM users WHERE id=?", (int(uid),))["active"]:
         _licence_seat(ctx)
+    new_name = acc.text(b.get("username"))
+    old_name = ctx.db.one("SELECT username FROM users WHERE id=?", (int(uid),))["username"]
+    if new_name and new_name.lower() != old_name.lower():
+        _need_super(ctx, "change a username")
+        auth.rename_user(ctx.db, int(uid), new_name)
+        ctx.log("user.rename", f"{old_name} → {new_name}")
     auth.update_user(ctx.db, int(uid), ctx.body, ctx.user["id"])
     ctx.log("user.edit", uid)
     return ok()
@@ -6795,7 +6803,7 @@ def cloud_account(ctx):
     """Create / update a person's workspace sign-in account (supabase/functions/manage-user)."""
     c = _cloud(ctx)
     return _cloud_call(lambda: c.manage_user({k: ctx.body.get(k) for k in ("username", "email", "password", "full_name",
-                                                                             "active")}))
+                                                                             "active", "check") if k != "check" or ctx.body.get(k)}))
 
 
 @route("POST", "/api/cloud/account/delete")

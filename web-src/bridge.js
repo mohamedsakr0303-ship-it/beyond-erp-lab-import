@@ -248,8 +248,8 @@ def cloud_new_books(name, email):
         } catch (e) { throw new CloudError("Cannot reach the workspace — check your internet connection", "offline"); }
         const text = await r.text(); let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = { message: text }; }
         if (!r.ok) { const d = data || {};
-          // over a limit (too many tries): the database says it in Arabic too, for an Arabic screen
-          const ar = r.status === 429 && d.hint && /^ar/i.test(document.documentElement.lang || "");
+          // the server's message in Arabic too (over a limit, a username taken …), for an Arabic screen
+          const ar = d.hint && /[\u0600-\u06ff]/.test(d.hint) && /^ar/i.test(document.documentElement.lang || "");   // (Arabic text from the server)
           throw new CloudError(ar ? d.hint : (d.message || d.msg || d.error_description || d.error || ("HTTP " + r.status)), d.error_code || (typeof d.code === "string" ? d.code : ""), r.status); }
         return data;
       }
@@ -666,7 +666,7 @@ def cloud_new_books(name, email):
         deleteAccount: async m => req("POST", "/functions/v1/manage-user", { company: co(), action: "delete", username: m.username || "", email: m.email || "" }, await token()),
         mfaReset: async m => req("POST", "/functions/v1/manage-user", { company: co(), action: "mfa_off", username: m.username || "", email: m.email || "" }, await token()),
         manageUser: async m => req("POST", "/functions/v1/manage-user", { company: co(), username: m.username, email: m.email || "", password: m.password || "",
-          full_name: m.full_name || "", active: m.active !== false }, await token()),
+          full_name: m.full_name || "", active: m.active !== false, ...(m.check ? { check: m.check } : {}) }, await token()),
         snapshot: () => maybeSnapshot(true),
         // --- paid subscriptions (supabase/migrations/*_billing.sql, supabase/functions/billing). Older workspaces
         // without billing answer "function not found": treated as billing switched off.

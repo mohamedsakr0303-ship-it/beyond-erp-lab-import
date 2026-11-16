@@ -2397,3 +2397,5 @@ input[type=range]:active::-moz-range-thumb{transform:scale(1.4)}
   .app.pm-overlay.menu::before{background:rgba(0,0,0,.35)}
   input[type=range]:active::-webkit-slider-thumb,input[type=range]:active::-moz-range-thumb{transform:none}
 }
+/* the Users form: is the username free in the shared workspace (said as the field is left) */
+.uname-say{font-size:.82em;margin-top:4px;min-height:1.2em}.uname-say.ok{color:var(--good)}.uname-say.bad{color:var(--bad)}

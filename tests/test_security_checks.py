@@ -62,6 +62,25 @@ class Local(unittest.TestCase):
         st, r = self.call("PUT", f"/api/users/{lead}", {"group_key": "finance"}, "boss")
         self.assertEqual((st, group("lead")), (200, "finance"))
 
+    def test_a_username_is_corrected_only_before_the_person_has_used_the_app(self):
+        auth.create_user(self.db, {"username": "ali", "password": "pw123456"})
+        uid = self.db.one("SELECT id FROM users WHERE username='ali'")["id"]
+        rows = {u["username"]: u for u in self.call("GET", "/api/users")[1]}
+        self.assertTrue(rows["ali"]["never_used"])
+        self.assertTrue(rows["boss"]["never_used"])                                    # (setUp signs in without the route's log)
+        self.db.x("INSERT INTO journal_entries(date, kind, memo, status, created_by) VALUES ('2026-01-01', 'Journal Voucher', 'x', 'void', 'hr')")
+        self.assertFalse({u["username"]: u for u in self.call("GET", "/api/users")[1]}["hr"]["never_used"])   # made an entry
+        self.assertEqual(self.call("PUT", f"/api/users/{uid}", {"username": "ali.co"}, "hr")[0], 403)   # super administrators only
+        st, r = self.call("PUT", f"/api/users/{uid}", {"username": "ali.co"})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(self.db.one("SELECT username FROM users WHERE id=?", (uid,))["username"], "ali.co")
+        self.assertEqual(self.call("PUT", f"/api/users/{uid}", {"username": "hr"})[0], 400)            # taken here
+        auth.login(self.db, "ali.co", "pw123456")
+        self.db.log("ali.co", "login")                                                   # (as the sign-in route records it)
+        st, r = self.call("PUT", f"/api/users/{uid}", {"username": "ali.other"})
+        self.assertEqual(st, 400, r)
+        self.assertIn("already signed in", r["error"])
+
     def test_two_step_cannot_be_replaced_with_only_a_session(self):
         secret = auth.new_totp_secret()
         auth.totp_enable(self.db, self.db.one("SELECT id FROM users WHERE username='dev'")["id"], secret,
