@@ -2357,3 +2357,43 @@ html.dock-liquid .bottombar>.on svg.i,html.dock-liquid .bottombar .bb-new.on>.bt
   .toast .tick circle,.toast .tick path{animation:none;stroke-dashoffset:0}
   .ptr{display:none}
 }
+
+/* ---------------------------------------------------------------- motion, more
+   + New fans its menu out (the plus turns into a ×); a slider's thumb grows when grabbed and its value follows it in a
+   bubble; on a phone the screen's title starts large and shrinks as the page scrolls; a long press sinks, then lifts
+   as its menu opens; the side menu pushes the page aside instead of covering it; the story's dots stretch, then snap. */
+.newdd>.btn svg>*{transition:transform .38s var(--spring);transform-box:fill-box;transform-origin:center}
+.newdd.open>.btn svg>*{transform:rotate(45deg)}   /* (the shape inside: the bottom bar moves the icon itself) */
+.newdd.open .dd-menu>*{animation:fanin .32s var(--settle) both}
+.newdd.open .dd-menu>:nth-child(2){animation-delay:35ms}.newdd.open .dd-menu>:nth-child(3){animation-delay:70ms}
+.newdd.open .dd-menu>:nth-child(4){animation-delay:105ms}.newdd.open .dd-menu>:nth-child(5){animation-delay:140ms}
+.newdd.open .dd-menu>:nth-child(6){animation-delay:175ms}.newdd.open .dd-menu>:nth-child(7){animation-delay:210ms}
+.newdd.open .dd-menu>:nth-child(n+8){animation-delay:245ms}
+@keyframes fanin{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
+input[type=range]::-webkit-slider-thumb{transition:transform .28s var(--spring)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.4)}
+input[type=range]::-moz-range-thumb{transition:transform .28s var(--spring)}
+input[type=range]:active::-moz-range-thumb{transform:scale(1.4)}
+.rbubble{position:fixed;z-index:120;pointer-events:none;padding:3px 8px;border-radius:8px;background:var(--ink);color:var(--bg);font-size:.8em;font-weight:700;
+  font-variant-numeric:tabular-nums;translate:-50% 0;transition:left .14s var(--settle),opacity .2s,transform .28s var(--spring);transform:translateY(4px) scale(.8);opacity:0}
+.rbubble.on{opacity:1;transform:none}
+.lp-hold{transform:scale(.97);transition:transform .55s ease-out!important}
+.lp-up{transform:scale(1.05);box-shadow:0 16px 36px rgba(0,0,0,.28);transition:transform .3s var(--spring),box-shadow .3s!important;position:relative;z-index:4}
+.lp-dots button{transition:height .32s var(--spring) .13s,width .32s,transform .25s,background .25s}
+.lp-dots button.on{height:22px;border-radius:6px;transform:none;transition:height .32s var(--spring),transform .25s,background .25s}
+@media (max-width:900px){
+  #ttl{transform-origin:left center;transform:scale(calc(1.28 - .28 * var(--tt,1)));transition:transform .08s linear}
+  [dir=rtl] #ttl{transform-origin:right center}
+  .app.pm-overlay .main{transition:transform .42s var(--settle),border-radius .42s,box-shadow .42s;transform-origin:left center}
+  [dir=rtl] .app.pm-overlay .main{transform-origin:right center}
+  .app.pm-overlay.menu .main{transform:translateX(min(270px,70vw)) scale(.86);border-radius:22px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+  [dir=rtl] .app.pm-overlay.menu .main{transform:translateX(max(-270px,-70vw)) scale(.86)}
+  .app.pm-overlay.menu::before{background:transparent;backdrop-filter:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .newdd>.btn svg>*,.newdd.open .dd-menu>*,.rbubble,.lp-hold,.lp-up,.lp-dots button,#ttl,.app.pm-overlay .main{transition:none!important;animation:none!important}
+  #ttl{transform:none!important}.lp-hold,.lp-up{transform:none}
+  .app.pm-overlay.menu .main{transform:none;border-radius:0;box-shadow:none}
+  .app.pm-overlay.menu::before{background:rgba(0,0,0,.35)}
+  input[type=range]:active::-webkit-slider-thumb,input[type=range]:active::-moz-range-thumb{transform:none}
+}

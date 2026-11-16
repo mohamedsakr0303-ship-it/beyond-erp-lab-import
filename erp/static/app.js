@@ -865,7 +865,21 @@ const notInPlan = key => String(key).split("|").every(k => !licensed(k)) && Stri
 // sliders show their filled part (WebKit has no built-in fill): kept in step with the value wherever a slider appears
 const syncRange = el => { const lo = +el.min || 0, hi = el.max === "" ? 100 : +el.max, v = +el.value;
   el.style.setProperty("--p", `${hi > lo ? Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100)) : 0}%`); };
-document.addEventListener("input", e => { if (e.target.type === "range") syncRange(e.target); }, true);
+document.addEventListener("input", e => { if (e.target.type === "range") { syncRange(e.target); rangeBubble(e.target); } }, true);
+// while a slider is held: its value in a bubble above the thumb, following it a moment behind
+let RB = null;
+function rangeBubble(el) {
+  if (!RB) { RB = document.createElement("div"); RB.className = "rbubble"; RB.setAttribute("aria-hidden", "true"); document.body.appendChild(RB); }
+  const r = el.getBoundingClientRect(), lo = +el.min || 0, hi = el.max === "" ? 100 : +el.max, k = hi > lo ? (+el.value - lo) / (hi - lo) : 0;
+  const rtl = getComputedStyle(el).direction === "rtl", x = r.left + 10 + (r.width - 20) * (rtl ? 1 - k : k);
+  RB.textContent = el.value; RB.style.left = x + "px"; RB.style.top = (r.top - 30) + "px"; RB.classList.add("on");
+}
+document.addEventListener("pointerdown", e => { if (e.target.type === "range") requestAnimationFrame(() => rangeBubble(e.target)); }, true);
+["pointerup", "pointercancel"].forEach(k => document.addEventListener(k, () => { if (RB) RB.classList.remove("on"); }, true));
+// the screen's title on a phone: large at the top, shrinking as the page scrolls (tied to the scroll, not timed)
+{ let q = 0; addEventListener("scroll", () => { if (q) return; q = requestAnimationFrame(() => { q = 0;
+    document.documentElement.style.setProperty("--tt", Math.min(1, scrollY / 90).toFixed(3)); }); }, { passive: true });
+  document.documentElement.style.setProperty("--tt", "0"); }
 new MutationObserver(() => $$('input[type=range]').forEach(syncRange)).observe(document.documentElement, { childList: true, subtree: true });
 
 // ---------------------------------------------------------------- events
@@ -14155,11 +14169,17 @@ document.addEventListener("contextmenu", e => {
 });
 // a long press on a phone does the same
 { let timer = 0, sx = 0, sy = 0, fired = false;
+  let held = null;
+  const LIFT = "tbody tr, .kcard, .wg, .ucard, .card.click, a.posit, a.wstat, li";
+  const letGo = () => { if (held) held.classList.remove("lp-hold", "lp-up"); held = null; };
   document.addEventListener("touchstart", e => { if (e.touches.length !== 1) return; const tch = e.touches[0]; sx = tch.clientX; sy = tch.clientY; fired = false;
-    const r0 = e.target; clearTimeout(timer);
-    timer = setTimeout(() => { if (ctxEl || (window.__dndActive && window.__dndActive()) || (r0.closest && r0.closest("#nav") && canMenus())) return; const r = ctxFor(r0); if (!r || !r[1] || !r[1].length) return; fired = true; if (navigator.vibrate) navigator.vibrate(12); ctxOpen(sx, sy, r[0], r[1]); }, 550); }, { passive: true });
-  document.addEventListener("touchmove", e => { const tch = e.touches[0]; if (Math.hypot(tch.clientX - sx, tch.clientY - sy) > 10) clearTimeout(timer); }, { passive: true });
-  document.addEventListener("touchend", e => { clearTimeout(timer); if (fired) { e.preventDefault(); fired = false; } }); }
+    const r0 = e.target; clearTimeout(timer); letGo();
+    held = r0.closest && !r0.closest("#nav, input, textarea, select") ? r0.closest(LIFT) : null;
+    if (held && !matchMedia("(prefers-reduced-motion: reduce)").matches) { const h = held; setTimeout(() => { if (held === h && !fired) h.classList.add("lp-hold"); }, 120); } else held = null;
+    timer = setTimeout(() => { if (ctxEl || (window.__dndActive && window.__dndActive()) || (r0.closest && r0.closest("#nav") && canMenus())) return; const r = ctxFor(r0); if (!r || !r[1] || !r[1].length) { letGo(); return; } fired = true;
+      if (held) { held.classList.remove("lp-hold"); held.classList.add("lp-up"); const h = held; setTimeout(() => { if (held === h) letGo(); }, 700); } if (navigator.vibrate) navigator.vibrate(12); ctxOpen(sx, sy, r[0], r[1]); }, 550); }, { passive: true });
+  document.addEventListener("touchmove", e => { const tch = e.touches[0]; if (Math.hypot(tch.clientX - sx, tch.clientY - sy) > 10) { clearTimeout(timer); letGo(); } }, { passive: true });
+  document.addEventListener("touchend", e => { clearTimeout(timer); if (fired) { e.preventDefault(); fired = false; } else letGo(); }); }
 
 // ---- drag and drop in the menu: press and hold a screen or a section, then drag it. A screen dropped on another
 // screen goes just above / below it (in that section); dropped on a section heading it goes to the end of that section.
