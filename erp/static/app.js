@@ -7199,6 +7199,9 @@ PAGES.users = async (view) => {
     if (v.group_key !== undefined) body.group_key = v.group_key === "general" ? "" : v.group_key;
     if (S.boot.user.is_super) body.is_super = !!v.is_super; else { body.is_admin = !!u.is_admin; }
     const renamed = !!u.id && body.username !== u.username;
+    const unf = f.querySelector('[name="username"]');
+    if (unf && !unf.disabled && f.dataset.unameOk !== String(body.username || "").trim())
+      throw new Error(L2("Check the username's availability first (the button under the username).", "تحقق أولاً من توفر اسم المستخدم (الزر أسفل اسم المستخدم)."));
     if (cloudOn()) {     // the shared workspace: ask first whether their sign-in can be made, so nobody is saved without one
       try { await CloudAPI.manageUser({ username: body.username, email: v.email, password: v.password, full_name: v.full_name, active: v.active !== false, check: true }); }
       catch (e) { if (e.status !== 404) throw new Error(e.message); }       // (404: a workspace without the check yet)
@@ -7222,19 +7225,38 @@ PAGES.users = async (view) => {
       } else toast((ar ? "تم حفظ المستخدم، لكن لم يُنشأ حساب الدخول:" : "User saved, but the sign-in account was not created: ") + e.message, true);
     } },
   { onOpen: f => { wirePerms(f); pwWire(f);
+    // the username: "Check availability" right under it, and Save waits until the name in the box has passed
     const un = f.querySelector('[name="username"]');
-    if (un && !un.disabled && cloudOn()) {
-      const say = document.createElement("div"); say.className = "uname-say muted"; say.setAttribute("role", "status"); un.after(say);
+    if (un && !un.disabled) {
+      const box = document.createElement("div"); box.className = "uname-check";
+      box.innerHTML = `<button type="button" class="btn sm">${esc(L2("Check availability", "التحقق من التوفر"))}</button><span class="uname-say muted" role="status"></span>`;
+      un.after(box);
+      const btn = box.querySelector("button"), say = box.querySelector(".uname-say");
+      const mark = (cls, text, ok) => { say.className = "uname-say " + cls; say.textContent = text;
+        if (ok) { f.dataset.unameOk = un.value.trim(); un.removeAttribute("aria-invalid");
+          f.querySelectorAll(".banner.err").forEach(b => { if (/availability|توفر/.test(b.textContent)) b.remove(); }); }
+        else { delete f.dataset.unameOk; if (cls === "bad") un.setAttribute("aria-invalid", "true"); } };
       let seq = 0;
       const ask = async () => { const name = un.value.trim(), n = ++seq;
-        if (!name || name === u.username) { say.textContent = ""; say.className = "uname-say muted"; un.removeAttribute("aria-invalid"); return; }
-        say.className = "uname-say muted"; say.textContent = L2("Checking…", "جارٍ التحقق…");
-        try { await CloudAPI.manageUser({ username: name, check: "username" }); if (n !== seq) return;
-          say.className = "uname-say ok"; say.textContent = L2("✓ Available", "✓ متاح"); un.removeAttribute("aria-invalid"); }
+        if (!name) return mark("bad", L2("Enter a username first.", "اكتب اسم المستخدم أولاً."), false);
+        if (u.id && name === u.username) return mark("ok", L2("✓ Their current username", "✓ اسم المستخدم الحالي"), true);
+        // on the shared workspace, the rules its sign-in uses: 2–40 letters, digits, dots, dashes or underscores — or an email address
+        if (cloudOn() && !/^[A-Za-z0-9][A-Za-z0-9._-]{1,39}$/.test(name) && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(name))
+          return mark("bad", L2("Use 2–40 letters, digits, dots, dashes or underscores (no spaces), or an email address.",
+                                "استخدم من 2 إلى 40 حرفاً لاتينياً أو رقماً أو نقطة أو شرطة (بدون مسافات)، أو بريداً إلكترونياً."), false);
+        if (rows.some(x => x.id !== u.id && String(x.username).toLowerCase() === name.toLowerCase()))
+          return mark("bad", L2("Someone in this company already has this username.", "يوجد في هذه الشركة من يستخدم اسم المستخدم هذا."), false);
+        if (!cloudOn()) return mark("ok", L2("✓ Available", "✓ متاح"), true);
+        mark("muted", L2("Checking…", "جارٍ التحقق…"), false); btn.disabled = true;
+        try { await CloudAPI.manageUser({ username: name, check: "username" }); if (n === seq) mark("ok", L2("✓ Available", "✓ متاح"), true); }
         catch (e) { if (n !== seq) return;
-          if (e.status === 404) { say.textContent = ""; return; }
-          say.className = "uname-say bad"; say.textContent = e.message; un.setAttribute("aria-invalid", "true"); } };
-      un.addEventListener("change", ask); un.addEventListener("blur", ask);
+          if (e.status === 404) mark("ok", L2("✓ Available here (this workspace cannot check other companies yet)", "✓ متاح هنا (لا تستطيع مساحة العمل هذه التحقق من الشركات الأخرى بعد)"), true);
+          else mark("bad", e.message, false); }
+        finally { btn.disabled = false; } };
+      btn.addEventListener("click", ask);
+      un.addEventListener("input", () => { seq++; mark("muted", "", false); });     // changed: check again
+      un.addEventListener("blur", () => { if (un.value.trim() && f.dataset.unameOk !== un.value.trim()) ask(); });
+      if (u.id) f.dataset.unameOk = u.username;                                        // unchanged: nothing to check
     }
     if (!planHasPerms()) {           // the plan does not include user permissions: the grid and project access are not offered
       ["#permwrap", "#ubus"].forEach(sel => { const x = $(sel, f); if (x) x.hidden = true; });
