@@ -164,12 +164,54 @@ document.addEventListener("click", e => {
   if (a && (STATIC || (a.target !== "_blank" && BAR_DOWNLOADS.test(a.getAttribute("href"))))) { e.preventDefault(); openApi(a.getAttribute("href"), a.target === "_blank"); }
 }, true);
 
-function toast(msg, err) {
-  const el = document.createElement("div");
-  el.className = "toast" + (err ? " err" : "");
-  el.textContent = msg;
+// A success ("Saved.", "Posted.", "Copied." …) draws its tick: the circle, then the check mark.
+const TOAST_OK = /^(saved|posted|copied|deleted|issued|approved|checked (in|out)|sent|imported|done|created|added|restored|joined|تم|حُفظ|أُرسل)/i;
+function toast(msg, err, kind) {
+  const el = document.createElement("div"), ok = !err && (kind === "ok" || (kind !== "info" && TOAST_OK.test(String(msg || "").trim())));
+  el.className = "toast" + (err ? " err" : "") + (ok ? " ok" : "");
+  if (ok) el.innerHTML = '<svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M7.5 12.5l3 3 6-6.5"/></svg>';
+  el.appendChild(document.createElement("span")).textContent = msg;
+  el.setAttribute("role", err ? "alert" : "status");
   document.body.appendChild(el);
   setTimeout(() => el.remove(), err ? 6000 : 2600);
+}
+// Moving things in a list: where each one was, the change, then each slides from there to its new place (200 ms).
+function flip(container, change) {
+  const items = [...container.children], was = new Map(items.map(el => [el, el.getBoundingClientRect()]));
+  change();
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  items.forEach(el => { const a = was.get(el), b = el.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
+    if ((dx || dy) && el.animate) el.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: "none" }], { duration: 200, easing: "cubic-bezier(.16,1,.3,1)" }); });
+}
+// Pull to refresh (a phone or tablet): at the top of a screen, pulling down moves the screen a third as far as the finger
+// (it resists), a ring fills; let go once it is full and the screen loads again, without reloading the whole app.
+function pullToRefresh() {
+  if (!matchMedia("(pointer: coarse)").matches || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  document.documentElement.style.overscrollBehaviorY = "contain";      // the browser's own pull reloads everything
+  const ring = document.createElement("div"); ring.className = "ptr"; ring.setAttribute("aria-hidden", "true");
+  ring.innerHTML = '<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>'; document.body.appendChild(ring);
+  const FULL = 64, K = .35;
+  let y0 = null, x0 = 0, pull = 0, busy = false, down = false;
+  // not while a form or dialog is open, nor from a field, a chat or a map (they have their own dragging)
+  const blocked = t => !t.closest || t.closest(".drawer-bg,.dlg-bg,input,textarea,select,[contenteditable],.chat,.leaflet-container,.ptr-off") ||
+                       document.querySelector(".drawer-bg,.dlg-bg");
+  const set = (d, back) => { const v = $("#view"); if (!v) return;
+    v.classList.toggle("ptr-back", !!back); ring.classList.toggle("back", !!back);
+    v.style.transform = d ? `translateY(${d}px)` : "";
+    const p = Math.min(1, d / FULL); ring.style.setProperty("--p", p.toFixed(3));
+    ring.style.opacity = d ? Math.min(1, p * 1.4) : 0; ring.style.transform = `translateY(${Math.min(d, FULL) - 40}px) scale(${.6 + .4 * p})`; };
+  addEventListener("touchstart", e => { if (busy || e.touches.length !== 1 || scrollY > 0 || blocked(e.target)) { y0 = null; return; }
+    y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; pull = 0; down = false; }, { passive: true });
+  addEventListener("touchmove", e => { if (y0 == null) return;
+    const dy = e.touches[0].clientY - y0, dx = e.touches[0].clientX - x0;
+    // a sideways swipe (a wide table, a strip of cards) is theirs: only a mostly downward pull refreshes
+    if (!down) { if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) { y0 = null; return; } if (dy > 8) down = true; else return; }
+    if (dy <= 0 || scrollY > 0) { if (pull) set(0, true); pull = 0; if (scrollY > 0) y0 = null; return; }
+    pull = Math.min(dy * K, FULL * 1.5); set(pull); }, { passive: true });
+  addEventListener("touchend", async () => { if (y0 == null) return; y0 = null;
+    if (pull < FULL) { set(0, true); pull = 0; return; }
+    busy = true; set(FULL, true); ring.classList.add("go");
+    try { await route(); } finally { ring.classList.remove("go"); set(0, true); busy = false; pull = 0; } }, { passive: true });
 }
 // ------------------------------------------------------------------- transfers
 // A bar for anything that takes a while: uploading a file, the shared workspace receiving it in pieces, importing,
@@ -3131,11 +3173,39 @@ function monthBars(series) {
       <text x="${x}" y="${H - 8}">${esc(s.month.slice(5))}/${esc(s.month.slice(2, 4))}</text></g>`; }).join("");
   return `<div class="mchart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${bars}</svg><div class="tip" hidden></div></div>`;
 }
+// Figures roll, they do not jump: each digit turns from what was shown last time to the new value, the digits 100 ms
+// apart (right to left, like a counter). The first time a figure is seen it rolls up from zero; a figure that did not
+// change stays still. When it lands it is plain text again (copying it, screen readers).
+const ROLL_SEEN = new Map();
 function countUp(root) {
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  $$("[data-count]", root).forEach(el => { const to = +el.dataset.count, t0 = performance.now(), fmt = el.dataset.fmt === "money" ? money : numf;
-    const step = now => { const k = Math.min(1, (now - t0) / 700), e = 1 - Math.pow(1 - k, 3); el.textContent = fmt(to * e); if (k < 1 && el.isConnected) requestAnimationFrame(step); else el.textContent = fmt(to); };
-    requestAnimationFrame(step); });
+  const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  $$("[data-count]", root).forEach((el, i) => {
+    const fmt = el.dataset.fmt === "money" ? money : numf, to = +el.dataset.count, text = fmt(to);
+    const key = (location.hash.split("?")[0] || "#/") + "|" + (el.dataset.key || i), was = ROLL_SEEN.get(key);
+    ROLL_SEEN.set(key, text);
+    if (calm || was === text || !/\d/.test(text)) { el.textContent = text; return; }
+    rollTo(el, was == null ? text.replace(/\d/g, "0") : was, text);
+  });
+}
+function rollTo(el, from, to) {
+  // the old figure lined up with the new one from the right: units roll into units, thousands into thousands
+  const digits = to.replace(/[^\d]/g, "").length, pad = from.replace(/[^\d]/g, "").padStart(digits, "0").slice(-digits);
+  const per = Math.min(100, Math.round(600 / Math.max(1, digits)));
+  const col = "0123456789".split("").map(n => `<span>${n}</span>`).join("");
+  let k = 0, out = "";
+  for (const ch of to) {
+    if (!/\d/.test(ch)) { out += `<span class="rd-x">${esc(ch)}</span>`; continue; }
+    const delay = (digits - 1 - k) * per;
+    out += `<span class="rd" aria-hidden="true"><span class="rd-c" style="--d:${pad[k]};--t:${ch};--dl:${delay}ms">${col}</span></span>`;
+    k++;
+  }
+  el.setAttribute("aria-label", to);
+  el.innerHTML = out;
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("rd-go")));
+  setTimeout(() => {
+    if (!el.isConnected || !el.classList.contains("rd-go")) return;
+    el.classList.remove("rd-go"); el.removeAttribute("aria-label"); el.textContent = to;
+  }, 750 + per * digits);
 }
 // ------------------------------------------------------------------ dashboard (per group of users)
 // Each group (Sales, Accounts & finance, …) has its own widgets; super administrators choose them (Customise), may
@@ -3203,15 +3273,21 @@ PAGES.dashboard = async (view, parts, q) => {
       const v = await uiPrompt(L2("Card title (blank: default)", "عنوان البطاقة (فارغ: الافتراضي)"), cur); if (v === null) return;
       e.look = { ...(e.look || {}), [k]: v.trim() }; if (!v.trim()) delete e.look[k]; route(); }));
   }
-  if (ed) {   // drag to reorder
-    let from = null;
+  if (ed) {   // drag to reorder: the card lifts, the others slide out of its way as it passes, letting go keeps the order
+    let held = null;
+    const grid = $(".wgrid", view);
+    const commit = () => { if (!held || !grid) return;
+      const order = [...grid.querySelectorAll(".wg")].map(c => +c.dataset.i), L = DASH.edit.layout;
+      held.classList.remove("dragging"); held = null;
+      if (order.some((n, k) => n !== k)) { DASH.edit.layout = order.map(n => L[n]); route(); } };
     $$(".wg", view).forEach(c => {
-      c.addEventListener("dragstart", e => { from = +c.dataset.i; c.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
-      c.addEventListener("dragend", () => c.classList.remove("dragging"));
-      c.addEventListener("dragover", e => { e.preventDefault(); c.classList.add("over"); });
-      c.addEventListener("dragleave", () => c.classList.remove("over"));
-      c.addEventListener("drop", e => { e.preventDefault(); const to = +c.dataset.i; if (from == null || from === to) return;
-        const L = DASH.edit.layout, [m] = L.splice(from, 1); L.splice(to, 0, m); route(); });
+      c.addEventListener("dragstart", e => { held = c; e.dataTransfer.effectAllowed = "move"; requestAnimationFrame(() => c.classList.add("dragging")); });
+      c.addEventListener("dragend", commit);
+      c.addEventListener("dragover", e => { e.preventDefault(); if (!held || held === c || !grid) return;
+        const r = c.getBoundingClientRect(), after = (e.clientY - r.top) > r.height / 2 || (e.clientX - r.left) > r.width * .66;
+        const where = after ? c.nextSibling : c;
+        if (where !== held && held.nextSibling !== where) flip(grid, () => grid.insertBefore(held, where)); });
+      c.addEventListener("drop", e => { e.preventDefault(); commit(); });
     });
   }
   // the monthly chart's tooltip
@@ -14156,7 +14232,8 @@ document.addEventListener("contextmenu", e => {
     if (!d.moved) { const r = ctxFor(d.src); if (r) ctxOpen(e.clientX, e.clientY, r[0], r[1]); return; }
     if (t) { drag = d; drop(t); drag = null; }
   });
-  document.addEventListener("dragstart", e => { if (e.target.closest && e.target.closest("#nav")) e.preventDefault(); });   // not the browser's own link dragging
+  document.addEventListener("dragstart", e => { if (e.target.closest && e.target.closest("#nav")) e.preventDefault(); });
+  pullToRefresh();   // not the browser's own link dragging
   document.addEventListener("pointercancel", end);
   document.addEventListener("keydown", e => { if (e.key === "Escape") end(); });
   window.__dndActive = () => !!drag;

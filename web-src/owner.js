@@ -33,9 +33,16 @@ const ICON = { mode: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none
   bell: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>',
   menu: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>' };
 
-function toast(m, bad) {
+// a success ("Saved", "Sent", "Approved" …) draws its tick: the circle, then the check mark
+const TOAST_OK = /^(saved|sent|approved|published|copied|deleted|done|added|created|restored|marked|updated|closed|reopened|تم|حُفظ|أُرسل)/i;
+function toast(m, bad, kind) {
   $$(".toast").forEach(t => t.remove());
-  const t = document.createElement("div"); t.className = "toast" + (bad ? " err" : ""); t.textContent = m; document.body.appendChild(t);
+  const ok = !bad && (kind === "ok" || (kind !== "info" && TOAST_OK.test(String(m || "").trim())));
+  const t = document.createElement("div"); t.className = "toast" + (bad ? " err" : "") + (ok ? " ok" : "");
+  if (ok) t.innerHTML = '<svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M7.5 12.5l3 3 6-6.5"/></svg>';
+  t.appendChild(document.createElement("span")).textContent = m;
+  t.setAttribute("role", bad ? "alert" : "status");
+  document.body.appendChild(t);
   setTimeout(() => t.remove(), bad ? 6000 : 2600);
 }
 const fail = e => toast((e && e.message) || String(e), true);
