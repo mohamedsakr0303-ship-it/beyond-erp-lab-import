@@ -260,6 +260,41 @@ async function leave(nodes) {
   await new Promise(r => setTimeout(r, 200));
   parents.forEach(p => { const c = AA.get(p); if (c) c.disable(); });
 }
+// Every field a screen reader can name: a box in a table (a row of an editor) is named by its row and column, e.g.
+// "Housing allowance — Taxable"; one in a filter bar or form by the caption beside it. Fields that already have a
+// label (or aria-label / title / placeholder) are left as they are. Runs after anything is drawn.
+function labelFields(root) {
+  for (const el of root.querySelectorAll("select[data-pick]:not([aria-hidden])")) el.setAttribute("aria-hidden", "true");   // its search box is the control
+  for (const el of root.querySelectorAll("input:not([type=hidden]):not([aria-label]), select:not([aria-label]):not([data-pick]), textarea:not([aria-label])")) {
+    if (el.title || el.placeholder || el.closest("label") || (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`))) continue;
+    let name = "";
+    const cell = el.closest("td, th");
+    if (cell) {
+      const tr = cell.parentElement, table = cell.closest("table"), idx = [...tr.children].indexOf(cell);
+      const head = table && table.tHead && table.tHead.rows[0] && table.tHead.rows[0].cells[idx];
+      const first = tr.children[0] !== cell ? tr.children[0] : null;
+      const rowName = first ? ((first.querySelector("input, select") || {}).value || first.innerText || "").trim().split("\n")[0] : "";
+      name = [rowName, head ? head.innerText.trim() : ""].filter(Boolean).join(" — ");
+      if (!name && el.type === "checkbox") {      // a row's selection box: named by the row it selects
+        const next = cell.nextElementSibling;
+        if (next && next.innerText.trim()) name = `${L2("Select", "تحديد")}: ${next.innerText.trim().split("\n")[0]}`;
+      }
+    }
+    if (!name) {
+      const box = el.closest(".f, .field, .fb, .row, .toolbar");
+      const cap = box && box.querySelector(".fl, .lbl, small, b");
+      name = cap && cap !== el ? cap.innerText.trim() : "";
+      if (!name && box && box.classList.contains("f"))        // a caption written straight in the box ("File <input>")
+        name = [...box.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join(" ").trim();
+      if (!name && el.tagName === "SELECT" && el.selectedOptions[0])
+        name = `${L2("Choose", "اختر")}: ${el.selectedOptions[0].text.trim()}`;
+    }
+    if (!name && el.name) name = el.name.replace(/[_-]+/g, " ");
+    if (name) el.setAttribute("aria-label", name.slice(0, 80));
+  }
+}
+{ let t = 0; new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => labelFields(document.body), 150); })
+    .observe(document.documentElement, { childList: true, subtree: true }); }
 // the last few errors, attached to a support report so a problem can be reproduced
 const RECENT_ERRS = [];
 // what the person did just before (screens opened, requests and how they ended, errors): addresses and outcomes only,
