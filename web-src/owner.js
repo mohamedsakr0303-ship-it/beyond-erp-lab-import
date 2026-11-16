@@ -2269,4 +2269,35 @@ PAGES.deleted = async view => {
 };
 
 start();
+// Every field and button a screen reader can name (as in the app, erp/static/app.js labelFields): a box in a table by
+// its row and column, a field by the caption or heading before it, a colour swatch by its colour. Runs after drawing.
+function labelFields(root) {
+  for (const el of root.querySelectorAll("input:not([type=hidden]):not([aria-label]), select:not([aria-label]), textarea:not([aria-label])")) {
+    if (el.title || el.placeholder || el.closest("label") || (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`))) continue;
+    let name = "";
+    const cell = el.closest("td, th");
+    if (cell) {
+      const tr = cell.parentElement, table = cell.closest("table"), idx = [...tr.children].indexOf(cell);
+      const head = table && table.tHead && table.tHead.rows[0] && table.tHead.rows[0].cells[idx];
+      const first = tr.children[0] !== cell ? tr.children[0] : null;
+      name = [first ? first.innerText.trim().split("\n")[0] : "", head ? head.innerText.trim() : ""].filter(Boolean).join(" — ");
+    }
+    if (!name) {      // the caption beside it, or the heading of its card
+      for (const box of [el.closest(".f, .row"), el.closest(".card")]) {
+        const cap = box && box.querySelector(".fl, .lbl, h2, h3, b");
+        if (!name && cap && !cap.contains(el)) name = cap.innerText.trim();
+      }
+    }
+    if (!name && el.tagName === "SELECT" && el.selectedOptions[0]) name = `${L("Choose", "اختر")}: ${el.selectedOptions[0].text.trim()}`;
+    if (!name && el.name) name = el.name.replace(/^c_/, "").replace(/[_-]+/g, " ");
+    if (name) el.setAttribute("aria-label", name.slice(0, 80));
+  }
+  for (const el of root.querySelectorAll("button:not([aria-label]):not([title]), a[href]:not([aria-label]):not([title])")) {
+    if (el.innerText.trim() || el.querySelector("img[alt]")) continue;
+    const name = el.dataset.c ? `${L("Colour", "لون")} ${el.dataset.c}` : el.dataset.a ? el.dataset.a.replace(/[_-]+/g, " ") : "";
+    if (name) el.setAttribute("aria-label", name);
+  }
+}
+{ let t = 0; new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => labelFields(document.body), 150); })
+    .observe(document.documentElement, { childList: true, subtree: true }); }
 })();
