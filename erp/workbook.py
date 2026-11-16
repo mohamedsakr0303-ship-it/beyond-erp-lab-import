@@ -115,6 +115,25 @@ def _cached(cls):
     return make
 
 
+def _put(cell, font=None, fill=None):
+    """cell.font = font / cell.fill = fill, for the few shared (cached) style objects set on hundreds of thousands of
+    cells: their place in the workbook's style lists is found once per workbook instead of hashing the object again
+    for every cell, which was most of the time spent writing a workbook. The memo keeps the object itself, so a
+    reused id can never point at another style."""
+    wb = cell.parent.parent
+    memo = wb.__dict__.setdefault("_beyond_style_idx", {})
+    if not cell._style:                  # (a new cell gets its style record as openpyxl itself does)
+        from openpyxl.styles.cell_style import StyleArray
+        cell._style = StyleArray()
+    for value, coll, key in ((font, "_fonts", "fontId"), (fill, "_fills", "fillId")):
+        if value is None:
+            continue
+        hit = memo.get((key, id(value)))
+        if hit is None or hit[0] is not value:
+            hit = memo[(key, id(value))] = (value, getattr(wb, coll).add(value))
+        setattr(cell._style, key, hit[1])
+
+
 EXTRAS_SHEET = "_BeyondData"
 
 
@@ -253,8 +272,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
                     for k, letter in letters.items():
                         f = f.replace("{" + k + "}", f"{letter}{ri}")
                     cell.value = f
-                    cell.font = F(size=9, color="111111")
-                    cell.fill = fill(GREY)
+                    _put(cell, F(size=9, color="111111"), fill(GREY))
                     if c["key"] in ("total", "unpaid", "amount", "value", "posted_amount", "paid_eff", "cr_amt",
                                     "vat_amt", "wht_amt", "ar_amt", "gross", "net_credit", "dep_monthly", "dep_to_date",
                                     "dep_book_value"):
@@ -278,7 +296,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
                 cell.value = v
                 if isinstance(v, str):
                     xlsafe.as_text(cell)
-                cell.font = F(size=10, color=BLUE)
+                _put(cell, F(size=10, color=BLUE))
                 if c["kind"] == "date":
                     cell.number_format = DATE
                 elif c["kind"] == "money":
@@ -465,8 +483,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
         for r in range(FIRST_DATA_ROW, last_formula_row + 1):
             for key, _, fn in heads:
                 c = ws.cell(r, column_index(letters[key]), fn(r))
-                c.font = F(size=8)
-                c.fill = fill(GREY)
+                _put(c, F(size=8), fill(GREY))
 
     # --------------------------------------------------------- trial balance
     tb = wb.create_sheet("Trial Balance")
@@ -1156,8 +1173,8 @@ def classic_style(wb, company):
                     c.font = Font(name="Arial", size=10, italic=True, color="666666")
                     continue
                 if f.sz and f.sz < 11 or f.name != "Arial":
-                    c.font = Font(name="Arial", size=11, bold=f.b, italic=f.i, underline=f.u,
-                                  color=f.color if f.color is not None and f.color.type == "rgb" else None)
+                    _put(c, Font(name="Arial", size=11, bold=f.b, italic=f.i, underline=f.u,
+                                 color=f.color if f.color is not None and f.color.type == "rgb" else None))
         if ws.row_dimensions[4].height and ws.row_dimensions[4].height < 26.25:
             ws.row_dimensions[4].height = 26.25
 
