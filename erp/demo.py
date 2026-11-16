@@ -268,8 +268,8 @@ def sheets(industry=None):
     S["Journal Vouchers"] = [
         {"voucher": "JV-D00", "date": d(0, 1), "kind": "Journal Voucher", "memo": "Harbour Residence units completed — held for sale at cost",
          "account": "1210", "debit": 9400000},
-        {"voucher": "JV-D00", "date": d(0, 1), "kind": "Journal Voucher", "party": "Demo Bank", "memo": "Development finance for Harbour Residence",
-         "account": "2400", "credit": 9400000},
+        {"voucher": "JV-D00", "date": d(0, 1), "kind": "Journal Voucher", "party": "Demo Bank", "memo": "Harbour Residence units completed — held for sale at cost",
+         "line_memo": "Development finance for Harbour Residence", "account": "2400", "credit": 9400000},
         {"voucher": "JV-D0C", "date": d(0, 2), "kind": "Journal Voucher", "memo": "Cash withdrawn for site expenses", "account": "1010", "debit": 200000},
         {"voucher": "JV-D0C", "date": d(0, 2), "kind": "Journal Voucher", "memo": "Cash withdrawn for site expenses", "account": "1020", "credit": 200000},
         {"voucher": "JV-D01", "date": eom(3), "kind": "Journal Voucher", "memo": "Accrued insurance premium", "account": "6085", "debit": 6000},
@@ -704,8 +704,8 @@ def _extra(S, key, d, eom):
             {"voucher": "JV-I05", "date": eom(4), "kind": "Journal Voucher", "memo": "Treasury-bill interest earned to date", "account": "1720", "debit": 118000},
             {"voucher": "JV-I05", "date": eom(4), "kind": "Journal Voucher", "memo": "Treasury-bill interest earned to date", "account": "4095", "credit": 118000},
             {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00", "account": "1020", "debit": 180000},
-            {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00 — cost", "account": "1705", "credit": 162500},
-            {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00 — gain", "account": "4092", "credit": 17500}]
+            {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00", "line_memo": "Sold 5,000 shares × 36.00 — cost", "account": "1705", "credit": 162500},
+            {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00", "line_memo": "Sold 5,000 shares × 36.00 — gain", "account": "4092", "credit": 17500}]
         for r in S["Operating Expenses"] + S["Recurring Entries"]:
             if r.get("account") == "6010":
                 r.update(amount=8000)
