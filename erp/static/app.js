@@ -7312,6 +7312,50 @@ PAGES.users = async (view) => {
       (u.id && ed && u.id !== S.boot.user.id && S.boot.user.is_super ? `<button type="button" class="btn danger" data-a="udel">${t("delete")}</button>` : "") });
   S.H.udel = () => {};
   S.H.unew = () => cloudOn() && seatsTaken() ? seatFull() : edit({ perms: planHasPerms() ? { dashboard: "view" } : fullPerms() });
+  // Invite by email: someone who already uses BeyondERP (in their own or another company) is found by the email they sign
+  // in with and joins this company with their own password; their permissions are set on their page right after.
+  S.H.uinvite = () => {
+    if (seatsTaken()) return seatFull();
+    let found = null, seq = 0;
+    const roles = [["user", L2("User", "مستخدم")], ["admin", L2("Administrator", "مسؤول")], ...(S.boot.user.is_super ? [["super", L2("Super administrator", "مسؤول أعلى")]] : [])];
+    drawer(L2("Invite by email", "دعوة بالبريد"), `<p class="muted inv-note">${esc(L2("Someone who already uses BeyondERP joins with their own password.", "من يستخدم BeyondERP بالفعل ينضم بكلمة مروره."))}</p>` +
+      form([{ k: "email", l: t("email"), type: "email", req: 1, ph: "name@company.com", span: "spanall" },
+            { html: `<div id="invfound" class="inv-found spanall" role="status" aria-live="polite"></div>` },
+            { k: "role", l: L2("Role", "الدور"), type: "select", v: "user", opts: roles }]),
+      async v => {
+        if (!found) throw new Error(L2("Enter the email of someone who already uses BeyondERP.", "أدخل بريد شخص يستخدم BeyondERP بالفعل."));
+        const email = found.email, username = found.username, adm = v.role === "admin" || v.role === "super";
+        await CloudAPI.manageUser({ username, email, check: true });               // the workspace agrees before anything is saved
+        const r = await api("POST", "/api/users", { username, email, full_name: username, is_admin: adm, ...(S.boot.user.is_super ? { is_super: v.role === "super" } : {}),
+          _no_password: true, perms: planHasPerms() ? { dashboard: "view" } : fullPerms() });
+        await CloudAPI.manageUser({ username, email, active: true });
+        toast(L2(`✓ ${username} joined — set their permissions.`, `✓ انضم ${username} — حدّد صلاحياته.`), false, "ok");
+        closeDrawer(); await route();
+        if (r && r.id && S.H.uedit) S.H.uedit({ dataset: { id: String(r.id) } });      // straight to their permissions
+        return false;
+      },
+      { submitLabel: L2("Invite", "دعوة"), noDraft: true, onOpen: f => {
+        const em = f.querySelector('[name="email"]'), box = f.querySelector("#invfound"), go = f.querySelector('button[type="submit"]');
+        const show = (cls, html) => { box.className = "inv-found spanall " + cls; box.innerHTML = html; };
+        const set = x => { found = x; go.disabled = !x; };
+        set(null);
+        const look = async () => { const email = em.value.trim().toLowerCase();
+          if (found && found.email === email) return;               // (leaving the field to press Invite: already found)
+          const n = ++seq; set(null);
+          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return show("", "");
+          show("muted", esc(L2("Looking…", "جارٍ البحث…")));
+          try { const r = await CloudAPI.manageUser({ username: "", email, check: "email" }); if (n !== seq) return;
+            if (r.here) return show("bad", esc(L2("Already in this company.", "موجود بالفعل في هذه الشركة.")));
+            if (!r.existing) return show("muted", `${esc(L2("No account uses this email yet.", "لا يوجد حساب بهذا البريد بعد."))} <button type="button" class="btn sm" data-a="invnew">${esc(L2("Create a new user instead", "إنشاء مستخدم جديد بدلاً من ذلك"))}</button>`);
+            set({ email, username: r.username });
+            show("ok", `<span class="inv-av" aria-hidden="true">${esc((r.username || email)[0].toUpperCase())}</span><span><b>${esc(r.username)}</b><small>${esc(email)}</small></span><span class="chip ok">${esc(L2("Found", "موجود"))}</span>`); }
+          catch (e) { if (n === seq) show("bad", esc(e.message)); } };
+        let tm = 0;
+        em.addEventListener("input", () => { clearTimeout(tm); if (!found || found.email !== em.value.trim().toLowerCase()) set(null); tm = setTimeout(look, 450); });
+        em.addEventListener("change", look);
+        S.H.invnew = () => { const email = em.value.trim(); closeDrawer(); edit({ email, perms: planHasPerms() ? { dashboard: "view" } : fullPerms() }); };
+      } });
+  };
   S.H.uedit = el => { const u = rows.find(x => String(x.id) === el.dataset.id);
     edit(u);
     S.H.utsoff = async () => { if (!await uiConfirm(L2(`Disable two-step sign-in for ${u.username}? The user signs in with a password and can set it up again.`, `هل تريد تعطيل التحقق بخطوتين لـ ${u.username}؟ يسجّل المستخدم الدخول بكلمة المرور ويمكنه تفعيله مجدداً.`))) return;
@@ -7339,7 +7383,7 @@ PAGES.users = async (view) => {
   const planNote = [planHasPerms() ? "" : L2("Your plan does not include user permissions: every user can use everything the plan includes.", "باقتك لا تشمل صلاحيات المستخدمين: يمكن لكل مستخدم استخدام كل ما تشمله الباقة."),
     planHasNotifyPerms() ? "" : L2("Your plan does not include notification permissions: everyone receives the standard notifications of their department.", "باقتك لا تشمل صلاحيات الإشعارات: يتلقى الجميع الإشعارات المعتادة لقسمهم.")].filter(Boolean);
   view.innerHTML = (planNote.length ? `<div class="banner info">${planNote.map(esc).join("<br>")} <a href="#/subscription">${esc(L2("Plans", "الباقات"))}</a></div>` : "") +
-    `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}${S.boot.user.is_super && planHasNotifyPerms() ? `<button class="btn" data-a="ualerts">🔔 ${L2("Notifications by department", "الإشعارات حسب القسم")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("email")}</th><th>${L2("Group", "المجموعة")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
+    `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}${can("users.users", "add") && cloudOn() ? `<button class="btn" data-a="uinvite">✉ ${esc(L2("Invite by email", "دعوة بالبريد"))}</button>` : ""}${S.boot.user.is_super && planHasNotifyPerms() ? `<button class="btn" data-a="ualerts">🔔 ${L2("Notifications by department", "الإشعارات حسب القسم")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("email")}</th><th>${L2("Group", "المجموعة")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
     ${rows.map(u => `<tr class="click ${u.active ? "" : "void"}" data-a="${ed ? "uedit" : ""}" data-id="${u.id}"><td><b>${esc(u.username)}</b></td><td>${esc(u.full_name)}</td><td>${esc(u.email || "")}</td><td>${esc(groupName(u.group_key))}</td><td>${u.needs_approval ? `<span class="chip warn">${esc(L2("Requires approval", "يتطلب الاعتماد"))}</span> ` : ""}${summary(u)}</td><td>${u.active ? "" : `<span class="chip bad">${t("no")}</span>`}</td></tr>`).join("")}</tbody></table></div>
     <p class="muted" style="font-size:.82em">👁 ${t("perm_view")} · + ${t("perm_add")} · ✎ ${t("perm_full")}</p></div>`;
 };

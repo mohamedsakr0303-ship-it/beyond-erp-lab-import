@@ -2403,3 +2403,10 @@ input[type=range]:active::-moz-range-thumb{transform:scale(1.4)}
 /* the Users form: is the username free in the shared workspace (said as the field is left) */
 .uname-check{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}.uname-check .btn{flex:none}
 .uname-say{font-size:.82em;min-height:1.2em}.uname-say.ok{color:var(--good)}.uname-say.bad{color:var(--bad)}
+/* Users → Invite by email: the person found by the email they sign in with */
+.inv-note{margin:2px 0 10px;font-size:.88em}
+.inv-found{min-height:1.4em;font-size:.88em;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.inv-found.ok{padding:10px 12px;border:1px solid color-mix(in srgb,var(--good) 35%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--good) 8%,transparent);animation:fanin .3s var(--settle)}
+.inv-found.ok>span:nth-child(2){display:flex;flex-direction:column;flex:1;min-width:0}.inv-found small{color:var(--muted)}
+.inv-found.bad{color:var(--bad)}
+.inv-av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:var(--brand);color:#fff;flex:none}
