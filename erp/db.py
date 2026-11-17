@@ -2683,7 +2683,13 @@ def db_cached(fn):
         if not db.keeping() or customfilter.active():
             return fn(db, *a, **k)
         import datetime
-        key = (fn.__module__, fn.__name__, id(db), db.data_version(), datetime.date.today(), repr(a), repr(sorted(k.items())))
+        # the books by a token of their own (id() is reused once a closed Database is freed: another company's books, or
+        # a fresh set, could otherwise be handed the last one's figures when their change counters happen to match)
+        tok = getattr(db, "_cache_token", None)
+        if tok is None:
+            import uuid
+            tok = db._cache_token = uuid.uuid4().hex
+        key = (fn.__module__, fn.__name__, tok, db.data_version(), datetime.date.today(), repr(a), repr(sorted(k.items())))
         if key not in _CACHE:
             if len(_CACHE) > 64:
                 _CACHE.clear()
