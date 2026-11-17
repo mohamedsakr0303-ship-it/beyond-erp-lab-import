@@ -188,11 +188,14 @@ Deno.serve(async (req) => {
   if (byName && !(await inThis(byName.email)) && !(email && email === byName.email && !password)) {
     const alt = await suggest();
     return fail(409, `The username “${username}” is already taken by someone in another company (usernames are shared by all companies). ` +
-      `Choose another one, for example “${alt}”.`,
-      `اسم المستخدم «${username}» مستخدم بالفعل في شركة أخرى (أسماء المستخدمين مشتركة بين كل الشركات). اختر اسماً آخر، مثل «${alt}».`);
+      `Choose another one, for example “${alt}” — or, to add that same person to this company, enter the email they sign in with and check again.`,
+      `اسم المستخدم «${username}» مستخدم بالفعل في شركة أخرى (أسماء المستخدمين مشتركة بين كل الشركات). اختر اسماً آخر، مثل «${alt}» — أو لإضافة الشخص نفسه إلى هذه الشركة، أدخل البريد الذي يسجّل به الدخول ثم تحقق مرة أخرى.`);
   }
   // check "username": is this username free for this company (the Users form asks as the field is left)
-  if (b.check === "username") return reply(200, { ok: true, taken_here: !!byName });
+  if (b.check === "username") {
+    const existing = !!byName && !(await inThis(byName.email));   // (only reached with that account's own email)
+    return reply(200, { ok: true, taken_here: !!byName && !existing, existing, email: existing ? byName.email : "" });
+  }
   const byEmail = email ? await person(`email=eq.${enc(email)}`) : null;
   if (byEmail && byEmail.username && byEmail.username !== username && !(await inThis(email))) {
     return fail(409, `This email already has a sign-in account with the username “${byEmail.username}” — use that username to add them.`);

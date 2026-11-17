@@ -7221,7 +7221,8 @@ PAGES.users = async (view) => {
       // the workspace keeps its own list of super administrators (chat between companies, the AI assistant's key)
       if (S.boot.user.is_super && !!v.is_super !== !!u.is_super)
         await CloudAPI.call("rpc", "set_member_super", { p_email: v.email || `${body.username}@users.beyond-erp.invalid`, p_super: !!v.is_super }).catch(() => {});
-      toast(u.id ? t("saved") : (ar ? `تم — يمكن لـ ${body.username} تسجيل الدخول الآن باسم المستخدم وكلمة المرور.` : `Done — ${body.username} can sign in now with their username and password.`));
+      toast(u.id ? t("saved") : f.dataset.existing ? L2(`Done — ${body.username} joins this company and signs in with their own password.`, `تم — انضم ${body.username} إلى هذه الشركة ويسجّل الدخول بكلمة مروره.`)
+        : (ar ? `تم — يمكن لـ ${body.username} تسجيل الدخول الآن باسم المستخدم وكلمة المرور.` : `Done — ${body.username} can sign in now with their username and password.`));
       return r;
     } catch (e) {
       if (e.status === 404 && v.email) {   // sign-in function not deployed yet: at least let the email into the workspace
@@ -7253,13 +7254,24 @@ PAGES.users = async (view) => {
           return mark("bad", L2("Someone in this company already has this username.", "يوجد في هذه الشركة من يستخدم اسم المستخدم هذا."), false);
         if (!cloudOn()) return mark("ok", L2("✓ Available", "✓ متاح"), true);
         mark("muted", L2("Checking…", "جارٍ التحقق…"), false); btn.disabled = true;
-        try { await CloudAPI.manageUser({ username: name, check: "username" }); if (n === seq) mark("ok", L2("✓ Available", "✓ متاح"), true); }
+        const em = f.querySelector('[name="email"]'), email = em ? em.value.trim() : "";
+        try { const r = await CloudAPI.manageUser({ username: name, email, check: "username" }); if (n !== seq) return;
+          existing(!!(r && r.existing));
+          if (r && r.existing) mark("ok", L2(`✓ The existing account of ${r.email || email}: they join this company and keep their own password (leave the password empty).`,
+                                              `✓ الحساب الموجود لـ ${r.email || email}: ينضم إلى هذه الشركة ويحتفظ بكلمة مروره (اترك كلمة المرور فارغة).`), true);
+          else mark("ok", L2("✓ Available", "✓ متاح"), true); }
         catch (e) { if (n !== seq) return;
           if (e.status === 404) mark("ok", L2("✓ Available here (this workspace cannot check other companies yet)", "✓ متاح هنا (لا تستطيع مساحة العمل هذه التحقق من الشركات الأخرى بعد)"), true);
           else mark("bad", e.message, false); }
         finally { btn.disabled = false; } };
+      // someone who already has a sign-in (another company): no password here — theirs stays theirs
+      const existing = on => { f.querySelectorAll('[name="password"], [name="password2"]').forEach(i => {
+          if (on) { i.value = ""; i.required = false; i.disabled = true; } else { i.disabled = false; if (!u.id) i.required = true; } });
+        f.dataset.existing = on ? "1" : ""; };
       btn.addEventListener("click", ask);
-      un.addEventListener("input", () => { seq++; mark("muted", "", false); });     // changed: check again
+      un.addEventListener("input", () => { seq++; existing(false); mark("muted", "", false); });     // changed: check again
+      const emf = f.querySelector('[name="email"]');
+      if (emf && cloudOn()) emf.addEventListener("input", () => { if (f.dataset.unameOk && !u.id) { seq++; existing(false); mark("muted", "", false); } });
       un.addEventListener("blur", () => { if (un.value.trim() && f.dataset.unameOk !== un.value.trim()) ask(); });
       if (u.id) f.dataset.unameOk = u.username;                                        // unchanged: nothing to check
     }

@@ -324,11 +324,13 @@ class Handler(BaseHTTPRequestHandler):
         if old and (cid, old) not in st.members and not (e and e == old and not body.get("password")):
             tag = re.sub(r"[^a-z0-9]+", " ", st.companies[cid]["name"].lower()).strip().split(" ")[0] or "co"
             return 409, {"msg": f"The username “{u}” is already taken by someone in another company (usernames are shared "
-                                f"by all companies). Choose another one, for example “{u}.{tag}”."}
+                                f"by all companies). Choose another one, for example “{u}.{tag}” — or, to add that same person to "
+                                f"this company, enter the email they sign in with and check again."}
         if e and st.people.get(e) and st.people[e] != u and (cid, e) not in st.members:
             return 409, {"msg": f"This email already has a sign-in account with the username “{st.people[e]}” — use that username to add them."}
-        if body.get("check") == "username":            # (as the function: is the username free for this company)
-            return 200, {"ok": True, "taken_here": bool(old)}
+        if body.get("check") == "username":            # (as the function: free, or that same person's account)
+            existing = bool(old) and (cid, old) not in st.members
+            return 200, {"ok": True, "taken_here": bool(old) and not existing, "existing": existing, "email": old if existing else ""}
         target = old or wanted
         shared = bool(others(target)) and target in st.accounts
         if body.get("check"):                          # would saving work? nothing is created or changed

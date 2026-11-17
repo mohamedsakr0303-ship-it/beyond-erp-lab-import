@@ -2896,6 +2896,10 @@ class Companies(unittest.TestCase):
                 fn({"username": "ali", "check": "username"})
             self.assertIn("already taken", str(cm.exception))
             self.assertTrue(fn({"username": "ali.beta2", "check": "username"})["ok"])
+            same = fn({"username": "ali", "email": "ali@users.beyond-erp.invalid", "check": "username"})   # that same person
+            self.assertEqual((same["existing"], same["email"]), (True, "ali@users.beyond-erp.invalid"))
+            with self.assertRaises(RuntimeError):                                              # not with another email
+                fn({"username": "ali", "email": "not.ali@x.com", "check": "username"})
             with self.assertRaises(RuntimeError) as cm:
                 fn({"username": "newperson", "check": True})
             self.assertIn("Set a password", str(cm.exception))
