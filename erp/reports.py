@@ -937,7 +937,13 @@ def party_statement_table(db, party, date_from=None, date_to=None, lang="en"):
                     ("Credit", "دائن", "right"), ("Balance", "الرصيد", "right")], lang)
     rows = [{"cells": ["", "", "", "رصيد أول المدة" if ar else "Opening balance", "", "", d["opening"]], "style": "subtotal", "indent": 0}]
     fxt = lambda r: "".join(f" [{c} {v:,.2f}]" for c, v in (r.get("fx") or {}).items())  # noqa: E731
-    rows += [{"cells": [r["date"], f"#{r['id']} {r['kind']}", r["ref"], (r["memo"] or "") + fxt(r), r["debit"] or "", r["credit"] or "", r["balance"]],
+    def inv(r):        # an earlier invoice brought in (opening balance): its number, date and due date
+        if not (r.get("doc_ref") or r.get("doc_date") or r.get("due_date")):
+            return ""
+        bits = [x for x in (r.get("doc_ref"), r.get("doc_date")) if x] + \
+            ([("استحقاق " if ar else "due ") + r["due_date"]] if r.get("due_date") else [])
+        return (" — فاتورة " if ar else " — invoice ") + " · ".join(bits)
+    rows += [{"cells": [r["date"], f"#{r['id']} {r['kind']}", r.get("doc_ref") or r["ref"], (r["memo"] or "") + inv(r) + fxt(r), r["debit"] or "", r["credit"] or "", r["balance"]],
               "style": "item", "indent": 0} for r in d["rows"]]
     rows.append({"cells": [L("total", lang), "", "", "", d["debits"], d["credits"], d["closing"]], "style": "grand", "indent": 0})
     c = d["closing"]

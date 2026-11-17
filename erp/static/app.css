@@ -2410,3 +2410,6 @@ input[type=range]:active::-moz-range-thumb{transform:scale(1.4)}
 .inv-found.ok>span:nth-child(2){display:flex;flex-direction:column;flex:1;min-width:0}.inv-found small{color:var(--muted)}
 .inv-found.bad{color:var(--bad)}
 .inv-av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:var(--brand);color:#fff;flex:none}
+/* journal voucher line: the original invoice of an opening balance */
+.jinv{margin-inline-start:4px;font-size:.78em;opacity:.55;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}.jinv:hover,.jinv:focus-visible{opacity:1}
+.jinv.on{opacity:1;color:var(--brand);border-color:color-mix(in srgb,var(--brand) 40%,var(--line))}

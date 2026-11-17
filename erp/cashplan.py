@@ -14,6 +14,7 @@ collected / paid today ("include overdue") or left out.
 """
 import datetime as _dt
 import json
+from urllib.parse import quote
 
 from . import accounting as acc
 from .db import to_major
@@ -118,6 +119,9 @@ def _items(db, today, until):
                 if db.one("SELECT 1 FROM payroll_runs WHERE period=? AND status='posted'", (period,)):
                     continue
                 add(day.isoformat(), -net, "payroll", f"Payroll {period} (as {last['period']}: {net:,.2f})", "#/payruns")
+    # invoices / bills still open that carry a due date (opening balances brought in invoice by invoice): on that date
+    for it in _due_invoices(db, today):
+        add(it["due"], it["amount"], "invoices", f"{it['party']} — {it['ref']}" if it["ref"] else it["party"], "#/statement?party=" + quote(it["party"]), it["party"])
     # purchase orders still to be received, on their expected date
     for po in purchasing.listing(db, status="open")["rows"]:
         if po["open_value"] and po["expected"] and po["status"] in ("approved", "partial"):
@@ -125,14 +129,27 @@ def _items(db, today, until):
     return out
 
 
-def _undated(db):
+def _due_invoices(db, today=None):
+    """Customers' invoices and suppliers' bills still open that carry a due date (+ to collect, − to pay)."""
+    from . import statements
+    return [it for it in statements.open_items(db, date_to=today, subtypes=("receivable", "payable")) if it["due"]
+            and (it["amount"] > 0) == (it["account"] in _subtype_codes(db, "receivable"))]
+
+
+def _subtype_codes(db, sub):
+    return {r["code"] for r in db.q("SELECT code FROM accounts WHERE subtype=?", (sub,))}
+
+
+def _undated(db, today=None):
     """Owed with no due date: shown next to the forecast, never spread over dates."""
     from . import purchasing
+    dated = _due_invoices(db, today)            # these are on their due dates already
 
     def sub(subtypes, sign):
         r = db.one(f"""SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                        JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND a.subtype IN ({','.join('?' * len(subtypes))})""", subtypes)
-        return round(sign * to_major(r["n"]), 2)
+        codes = set().union(*(_subtype_codes(db, x) for x in subtypes))
+        return round(sign * (to_major(r["n"]) - sum(it["amount"] for it in dated if it["account"] in codes)), 2) + 0.0
     po = sum(r["open_value"] for r in purchasing.listing(db, status="open")["rows"] if r["status"] in ("approved", "partial") and not r["expected"])
     return [{"key": "receivables", "label": "Customers owe (invoices and balances)", "amount": sub(("receivable",), 1), "dir": "in", "href": "#/aging"},
             {"key": "payables", "label": "Owed to suppliers & subcontractors", "amount": sub(("payable",), -1), "dir": "out", "href": "#/aging?side=payable"},
@@ -209,4 +226,4 @@ def build(db, days=90, include_overdue=True, today=None):
             "other_funders": others if others["rows"] else None, "include_overdue": bool(include_overdue),
             "overdue": {"in": o_in, "out": o_out, "rows": overdue}, "opening": opening, "windows": windows, "weeks": weeks,
             "lowest": {"balance": low[0], "date": low[1]}, "items": dated, "sources": sorted(by_source.values(), key=lambda s: s["source"]),
-            "undated": _undated(db)}
+            "undated": _undated(db, today)}

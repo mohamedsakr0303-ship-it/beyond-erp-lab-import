@@ -627,6 +627,12 @@ SHEETS = [
               C("line_party", "Line Party", "طرف السطر", width=14,
                 note="Only when a line belongs to someone other than the voucher's party (e.g. each partner in a share transfer)"),
               C("line_memo", "Line Description", "بيان السطر", width=26, note="The line's own description; blank = the voucher's"),
+              C("doc_ref", "Invoice No.", "رقم الفاتورة", width=12,
+                note="Opening balances: the customer's / supplier's original invoice (one line each). Blank on normal lines"),
+              C("doc_date", "Invoice Date", "تاريخ الفاتورة", kind="date",
+                note="The original invoice's date (on or before the voucher's): the balance ages from it"),
+              C("due_date", "Due Date", "تاريخ الاستحقاق", kind="date",
+                note="When it falls due: it shows on that day in the cash forecast"),
               C("cost_item", "Cost Item", "بند التكلفة", width=10, note="Cost lines: the work item (code from 'Cost Items'), e.g. 03.01"),
               C("item", "Item", "الصنف", width=18,
                 note="Item line: the item or material (debit = qty × unit price, made by the app). Leave empty on normal lines"),
@@ -916,6 +922,7 @@ def export_data(db):
                                                 "memo": e["memo"], "account": ln["account"],
                                                 "debit": ln["debit"] or "", "credit": ln["credit"] or "",
                                                 "line_party": ln.get("party", ""), "line_memo": ln.get("memo", ""),
+                                                **{k: ln[k] for k in ("doc_ref", "doc_date", "due_date") if ln.get(k)},
                                                 "cost_item": ln.get("cost_item", ""), **_alloc_cols(e),
                                                 **({"currency": ln["currency"], "fx_amount": ln.get("fx_amount") or 0,
                                                     "fx_rate": ln.get("fx_rate") or 0, "settles": settles_ref(ln.get("settles"))} if ln.get("currency") else {})})
@@ -2996,6 +3003,7 @@ def _imp_journal(db, rows, errors, counts, user):
                                     # a later row naming another party than the voucher's: that line is that party's
                                     "lines": [{"account": r.get("account"), "debit": r.get("debit"), "credit": r.get("credit"),
                                                "memo": r.get("line_memo"), "cost_item": r.get("cost_item"),
+                                               "doc_ref": r.get("doc_ref"), "doc_date": r.get("doc_date"), "due_date": r.get("due_date"),
                                                **({"currency": acc.text(r.get("currency")).upper(), "fx_amount": r.get("fx_amount") or 0,
                                                    "fx_rate": r.get("fx_rate") or 0,
                                                    **({"settles": _settled_id(db, r["settles"], made)} if acc.text(r.get("settles")) and _settled_id(db, r["settles"], made) else {})}

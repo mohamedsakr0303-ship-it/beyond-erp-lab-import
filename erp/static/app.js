@@ -428,7 +428,7 @@ function uiForm(title, fields, note = "") {
     const bg = document.createElement("div"); bg.className = "dlg-bg";
     bg.innerHTML = `<form class="dlg" role="dialog" aria-modal="true"><h3>${esc(title)}</h3>
       ${fields.map(f => f.type === "checkbox" ? `<label class="chk" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" name="${f.k}" ${f.v ? "checked" : ""}> ${esc(f.l)}</label>`
-        : `<label class="f" style="display:block;margin:6px 0">${esc(f.l)}<input class="dlg-in" name="${f.k}" value="${esc(f.v ?? "")}" dir="auto" ${f.req ? "required" : ""}></label>`).join("")}
+        : `<label class="f" style="display:block;margin:6px 0">${esc(f.l)}<input class="dlg-in" name="${f.k}" value="${esc(f.v ?? "")}" ${f.type === "date" ? 'type="date"' : 'dir="auto"'} ${f.req ? "required" : ""}></label>`).join("")}
       ${note ? `<div class="dlg-msg muted" style="font-size:.85em">${esc(note)}</div>` : ""}
       <div class="dlg-foot"><button type="button" class="btn" data-r="0">${esc(L2("Cancel", "إلغاء"))}</button><button type="submit" class="btn pri">${esc(L2("Save", "حفظ"))}</button></div></form>`;
     const fm = $("form", bg);
@@ -2994,11 +2994,19 @@ function fillForm(f, vals) {
     else if (el.tagName === "SELECT" && ![...el.options].some(o => o.value === String(v))) return;
     else el.value = v; });
 }
+// a line standing for an earlier invoice / bill (opening balances): its number, date and due date — the balance ages from
+// that date and the cash forecast places it on its due date
+function jInvChip(l) {
+  const on = l.doc_ref || l.doc_date || l.due_date;
+  return `<button type="button" class="btn sm jinv${on ? " on" : ""}" data-a="jinv" title="${esc(L2("The original invoice this balance is (opening balances)", "الفاتورة الأصلية لهذا الرصيد (الأرصدة الافتتاحية)"))}">🧾 ${esc(on
+    ? [l.doc_ref, l.doc_date, l.due_date ? L2("due ", "استحقاق ") + l.due_date : ""].filter(Boolean).join(" · ") : L2("Invoice", "فاتورة"))}</button>`;
+}
+function jInvOf(tr) { return { doc_ref: tr.dataset.docref || "", doc_date: tr.dataset.docdate || "", due_date: tr.dataset.duedate || "" }; }
 function journalLinesEditor(lines) {
   const opts = S.boot.accounts.filter(a => a.active).map(a => `<option value="${esc(a.code)}">${esc(a.code)} ${esc(aname(a))}</option>`).join("");
-  const row = l => `<tr${l.currency && l.fx_amount && !l._fxin ? ` data-cur="${esc(l.currency)}" data-fx="${esc(l.fx_amount)}" title="${esc(`${l.currency} ${money(l.fx_amount)} @ ${l.fx_rate}`)}"` : ""}><td><select data-skip="1" class="ja"><option value="">—</option>${l.account ? opts.replace(`value="${l.account}"`, `value="${l.account}" selected`) : opts}</select></td>
+  const row = l => `<tr${l.currency && l.fx_amount && !l._fxin ? ` data-cur="${esc(l.currency)}" data-fx="${esc(l.fx_amount)}" title="${esc(`${l.currency} ${money(l.fx_amount)} @ ${l.fx_rate}`)}"` : ""}${["doc_ref", "doc_date", "due_date"].map(k => l[k] ? ` data-${k.replace("_", "")}="${esc(l[k])}"` : "").join("")}><td><select data-skip="1" class="ja"><option value="">—</option>${l.account ? opts.replace(`value="${l.account}"`, `value="${l.account}" selected`) : opts}</select></td>
       <td><input data-skip="1" class="jd num" type="number" step="any" value="${l.debit || ""}" data-input="jbal"></td><td><input data-skip="1" class="jc num" type="number" step="any" value="${l.credit || ""}" data-input="jbal"></td>
-      <td><input data-skip="1" class="jp" value="${esc(l.party || "")}" list="jparties" style="min-width:90px"></td>
+      <td><input data-skip="1" class="jp" value="${esc(l.party || "")}" list="jparties" style="min-width:90px">${jInvChip(l)}</td>
       <td><button type="button" class="btn sm danger" data-a="jrm">✕</button></td></tr>`;
   return `<div class="tbl"><table id="jl"><thead><tr><th>${t("account")}</th><th class="num">${t("debit")}</th><th class="num">${t("credit")}</th><th title="${esc(t("line_party_help"))}">${t("line_party")}</th><th></th></tr></thead><tbody>
     ${lines.map(row).join("")}</tbody></table></div><template id="jlrow">${row({})}</template>
@@ -3051,6 +3059,7 @@ function journalForm(e, copy, via) {
   const curs = e ? [...new Set(e.lines.filter(l => l.currency && l.fx_amount).map(l => l.currency))] : [];
   const jCur = curs.length === 1 && e.lines.every(l => l.currency === curs[0] || (S.boot.fx && l.account === (S.boot.accounts.find(a => a.role === "fx_diff") || {}).code)) ? curs[0] : "";
   if (jCur) lines = e.lines.filter(l => l.currency).map(l => ({ ...l, _fxin: 1, debit: l.debit ? l.fx_amount : "", credit: l.credit ? l.fx_amount : "" }));
+  if (copy) lines = lines.map(({ doc_ref, doc_date, due_date, ...l }) => l);   // a copy is a new voucher, not those invoices again
   if (copy && e && e.meta && e.meta.items) {   // the item lines make their own debits again
     lines = e.lines.filter(l => !(l.debit && e.meta.items.some(x => x.account === l.account)));
     while (lines.length < 2) lines.push({ account: "", debit: "", credit: "" });
@@ -3067,6 +3076,7 @@ function journalForm(e, copy, via) {
     + (via ? "" : `<div style="margin-top:12px">${form([ATTACH_FIELD()], 1)}</div>`);
   // a line kept in a foreign currency (an entry in several currencies, edited in the company's) keeps its currency and amount
   const collect = f => $$("#jl tbody tr", f).map(tr => { const l = { account: $(".ja", tr).value, debit: $(".jd", tr).value, credit: $(".jc", tr).value, party: $(".jp", tr).value };
+    Object.entries(jInvOf(tr)).forEach(([k, x]) => { if (x) l[k] = x; });
     const fc = $("[name=currency]", f);
     if (tr.dataset.cur && (+l.debit || +l.credit) && !(fc && fc.value)) Object.assign(l, { currency: tr.dataset.cur, fx_amount: +tr.dataset.fx, fx_rate: (+l.debit || +l.credit) / +tr.dataset.fx });
     return l; });
@@ -3097,6 +3107,17 @@ function journalForm(e, copy, via) {
     if ($("#ji", f)) jItemsWire(f, bal);
     S.H.jadd = () => { $("#jl tbody", f).insertAdjacentHTML("beforeend", $("#jlrow", f).innerHTML); bal(); };   // a fresh row, never a copy
     S.H.jrm = el => { if ($$("#jl tbody tr", f).length > 2) el.closest("tr").remove(); bal(); };
+    S.H.jinv = async el => { const tr = el.closest("tr"), cur = jInvOf(tr);
+      const m = await uiForm(L2("Original invoice", "الفاتورة الأصلية"), [
+        { k: "doc_ref", l: L2("Invoice no.", "رقم الفاتورة"), v: cur.doc_ref },
+        { k: "doc_date", l: L2("Invoice date", "تاريخ الفاتورة"), type: "date", v: cur.doc_date },
+        { k: "due_date", l: L2("Due date", "تاريخ الاستحقاق"), type: "date", v: cur.due_date }],
+        L2("For an opening balance: the customer's or supplier's invoice it comes from. The balance ages from its date; the due date puts it in the cash forecast. Leave empty for a normal line.",
+           "للرصيد الافتتاحي: فاتورة العميل أو المورد التي جاء منها. يُحسب عمر الرصيد من تاريخها، وتاريخ الاستحقاق يضعه في توقع النقدية. اتركه فارغاً للسطر العادي."));
+      if (!m) return;
+      if (m.doc_date && m.due_date && m.due_date < m.doc_date) return toast(L2("The due date is before the invoice date.", "تاريخ الاستحقاق قبل تاريخ الفاتورة."), true);
+      tr.dataset.docref = (m.doc_ref || "").trim(); tr.dataset.docdate = m.doc_date || ""; tr.dataset.duedate = m.due_date || "";
+      el.replaceWith(Object.assign(document.createElement("template"), { innerHTML: jInvChip({ doc_ref: tr.dataset.docref, doc_date: tr.dataset.docdate, due_date: tr.dataset.duedate }) }).content.firstChild); };
     // a model fills the lines: its accounts (a fixed one, or the usual choice), debit or credit, any amounts it keeps
     S.H.jtpl = el => { const x = tpl[el.value], del = $("#jmdel", f); if (del) del.hidden = !x; if (!x) return;
       const code = side => side.fixed || side.default || "";
@@ -8140,7 +8161,7 @@ const kpiBox = (l, v, cls = "", sub = "") => `<div class="kpi"><div class="l">${
 function previewBox(res) {
   const ents = res.entries || [res];
   return ents.map(e => `<div class="tbl" style="margin-top:6px"><table><thead><tr><th>${t("account")}</th><th class="num">${t("debit")}</th><th class="num">${t("credit")}</th></tr></thead><tbody>
-    ${(e.lines || []).map(l => `<tr><td>${esc(l.account)} ${esc(S.lang === "ar" && l.name_ar ? l.name_ar : l.name || "")}${l.party ? ` <span class="muted">· ${esc(l.party)}</span>` : ""}</td><td class="num">${l.debit ? money(l.debit) : ""}</td><td class="num">${l.credit ? money(l.credit) : ""}</td></tr>`).join("")}</tbody></table></div>`).join("")
+    ${(e.lines || []).map(l => `<tr><td>${esc(l.account)} ${esc(S.lang === "ar" && l.name_ar ? l.name_ar : l.name || "")}${l.party ? ` <span class="muted">· ${esc(l.party)}</span>` : ""}${l.doc_ref || l.doc_date || l.due_date ? ` <span class="chip">🧾 ${esc([l.doc_ref, l.doc_date, l.due_date ? L2("due ", "استحقاق ") + l.due_date : ""].filter(Boolean).join(" · "))}</span>` : ""}</td><td class="num">${l.debit ? money(l.debit) : ""}</td><td class="num">${l.credit ? money(l.credit) : ""}</td></tr>`).join("")}</tbody></table></div>`).join("")
     + (res.notes || []).map(n => `<div class="muted" style="margin-top:4px">${esc(n)}</div>`).join("");
 }
 // live preview of what an action will post
@@ -14766,7 +14787,8 @@ PAGES["cash-forecast"] = async (view, parts, q) => {
   const d = await api("GET", "/api/cash-forecast?" + qs({ days, overdue: over ? 1 : 0 }));
   const SRC = { installments: L2("Customer instalments", "أقساط العملاء"), cheques: L2("Customer cheques", "شيكات العملاء"), loans: L2("Loans", "القروض"),
     bills: L2("Subscriptions and bills", "الاشتراكات والفواتير"), recurring: L2("Recurring entries", "القيود المتكررة"), payroll: L2("Payroll", "الرواتب"),
-    purchase_orders: L2("Purchase orders (expected delivery)", "أوامر الشراء (التسليم المتوقع)") };
+    purchase_orders: L2("Purchase orders (expected delivery)", "أوامر الشراء (التسليم المتوقع)"),
+    invoices: L2("Invoices and bills with a due date", "فواتير لها تاريخ استحقاق") };
   const UND = { receivables: L2("Receivable from customers (invoices and balances)", "مستحق من العملاء (فواتير وأرصدة)"), payables: L2("Payable to suppliers and subcontractors", "مستحق للموردين ومقاولي الباطن"),
     taxes: L2("Taxes payable", "ضرائب مستحقة"), purchase_orders: L2("Purchase orders without expected date", "أوامر شراء بلا تاريخ تسليم متوقع") };
   S.H.cfdays = el => { store.set("cfDays", +el.value); setQ({ ...q, days: el.value }); };

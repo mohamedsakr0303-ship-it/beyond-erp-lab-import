@@ -201,7 +201,15 @@ def _validate_lines(db, lines):
         except (TypeError, ValueError):
             fx_rate = 0.0
         settles = int(num(ln.get("settles") or 0)) if cur and str(ln.get("settles") or "").strip().isdigit() else 0
-        extra.append((text(ln.get("memo") or ln.get("line_memo"), maxlen=500), item, cur, abs(fx_amt), fx_rate, settles))
+        # an opening balance brought from before (or any line standing for an earlier invoice / bill): that invoice's own
+        # number, date and due date — the customer's / supplier's balance then ages from it, not from the voucher's date
+        doc_ref = text(ln.get("doc_ref"), maxlen=60)
+        doc_date = clean_date(ln.get("doc_date"), "invoice date") if text(ln.get("doc_date")) else ""
+        due_date = clean_date(ln.get("due_date"), "due date") if text(ln.get("due_date")) else ""
+        if doc_date and due_date and due_date < doc_date:
+            raise ValidationError(f"The due date {due_date} is before the invoice date {doc_date}")
+        extra.append((text(ln.get("memo") or ln.get("line_memo"), maxlen=500), item, cur, abs(fx_amt), fx_rate, settles,
+                      doc_ref, doc_date, due_date))
         touched.add((acc, party))
         dr += d
         cr += c
@@ -223,10 +231,29 @@ class _Lines(list):
 
 def _insert_lines(db, eid, vlines):
     extra = getattr(vlines, "extra", None) or [("", "", "", 0, 0.0, 0)] * len(vlines)
-    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party,memo,cost_item,currency,fx_amount,fx_rate,settles) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                        [(eid, a, d, c, p, *x[:2], *(tuple(x[2:5]) if len(x) >= 5 else ("", 0, 0.0)), x[5] if len(x) >= 6 else 0)
+    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party,memo,cost_item,currency,fx_amount,fx_rate,settles,"
+                        "doc_ref,doc_date,due_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        [(eid, a, d, c, p, *x[:2], *(tuple(x[2:5]) if len(x) >= 5 else ("", 0, 0.0)), x[5] if len(x) >= 6 else 0,
+                          *(tuple(x[6:9]) if len(x) >= 9 else ("", "", "")))
                          for (a, d, c, p), x in zip(vlines, extra)])
+
+
+def _check_doc_dates(vlines, date):
+    """An earlier invoice a line stands for cannot be dated after the voucher that brings it in."""
+    for x in getattr(vlines, "extra", None) or []:
+        if len(x) >= 9 and x[7] and x[7] > date:
+            raise ValidationError(f"The invoice date {x[7]} is after the voucher's date {date}. "
+                                  "A line's invoice date is the original invoice's, on or before the voucher.")
+
+
+def _jline_out(r):
+    """A journal line as the app shows and sends it back."""
+    return {"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
+            "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {}),
+            **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {}),
+            **({"currency": r["currency"], "fx_amount": to_major(r["fx_amount"]), "fx_rate": r["fx_rate"],
+                **({"settles": r["settles"]} if r.get("settles") else {})} if r["currency"] else {}),
+            **{k: r[k] for k in ("doc_ref", "doc_date", "due_date") if r.get(k)}}
 
 
 def check_open(db, date):
@@ -311,6 +338,7 @@ def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", line
         currency, rate = DOC_FX.get()["currency"], DOC_FX.get()["rate"]
     lines = _fx_lines(db, date, lines, party, currency, rate, _REPLACE["eid"])
     vlines = _validate_lines(db, lines)
+    _check_doc_dates(vlines, clean_date(date))
     if _REPLACE["eid"]:
         eid, _REPLACE["eid"] = _REPLACE["eid"], None
         e = get_entry(db, eid)
@@ -394,11 +422,7 @@ def get_entry(db, eid):
         return None
     e["meta"] = json.loads(e["meta"] or "{}")
     e["history"] = json.loads(e["history"] or "[]")
-    e["lines"] = [{"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
-                   "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {}),
-                   **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {}),
-                   **({"currency": r["currency"], "fx_amount": to_major(r["fx_amount"]), "fx_rate": r["fx_rate"], **({"settles": r["settles"]} if r.get("settles") else {})} if r["currency"] else {})}
-                  for r in db.q("SELECT l.*, a.name, a.name_ar FROM journal_lines l JOIN accounts a ON a.code=l.account "
+    e["lines"] = [_jline_out(r) for r in db.q("SELECT l.*, a.name, a.name_ar FROM journal_lines l JOIN accounts a ON a.code=l.account "
                                 "WHERE entry_id=? ORDER BY l.id", (eid,))]
     e["amount"] = round(sum(ln["debit"] for ln in e["lines"]), 2)
     e["tags"] = [r["tag"] for r in db.q("SELECT tag FROM entry_tags WHERE entry_id=? ORDER BY tag", (eid,))]
@@ -420,11 +444,7 @@ def get_entries(db, ids):
     lines, tags = {}, {}
     for r in db.q("SELECT l.*, a.name, a.name_ar FROM journal_lines l JOIN accounts a ON a.code=l.account "
                   f"WHERE entry_id IN ({marks}) ORDER BY l.id", ids):
-        lines.setdefault(r["entry_id"], []).append(
-            {"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
-             "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {}),
-             **({"memo": r["memo"]} if r["memo"] else {}), **({"cost_item": r["cost_item"]} if r["cost_item"] else {}),
-                   **({"currency": r["currency"], "fx_amount": to_major(r["fx_amount"]), "fx_rate": r["fx_rate"], **({"settles": r["settles"]} if r.get("settles") else {})} if r["currency"] else {})})
+        lines.setdefault(r["entry_id"], []).append(_jline_out(r))
     for r in db.q(f"SELECT entry_id, tag FROM entry_tags WHERE entry_id IN ({marks}) ORDER BY tag", ids):
         tags.setdefault(r["entry_id"], []).append(r["tag"])
     out = []

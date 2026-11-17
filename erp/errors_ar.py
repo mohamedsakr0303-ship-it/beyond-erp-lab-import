@@ -4,6 +4,10 @@ English stays the source; {} in a message is a value, {1}, {2}… place it in th
 generic message ("{} is required") have their own list."""
 
 MESSAGES = {
+    # earlier invoices brought in on opening balances (accounting._validate_lines)
+    'The due date {} is before the invoice date {}': 'تاريخ الاستحقاق {1} قبل تاريخ الفاتورة {2}',
+    "The invoice date {} is after the voucher's date {}. A line's invoice date is the original invoice's, on or before the voucher.":
+        'تاريخ الفاتورة {1} بعد تاريخ القيد {2}. تاريخ الفاتورة في السطر هو تاريخ الفاتورة الأصلية، في تاريخ القيد أو قبله.',
     # foreign currencies (erp/fx.py)
     '{} is not a currency code (three letters, e.g. USD)': '{1} ليس رمز عملة (ثلاثة أحرف، مثل USD)',
     "No exchange rate for {} on or before {}. Add one under Exchange rates (or let the app fetch today's).":
@@ -1094,6 +1098,7 @@ FIELDS = {
     'down payment': 'المقدم',
     'down payment %': 'نسبة المقدم %',
     'due date': 'تاريخ الاستحقاق',
+    'invoice date': 'تاريخ الفاتورة',
     'employee holding the custody': 'الموظف صاحب العهدة',
     'end date': 'تاريخ الانتهاء',
     'entry type name': 'اسم نوع القيد',

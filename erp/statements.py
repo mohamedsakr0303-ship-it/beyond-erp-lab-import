@@ -41,8 +41,11 @@ def _lines(db, party=None, date_to=None, subtypes=None):
     if date_to:
         w.append("e.date<=?")
         p.append(date_to)
+    # age_date: when the charge was really made — a line standing for an earlier invoice (an opening balance) carries
+    # that invoice's date; everything else, its voucher's
     return db.q(f"""SELECT e.id, e.date, e.kind, e.ref, e.memo, {acc.PARTY} AS party, l.account, a.name AS account_name,
-                           a.name_ar AS account_name_ar, l.debit, l.credit, l.currency, l.fx_amount
+                           a.name_ar AS account_name_ar, l.debit, l.credit, l.currency, l.fx_amount, l.id AS line_id,
+                           l.doc_ref, l.doc_date, l.due_date, COALESCE(NULLIF(l.doc_date,''), e.date) AS age_date
                     FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
                     WHERE {' AND '.join(w)} ORDER BY e.date, e.id, l.id""", p)
 
@@ -63,29 +66,64 @@ def later(db, date_to, party=None):
 def _age(items, balance, as_of):
     """Split an open balance by age: the newest charges in the balance's direction make it up (first in, first out)."""
     out = [0] * len(BUCKETS)
-    left = abs(balance)
     end = _dt.date.fromisoformat(as_of)
-    for date, amt in reversed(items):  # newest first
-        if left <= 0:
-            break
-        take = min(left, amt)
+    for date, take, *_x in _pieces(items, balance):
         days = (end - _dt.date.fromisoformat(date)).days
         for i, (lo, hi, *_x) in enumerate(BUCKETS):
             if days >= lo and (hi is None or days <= hi) or (i == 0 and days < 0):
                 out[i] += take
                 break
-        left -= take
-    if left > 0:
-        out[-1] += left
     sign = 1 if balance >= 0 else -1
     return [to_major(sign * x) for x in out]
 
 
+def _pieces(items, balance):
+    """The charges still open in a balance, newest first: (date, amount still open, *what else the item carries). Payments
+    settle the oldest first, so the newest charges are the ones left. More open than charges (an opening balance brought
+    in some other way, which cannot happen with balanced books): the rest is counted as the oldest ('0001-01-01')."""
+    left, out = abs(balance), []
+    order = sorted(range(len(items)), key=lambda k: (items[k][0], k), reverse=True)   # newest charge first; same day: last posted
+    for k in order:
+        if left <= 0:
+            break
+        it = items[k]
+        take = min(left, it[1])
+        out.append((it[0], take, *it[2:]))
+        left -= take
+    if left > 0:
+        out.append(("0001-01-01", left))
+    return out
+
+
+def _side(lines, net):
+    """A contact's charges in the direction of their balance (what makes it up), oldest first, with what each stands for."""
+    side = [(r["age_date"], abs(r["debit"] - r["credit"]), r) for r in lines if (r["debit"] - r["credit"]) * net > 0]
+    return sorted(side, key=lambda x: x[0])
+
+
 def _aging_of(lines, as_of):
     net = sum(r["debit"] - r["credit"] for r in lines)
-    side = [(r["date"], r["debit"] - r["credit"]) for r in lines if (r["debit"] - r["credit"]) * net > 0]
-    side = [(d, abs(a)) for d, a in side]
-    return net, _age(side, net, as_of)
+    return net, _age(_side(lines, net), net, as_of)
+
+
+def open_items(db, date_to=None, subtypes=None):
+    """Every contact's invoices / bills still open (what their balance is made of, newest charges left), each with its
+    date, due date and number when known: + they owe us, − we owe them."""
+    date_to = acc.clean_date(date_to) if date_to else acc.today()
+    groups = {}
+    for r in _lines(db, None, date_to, subtypes):
+        groups.setdefault(r["party"], []).append(r)
+    out = []
+    for party, lines in groups.items():
+        net = sum(r["debit"] - r["credit"] for r in lines)
+        if not net:
+            continue
+        sign = 1 if net > 0 else -1
+        for date, amt, *rest in _pieces(_side(lines, net), net):
+            r = rest[0] if rest else {}
+            out.append({"party": party, "date": date, "due": r.get("due_date") or "", "ref": r.get("doc_ref") or r.get("ref") or "",
+                        "entry_id": r.get("id"), "account": r.get("account", ""), "amount": to_major(sign * amt)})
+    return out
 
 
 def statement(db, party, date_from=None, date_to=None):
@@ -101,10 +139,13 @@ def statement(db, party, date_from=None, date_to=None):
     for r in lines:
         if date_from and r["date"] < date_from:
             continue
-        e = by_entry.get(r["id"])
+        own = bool(r["doc_ref"] or r["doc_date"] or r["due_date"])     # an earlier invoice brought in: a row of its own
+        key = (r["id"], r["line_id"]) if own else r["id"]
+        e = by_entry.get(key)
         if not e:
-            e = by_entry[r["id"]] = {"id": r["id"], "date": r["date"], "kind": r["kind"], "ref": r["ref"], "memo": r["memo"],
-                                     "debit": 0, "credit": 0, "accounts": []}
+            e = by_entry[key] = {"id": r["id"], "date": r["date"], "kind": r["kind"], "ref": r["ref"], "memo": r["memo"],
+                                 "debit": 0, "credit": 0, "accounts": [],
+                                 **({k: r[k] for k in ("doc_ref", "doc_date", "due_date")} if own else {})}
             rows.append(e)
         e["debit"] += r["debit"]
         e["credit"] += r["credit"]
