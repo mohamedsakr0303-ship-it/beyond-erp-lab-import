@@ -300,6 +300,10 @@ class Handler(BaseHTTPRequestHandler):
         u = str(body.get("username", "")).strip().lower()
         u_is_email = bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", u))
         e = (body.get("email") or "").strip().lower() or (u if u_is_email else "")
+        if body.get("check") == "email":               # (as the function: whose account signs in with this email)
+            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e):
+                return 400, {"msg": "Enter a valid email address"}
+            return 200, {"ok": True, "existing": e in st.people, "here": (cid, e) in st.members, "username": st.people.get(e, "")}
         if body.get("action") != "delete":
             if u_is_email and e != u:
                 return 400, {"msg": "When the username is an email address, the email must be that same address (or left blank)"}

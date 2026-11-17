@@ -113,6 +113,15 @@ Deno.serve(async (req) => {
     return r.ok ? r.data.length : 0;
   };
 
+  // check "email": inviting someone by the email they sign in with — their account (and its username), whether they
+  // are in this company already; nothing created or changed
+  if (b.check === "email") {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(400, "Enter a valid email address", "أدخل بريداً إلكترونياً صحيحاً");
+    const p = await person(`email=eq.${enc(email)}`);
+    const here = await call("GET", `/rest/v1/members?select=email&${inCo}&email=eq.${enc(email)}`);
+    return reply(200, { ok: true, existing: !!p, here: !!(here.ok && here.data.length), username: p ? p.username || "" : "" });
+  }
+
   // delete: remove the person from this company; their sign-in account goes too unless another company still has them
   if (b.action === "delete") {
     const p = email ? await person(`email=eq.${enc(email)}`) : (username ? await person(`username=ilike.${enc(username)}`) : null);

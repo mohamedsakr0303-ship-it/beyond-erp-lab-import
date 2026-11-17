@@ -7272,6 +7272,19 @@ PAGES.users = async (view) => {
       un.addEventListener("input", () => { seq++; existing(false); mark("muted", "", false); });     // changed: check again
       const emf = f.querySelector('[name="email"]');
       if (emf && cloudOn()) emf.addEventListener("input", () => { if (f.dataset.unameOk && !u.id) { seq++; existing(false); mark("muted", "", false); } });
+      // invite by email: someone who already signs in (another company) — their account found by the email they sign in
+      // with, their own username filled in, no password here (theirs stays theirs)
+      if (emf && cloudOn() && !u.id) emf.addEventListener("change", async () => {
+        const email = emf.value.trim().toLowerCase(); if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
+        const n = ++seq;
+        try { const r = await CloudAPI.manageUser({ username: "", email, check: "email" }); if (n !== seq || !r) return;
+          if (r.here) { existing(false); return mark("bad", L2(`${email} is already in this company.`, `${email} موجود بالفعل في هذه الشركة.`), false); }
+          if (!r.existing) { existing(false); if (!f.dataset.unameOk) mark("muted", "", false); return; }   // a new person, as usual
+          if (r.username) un.value = r.username;
+          existing(true);
+          mark("ok", L2(`✓ The existing account of ${email} (username ${un.value}): they join this company and keep their own password.`,
+                        `✓ الحساب الموجود لـ ${email} (اسم المستخدم ${un.value}): ينضم إلى هذه الشركة ويحتفظ بكلمة مروره.`), true); }
+        catch { /* an older workspace: the username check as before */ } });
       un.addEventListener("blur", () => { if (un.value.trim() && f.dataset.unameOk !== un.value.trim()) ask(); });
       if (u.id) f.dataset.unameOk = u.username;                                        // unchanged: nothing to check
     }
@@ -7497,7 +7510,8 @@ async function workspaceTab(view, head) {
     && run(() => CloudAPI.deleteAccount({ email: el.dataset.e }), ar ? "تم الحذف." : "Deleted.");
   S.H.wsmadd = () => { const email = $("#wsnew").value.trim().toLowerCase(); if (!email) return; if (seatsTaken()) return seatFull();
     run(async () => { await CloudAPI.setMember({ email, is_admin: $("#wsnewadm").checked, gateway: $("#wsnewgw").checked, active: true });
-      const username = ($("#wsnewuser").value.trim() || email.split("@")[0]).toLowerCase();
+      const known = await CloudAPI.manageUser({ username: "", email, check: "email" }).catch(() => null);   // their own username
+      const username = ((known && known.username) || $("#wsnewuser").value.trim() || email.split("@")[0]).toLowerCase();
       await api("POST", "/api/users", { username, email, full_name: email.split("@")[0], is_admin: $("#wsnewadm").checked, _no_password: true, perms: { dashboard: "view" } }).catch(() => {});
       await CloudAPI.linkMember({ email, username, active: true }).catch(() => {}); }, t("saved")); };
 }
