@@ -7303,8 +7303,11 @@ PAGES.users = async (view) => {
           if (!r.existing) { existing(false); if (!f.dataset.unameOk) mark("muted", "", false); return; }   // a new person, as usual
           un.value = r.username || email;            // (an account with only an email signs in with it)
           existing(true);
-          mark("ok", L2(`✓ The existing account of ${email} (username ${un.value}): they join this company and keep their own password.`,
-                        `✓ الحساب الموجود لـ ${email} (اسم المستخدم ${un.value}): ينضم إلى هذه الشركة ويحتفظ بكلمة مروره.`), true); }
+          mark("ok", r.username
+            ? L2(`✓ The existing account of ${email} (username ${un.value}): they join this company and keep their own password.`,
+                 `✓ الحساب الموجود لـ ${email} (اسم المستخدم ${un.value}): ينضم إلى هذه الشركة ويحتفظ بكلمة مروره.`)
+            : L2(`✓ The existing account of ${email}: they sign in with this email, so it is their username. They join this company and keep their own password.`,
+                 `✓ الحساب الموجود لـ ${email}: يسجّل الدخول بهذا البريد، فهو اسم المستخدم. ينضم إلى هذه الشركة ويحتفظ بكلمة مروره.`), true); }
         catch { /* an older workspace: the username check as before */ } });
       un.addEventListener("blur", () => { if (un.value.trim() && f.dataset.unameOk !== un.value.trim()) ask(); });
       if (u.id) f.dataset.unameOk = u.username;                                        // unchanged: nothing to check
