@@ -7301,7 +7301,7 @@ PAGES.users = async (view) => {
         try { const r = await CloudAPI.manageUser({ username: "", email, check: "email" }); if (n !== seq || !r) return;
           if (r.here) { existing(false); return mark("bad", L2(`${email} is already in this company.`, `${email} موجود بالفعل في هذه الشركة.`), false); }
           if (!r.existing) { existing(false); if (!f.dataset.unameOk) mark("muted", "", false); return; }   // a new person, as usual
-          if (r.username) un.value = r.username;
+          un.value = r.username || email;            // (an account with only an email signs in with it)
           existing(true);
           mark("ok", L2(`✓ The existing account of ${email} (username ${un.value}): they join this company and keep their own password.`,
                         `✓ الحساب الموجود لـ ${email} (اسم المستخدم ${un.value}): ينضم إلى هذه الشركة ويحتفظ بكلمة مروره.`), true); }
@@ -7368,8 +7368,10 @@ PAGES.users = async (view) => {
           try { const r = await CloudAPI.manageUser({ username: "", email, check: "email" }); if (n !== seq) return;
             if (r.here) return show("bad", esc(L2("Already in this company.", "موجود بالفعل في هذه الشركة.")));
             if (!r.existing) return show("muted", `${esc(L2("No account uses this email yet.", "لا يوجد حساب بهذا البريد بعد."))} <button type="button" class="btn sm" data-a="invnew">${esc(L2("Create a new user instead", "إنشاء مستخدم جديد بدلاً من ذلك"))}</button>`);
-            set({ email, username: r.username });
-            show("ok", `<span class="inv-av" aria-hidden="true">${esc((r.username || email)[0].toUpperCase())}</span><span><b>${esc(r.username)}</b><small>${esc(email)}</small></span><span class="chip ok">${esc(L2("Found", "موجود"))}</span>`); }
+            // an account made with just an email has no username: they sign in with that email, so it is their username here
+            const un = r.username || email;
+            set({ email, username: un });
+            show("ok", `<span class="inv-av" aria-hidden="true">${esc(un[0].toUpperCase())}</span><span><b>${esc(un)}</b>${un !== email ? `<small>${esc(email)}</small>` : ""}</span><span class="chip ok">${esc(L2("Found", "موجود"))}</span>`); }
           catch (e) { if (n === seq) show("bad", esc(e.message)); } };
         let tm = 0;
         em.addEventListener("input", () => { clearTimeout(tm); if (!found || found.email !== em.value.trim().toLowerCase()) set(null); tm = setTimeout(look, 450); });
@@ -7576,7 +7578,7 @@ async function workspaceTab(view, head) {
   S.H.wsmadd = () => { const email = $("#wsnew").value.trim().toLowerCase(); if (!email) return; if (seatsTaken()) return seatFull();
     run(async () => { await CloudAPI.setMember({ email, is_admin: $("#wsnewadm").checked, gateway: $("#wsnewgw").checked, active: true });
       const known = await CloudAPI.manageUser({ username: "", email, check: "email" }).catch(() => null);   // their own username
-      const username = ((known && known.username) || $("#wsnewuser").value.trim() || email.split("@")[0]).toLowerCase();
+      const username = ((known && known.existing && (known.username || email)) || $("#wsnewuser").value.trim() || email.split("@")[0]).toLowerCase();
       await api("POST", "/api/users", { username, email, full_name: email.split("@")[0], is_admin: $("#wsnewadm").checked, _no_password: true, perms: { dashboard: "view" } }).catch(() => {});
       await CloudAPI.linkMember({ email, username, active: true }).catch(() => {}); }, t("saved")); };
 }

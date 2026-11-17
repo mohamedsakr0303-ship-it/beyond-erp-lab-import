@@ -349,6 +349,12 @@ class Handler(BaseHTTPRequestHandler):
                 return 400, {"msg": "This person already has a sign-in account (used by another company too). They keep "
                                     "their own password — leave the password empty to add them."}
             final = target
+        elif target in st.accounts and (cid, target) not in st.members and target != caller:
+            # (as the function) an account that is in no company, not this one: added here, never changed
+            if body.get("password"):
+                return 400, {"msg": "This person already has a sign-in account. They keep their own password — leave the "
+                                    "password empty to add them."}
+            final = target
         else:
             if old and old != wanted:
                 st.accounts[wanted] = st.accounts.pop(old, None)

@@ -2923,6 +2923,19 @@ class Companies(unittest.TestCase):
             self.assertEqual(fn({"username": "Boss@Beta.com", "password": "bosspw12"})["username"], "boss@beta.com")
             self.assertEqual(sb.state.accounts["boss@beta.com"], "bosspw12")
             self.assertTrue(Supabase(url, "anon").sign_in("boss@beta.com", "bosspw12")["access_token"])
+            # an account made with only an email (no username) is invited with its email as the username: found, added
+            # to this company, and its own password and (empty) username stay as they were
+            sb.state.accounts["solo@x.com"] = "solopw12"
+            sb.state.people["solo@x.com"] = ""
+            found = fn({"username": "", "email": "solo@x.com", "check": "email"})
+            self.assertEqual((found["existing"], found["username"]), (True, ""))
+            self.assertTrue(fn({"username": "solo@x.com", "email": "solo@x.com", "check": True})["ok"])
+            self.assertEqual(fn({"username": "solo@x.com", "email": "solo@x.com"})["email"], "solo@x.com")
+            self.assertIn((beta, "solo@x.com"), sb.state.members)
+            self.assertEqual((sb.state.accounts["solo@x.com"], sb.state.people["solo@x.com"]), ("solopw12", ""))
+            with self.assertRaises(RuntimeError) as cm:                     # (what the panel used to send: no username)
+                fn({"username": "", "email": "solo@x.com"})
+            self.assertIn("2–40 letters", str(cm.exception))
             for bad in ({"username": "boss@beta.com", "email": "other@beta.com", "password": "x123456"},
                         {"username": "two words", "password": "x123456"}):
                 with self.assertRaises(RuntimeError):
