@@ -2933,6 +2933,14 @@ class Companies(unittest.TestCase):
             self.assertEqual(fn({"username": "solo@x.com", "email": "solo@x.com"})["email"], "solo@x.com")
             self.assertIn((beta, "solo@x.com"), sb.state.members)
             self.assertEqual((sb.state.accounts["solo@x.com"], sb.state.people["solo@x.com"]), ("solopw12", ""))
+            # they are told: a card in the app (until seen), a push, and an email to a real address — once, not on later saves
+            self.assertEqual([(n["email"], n["email_sent"]) for n in sb.state.joined_notices if n["email"] == "solo@x.com"], [("solo@x.com", True)])
+            solo = Supabase(url, "anon"); stok = solo.sign_in("solo@x.com", "solopw12")["access_token"]
+            self.assertTrue([c for c in solo.rpc("my_companies", {}, stok) if c["id"] == beta][0]["welcome"]["by"])
+            solo.rpc("welcome_seen", {"p_company": beta}, stok)
+            self.assertNotIn("welcome", [c for c in solo.rpc("my_companies", {}, stok) if c["id"] == beta][0])
+            fn({"username": "solo@x.com", "email": "solo@x.com"})
+            self.assertEqual(len([n for n in sb.state.joined_notices if n["email"] == "solo@x.com"]), 1)
             with self.assertRaises(RuntimeError) as cm:                     # (what the panel used to send: no username)
                 fn({"username": "", "email": "solo@x.com"})
             self.assertIn("2–40 letters", str(cm.exception))

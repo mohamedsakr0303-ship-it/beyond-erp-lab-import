@@ -100,8 +100,9 @@ async function deliver(company: string | null, emails: string[], msg: any,
     if (opts.ready && !opts.ready(p)) { opts.later?.push(String(s.email)); return; }      // a reminder before this person's time
     if (Number(p.snooze_until) > Date.now()) { opts.later?.push(String(s.email)); return; }  // paused: reminders wait, the rest is skipped
     const silent = quiet(p);
-    const body = p.preview === false ? (p.lang === "ar" ? "افتح BeyondERP لقراءتها" : "Open BeyondERP to read it") : msg.body;
-    const st = await send(s, { ...msg, body, silent }, k, SUBJECT, { topic: msg.tag, urgency: silent ? "low" : "high" }).catch(() => 0);
+    const ar = p.lang === "ar" && msg.title_ar;            // a notice written in both languages: the device's own
+    const body = p.preview === false ? (p.lang === "ar" ? "افتح BeyondERP لقراءتها" : "Open BeyondERP to read it") : (ar ? msg.body_ar : msg.body);
+    const st = await send(s, { ...msg, title: ar ? msg.title_ar : msg.title, body, silent, title_ar: undefined, body_ar: undefined }, k, SUBJECT, { topic: msg.tag, urgency: silent ? "low" : "high" }).catch(() => 0);
     if (st === 404 || st === 410) await call("DELETE", `/rest/v1/push_subs?endpoint=eq.${enc(s.endpoint)}`);
     else if (st >= 200 && st < 300) {
       sent++;
@@ -310,6 +311,24 @@ Deno.serve(async (req) => {
              pref: ["fu_due", "reminders"].includes(b.pref) ? b.pref : "fu_due" } },
       { ...svc, Prefer: "resolution=merge-duplicates" });
     return reply(200, { ok: true });
+  }
+
+  // someone just added to this company (supabase/functions/manage-user): told on all their devices, whichever company
+  // those devices are on. Only the administrator who added them, within minutes, and only once; the words are ours.
+  if (b.kind === "joined") {
+    const who = String(b.email || "").trim().toLowerCase();
+    const adm = await call("GET", `/rest/v1/members?select=email&company_id=eq.${enc(company)}&email=eq.${enc(caller)}&is_admin=is.true`);
+    const tgt = await call("GET", `/rest/v1/members?select=added_by,added_at,welcome_seen&company_id=eq.${enc(company)}&email=eq.${enc(who)}&active=is.true`);
+    const t = tgt.ok && tgt.data.length ? tgt.data[0] : null;
+    if (!adm.ok || !adm.data.length || !t || t.welcome_seen || String(t.added_by || "").toLowerCase() !== caller ||
+        Date.now() - Date.parse(t.added_at) > 10 * 60000) return fail(403, "Not someone you just added");
+    const c = await call("GET", `/rest/v1/companies?select=name&id=eq.${enc(company)}`);
+    const name = clip((c.ok && c.data.length && c.data[0].name) || "", 60);
+    const sent = await deliver(null, [who], { title: clip(`Added to ${name}`, 80), body: "Open BeyondERP to switch to it.",
+      title_ar: clip(`تمت إضافتك إلى ${name}`, 80), body_ar: "افتح BeyondERP للانتقال إليها.", href: "#/", tag: `joined-${company}`,
+      kind: "notify", pref: "decisions" }, { kind: "notify" });
+    await logSend(company, caller, "joined", sent);
+    return reply(200, { sent });
   }
 
   const msg = { title: clip(b.title, 80), body: clip(b.body, 180), href: String(b.href || "#/").slice(0, 120), tag: clip(b.tag, 40), kind: String(b.kind) };

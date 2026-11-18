@@ -45,6 +45,7 @@ class State:
         self.paymob = False             # card checkout configured
         self.pages = {}                 # public desk (supabase/migrations/*_public_desk.sql): id -> page
         self.inbox = []                 # public_inbox rows
+        self.joined_notices = []        # (manage-user) someone added to a company: {company, email, by, push, email_sent}
 
     def now(self):
         import datetime
@@ -368,9 +369,15 @@ class Handler(BaseHTTPRequestHandler):
             (st.banned.discard if body.get("active", True) is not False else st.banned.add)(wanted)
             st.people[wanted] = u
             final = wanted
+        is_new = (cid, final) not in st.members and body.get("active", True) is not False and final != caller
         cur = st.members.get((cid, final), {"email": final, "is_admin": False, "gateway": False})
-        st.members[(cid, final)] = {**cur, "active": body.get("active", True) is not False, "pending": False}
-        return 200, {"email": final, "username": u, "placeholder": not e and not shared, "shared": shared}
+        st.members[(cid, final)] = {**cur, "active": body.get("active", True) is not False, "pending": False,
+                                    **({"welcome_seen": False, "added_by": caller} if is_new else {})}
+        notified = {"push": 0, "email": False}
+        if is_new:                                     # (as the function: a push on their devices, an email to a real address)
+            notified["email"] = not final.endswith("@users.beyond-erp.invalid")
+            st.joined_notices.append({"company": cid, "email": final, "by": caller, "email_sent": notified["email"]})
+        return 200, {"email": final, "username": u, "placeholder": not e and not shared, "shared": shared, "notified": notified}
 
     # ---------------------------------------------------------------- the public desk (mirror of *_public_desk.sql)
     def public_rpc(self, fn, p):
@@ -601,9 +608,16 @@ class Handler(BaseHTTPRequestHandler):
             return 200, sorted([{"id": k[0], "name": st.companies[k[0]]["name"], "is_admin": x["is_admin"],
                                  "pending": x["pending"], "active": x["active"], "created_at": st.companies[k[0]]["created_at"].isoformat(),
                                  "is_super": x["active"] and not x["pending"] and (x.get("is_super") or st.companies[k[0]]["created_by"] == email),
-                                 "changes": len(st.ops.get(k[0], [])) if x["active"] and not x["pending"] else None}
+                                 "changes": len(st.ops.get(k[0], [])) if x["active"] and not x["pending"] else None,
+                                 **({"welcome": {"by": st.people.get(x.get("added_by") or "") or x.get("added_by") or "", "at": ""}}
+                                    if x.get("welcome_seen") is False and x["active"] and not x["pending"] else {})}
                                 for k, x in st.members.items() if k[1] == email and (x["active"] or x["pending"])],
                                key=lambda c: (c["name"], c["created_at"]))
+        if fn == "welcome_seen":               # (migration 20261119000000_join_notice.sql)
+            x = st.members.get((p.get("p_company"), email))
+            if x:
+                x["welcome_seen"] = True
+            return 200, None
         if fn == "delete_company":
             c = st.companies.get(p.get("p_company"))
             x = st.members.get((p.get("p_company"), email))

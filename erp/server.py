@@ -6795,7 +6795,7 @@ def cloud_member_set(ctx):
 CLOUD_RPCS = {"my_super", "set_member_super", "chat_link_list", "chat_link_create", "chat_link_accept", "chat_link_end",
               "chat_link_messages", "chat_link_file", "chat_link_send", "chat_link_edit", "chat_link_read",
               "ai_settings_get", "ai_settings_set", "desk_pages", "desk_page_save", "desk_claim", "desk_reply", "desk_thread",
-              "desk_publishers", "desk_my_publish"}
+              "desk_publishers", "desk_my_publish", "welcome_seen"}
 
 
 @route("POST", "/api/cloud/call")

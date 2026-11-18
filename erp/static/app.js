@@ -7470,6 +7470,33 @@ async function alertAccessForm() {
 }
 PAGES.workspace = async (view) => view.innerHTML = "";  // (tab under Settings)
 
+// Someone added this person to another company (Users → + New / Invite by email): a card, once, with a way to open it.
+// The company list carries `welcome` until they act on it (migration 20261119000000_join_notice.sql).
+async function joinNotice() {
+  let cos = [], cur = "";
+  try { cos = await CloudAPI.companies(); cur = STATIC ? window.BeyondCloud.company() : ((await CloudAPI.status()).company || ""); } catch { return; }
+  const seen = id => CloudAPI.call("rpc", "welcome_seen", { p_company: id }).catch(() => {});
+  const fresh = (cos || []).filter(c => c.welcome && c.active && !c.pending);
+  fresh.filter(c => c.id === cur).forEach(c => seen(c.id));               // already in it: nothing to tell
+  const c = fresh.find(x => x.id !== cur);
+  if (!c || $("#joincard")) return;
+  const by = c.welcome.by || "";
+  const card = document.createElement("div");
+  card.id = "joincard"; card.className = "join-card"; card.setAttribute("role", "status");
+  card.innerHTML = `<span class="co-ic" aria-hidden="true">${esc((c.name || "?").trim().charAt(0).toUpperCase())}</span>
+    <div class="jc-t"><b>${esc(L2(`Added to ${c.name}`, `تمت إضافتك إلى ${c.name}`))}</b>${by ? `<small class="muted">${esc(L2(`by ${by}`, `بواسطة ${by}`))}</small>` : ""}</div>
+    <button type="button" class="btn sm pri jc-go">${esc(STATIC ? L2("Switch", "انتقال") : L2("Open", "فتح"))}</button>
+    <button type="button" class="btn sm jc-x" aria-label="${esc(L2("Close", "إغلاق"))}">✕</button>`;
+  document.body.appendChild(card);
+  const done = () => { seen(c.id); card.classList.add("out"); setTimeout(() => card.remove(), 220); };
+  $(".jc-x", card).addEventListener("click", done);
+  $(".jc-go", card).addEventListener("click", async () => {
+    await seen(c.id);
+    if (STATIC && CloudAPI.chooseCompany(c.id)) { store.set("token", ""); location.reload(); return; }
+    done(); companySwitcher();                     // (the desktop app is tied to one company: the switcher says how to open another)
+  });
+}
+
 // Top bar → Companies: open another company (browser edition: reloads with that company's books), create, join.
 async function companySwitcher() {
   const ar = S.lang === "ar";
@@ -7610,6 +7637,7 @@ async function boot() {
   if (store.get("welcome", "") === "1" || (fresh && !store.get("welcomed:" + S.boot.user.username, false))) {
     store.set("welcomed:" + S.boot.user.username, true); setTimeout(showWelcome, 700); }   // a new company or a new person
   else setTimeout(tourBar, 900);
+  if (cloudOn()) setTimeout(joinNotice, 1600);
   if (STATIC && window.BeyondCloud) window.BeyondCloud.onStatus(syncDot);
   else if (S.boot.cloud && S.boot.cloud.joined) {
     const poll = () => api("GET", "/api/cloud-status").then(syncDot).catch(() => {});

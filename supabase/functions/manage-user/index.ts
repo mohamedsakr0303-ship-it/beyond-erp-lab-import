@@ -36,6 +36,49 @@ async function call(method: string, path: string, body?: unknown, headers: Recor
 }
 const msgOf = (d: any) => (d && (d.msg || d.message || d.error_description || d.error)) || "Supabase refused the request";
 
+// ---- telling someone they were added to a company (a push on their devices, and an email when the account has a real
+// address); the in-app card comes from members.welcome_seen (migration 20261119000000_join_notice.sql)
+const MAIL_PROVIDER = (Deno.env.get("MAIL_PROVIDER") || "").toLowerCase();
+const MAIL_KEY = Deno.env.get("MAIL_API_KEY") || "";
+const MAIL_FROM = Deno.env.get("MAIL_FROM") || "BeyondERP <info@mybeyonderp.com>";
+const MAIL_REPLY_TO = Deno.env.get("MAIL_REPLY_TO") || "info@mybeyonderp.com";
+const SITE = Deno.env.get("PUSH_SUBJECT") || "https://mybeyonderp.com/";
+const escH = (x: string) => x.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+
+function joinedMail(co: string, by: string, created: boolean) {
+  const site = SITE.replace(/\/$/, "");
+  const subject = `You were added to ${co} | تمت إضافتك إلى ${co}`;
+  const en = created
+    ? `${by} added you to ${co} on BeyondERP. Ask them for your username and password, then sign in at ${site}.`
+    : `${by} added you to ${co} on BeyondERP. Sign in as usual with your own password at ${site} — ${co} is now in your company switcher; your own company and data stay as they are.`;
+  const ar = created
+    ? `أضافك ${by} إلى ${co} على BeyondERP. اطلب منه اسم المستخدم وكلمة المرور، ثم سجّل الدخول من ${site}.`
+    : `أضافك ${by} إلى ${co} على BeyondERP. سجّل الدخول كالمعتاد بكلمة مرورك من ${site} — ستجد ${co} في قائمة الشركات؛ وتبقى شركتك وبياناتك كما هي.`;
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f5fb;font-family:Arial,Helvetica,sans-serif;color:#1d2140">
+  <div style="max-width:600px;margin:0 auto;padding:24px 16px"><div style="font-weight:bold;letter-spacing:3px;color:#4f46e5;margin-bottom:14px">BEYONDERP</div>
+  <div style="background:#fff;border-radius:12px;padding:24px"><div dir="ltr" style="text-align:left"><h2 style="margin:0 0 12px;font-size:18px">You were added to ${escH(co)}</h2>
+  <p style="margin:0 0 16px;line-height:1.6">${escH(en)}</p><a href="${escH(site)}/" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px">Open BeyondERP</a></div>
+  <hr style="border:0;border-top:1px solid #e3e5f0;margin:22px 0"><div dir="rtl" lang="ar" style="text-align:right"><h2 style="margin:0 0 12px;font-size:18px">تمت إضافتك إلى ${escH(co)}</h2>
+  <p style="margin:0;line-height:1.8">${escH(ar)}</p></div></div>
+  <p style="font-size:12px;color:#6b6f8f;line-height:1.6;margin:16px 4px">You receive this because an administrator of ${escH(co)} added you. Not expected? Reply to this email.<br>
+  <span dir="rtl">تصلك هذه الرسالة لأن مسؤولاً في ${escH(co)} أضافك. إن لم تكن تتوقعها، رُدّ على هذه الرسالة.</span></p></div></body></html>`;
+  return { subject, html, text: `${en}\n\n—\n${ar}\n\n${site}` };
+}
+
+async function sendMail(to: string, c: { subject: string; html: string; text: string }) {
+  if (!((MAIL_PROVIDER === "resend" || MAIL_PROVIDER === "brevo") && MAIL_KEY)) return false;      // no email service set up
+  const m = MAIL_FROM.match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+  try {
+    const r = MAIL_PROVIDER === "resend"
+      ? await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${MAIL_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ from: MAIL_FROM, to: [to], subject: c.subject, html: c.html, text: c.text, reply_to: MAIL_REPLY_TO }) })
+      : await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": MAIL_KEY, "Content-Type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ sender: m ? { name: m[1] || "BeyondERP", email: m[2] } : { name: "BeyondERP", email: MAIL_FROM.trim() },
+                                 to: [{ email: to }], subject: c.subject, htmlContent: c.html, textContent: c.text, replyTo: { email: MAIL_REPLY_TO } }) });
+    return r.ok;
+  } catch { return false; }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return fail(405, "POST only");
@@ -99,7 +142,7 @@ Deno.serve(async (req) => {
   if (!adm.ok || !adm.data.length) return fail(403, "Only administrators of this company can manage sign-in accounts");
   // administrators add people; changing or removing someone's account is for the company's super administrators: those
   // marked so, and the company's creator (as public.beyond_is_super counts them; a company's creator is not marked)
-  const co = await call("GET", `/rest/v1/companies?select=created_by&id=eq.${enc(company)}`);
+  const co = await call("GET", `/rest/v1/companies?select=created_by,name&id=eq.${enc(company)}`);
   const isSuper = !!adm.data[0].is_super || !!(co.ok && co.data.length && String(co.data[0].created_by || "").toLowerCase() === caller);
 
   const username = String(b.username || "").trim().toLowerCase();
@@ -270,9 +313,24 @@ Deno.serve(async (req) => {
   const pr = await call("POST", "/rest/v1/people?on_conflict=email", { email: finalEmail, username: keep ? undefined : username },
     { ...svc, Prefer: "resolution=merge-duplicates,return=minimal" });
   if (!pr.ok) return fail(400, /duplicate|unique/i.test(msgOf(pr.data)) ? `The username ${username} is already used by another account — choose another` : msgOf(pr.data));
+  const before = await call("GET", `/rest/v1/members?select=email,active&${inCo}&email=eq.${enc(finalEmail)}`);
+  const isNew = before.ok && !before.data.length && active && finalEmail !== caller;      // just joined this company
   const m = await call("POST", "/rest/v1/members?on_conflict=company_id,email",
-    { company_id: company, email: finalEmail, active, pending: false, added_by: caller },
+    { company_id: company, email: finalEmail, active, pending: false, added_by: caller, ...(isNew ? { welcome_seen: false } : {}) },
     { ...svc, Prefer: "resolution=merge-duplicates,return=minimal" });
   if (!m.ok) return fail(400, msgOf(m.data));
-  return reply(200, { email: finalEmail, username, created, placeholder: !email && !shared, shared: !!shared });
+  // tell them: a push on their devices (the push function checks it again: an administrator who has just added them),
+  // and an email to a real address; neither can stop the person being added
+  let notified = { push: 0, email: false };
+  if (isNew) {
+    const coName = String((co.ok && co.data.length && co.data[0].name) || "");
+    const byP = await call("GET", `/rest/v1/people?select=username&email=eq.${enc(caller)}&limit=1`);
+    const by = String((byP.ok && byP.data.length && byP.data[0].username) || caller);
+    const pushed = await fetch(`${URL_}/functions/v1/push`, { method: "POST",
+      headers: { apikey: ANON, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "send", company, kind: "joined", email: finalEmail }) }).then((r) => r.json()).catch(() => null);
+    notified.push = Number(pushed && pushed.sent) || 0;
+    if (!finalEmail.endsWith("@" + PLACEHOLDER_DOMAIN)) notified.email = await sendMail(finalEmail, joinedMail(coName || "a company", by, created));
+  }
+  return reply(200, { email: finalEmail, username, created, placeholder: !email && !shared, shared: !!shared, notified });
 });
