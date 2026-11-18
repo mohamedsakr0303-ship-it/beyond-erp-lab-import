@@ -2207,6 +2207,9 @@ class Database:
         # a line standing for an earlier invoice / bill (opening balances): its number, date and due date (statements.py)
         self._add_cols("journal_lines", [("doc_ref", "TEXT NOT NULL DEFAULT ''"), ("doc_date", "TEXT NOT NULL DEFAULT ''"),
                                          ("due_date", "TEXT NOT NULL DEFAULT ''")])
+        # a bank account with an overdraft facility (erp/overdraft.py): on, the agreed limit, the yearly interest rate
+        self._add_cols("accounts", [("od_on", "INTEGER NOT NULL DEFAULT 0"), ("od_limit", "INTEGER NOT NULL DEFAULT 0"),
+                                    ("od_rate", "REAL NOT NULL DEFAULT 0")])
         self._add_cols("parties", [("currency", "TEXT NOT NULL DEFAULT ''")])
         self._add_cols("extracts", [("currency", "TEXT NOT NULL DEFAULT ''"), ("fx_rate", "REAL NOT NULL DEFAULT 0")])
         # documents kept in a foreign currency (erp/fx.py): their amounts, schedules and balances are in it

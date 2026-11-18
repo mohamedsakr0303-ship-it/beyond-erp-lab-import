@@ -645,9 +645,12 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     def bs_line(subs, sign=1):
         return "=" + closing(subs, sign)
 
+    # bank accounts with an overdraft facility (erp/overdraft.py): below zero, a bank overdraft under current liabilities
+    od_codes = [str(a.get("code")) for a in data["Chart of Accounts"] if str(a.get("od_on") or "").lower() == "yes" and a.get("subtype") == "cash"]
+    od_part = "+".join(f'MAX(0,-SUMIFS({TBR("H")},{TBR("A")},"{c}"))' for c in od_codes)
     bs_rows = [
         (None, "ASSETS / الأصول", None, "section"),
-        ("cash", "Cash & cash equivalents / النقدية", bs_line("cash")),
+        ("cash", "Cash & cash equivalents / النقدية", bs_line("cash") + (f"+{od_part}" if od_part else "")),
         ("ar", "Accounts receivable (net) / المدينون", bs_line(["receivable", "allowance_doubtful"])),
         ("inv", "Inventory / المخزون", bs_line("inventory")),
         ("pre", "Prepaid expenses & advances / مصروفات مقدمة ودفعات", bs_line("prepaid")),
@@ -669,7 +672,8 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
         ("divp", "Profit distributions payable / توزيعات مستحقة", bs_line("dividends_payable", -1)),
         ("ocl", "Other current liabilities / التزامات متداولة أخرى", bs_line("other_current_liability", -1)),
         ("std", "Short-term debt / قروض قصيرة الأجل", bs_line("short_term_debt", -1)),
-        ("tcl", "Total current liabilities / الالتزامات المتداولة", "={ap}+{acc}+{def}+{taxp}+{divp}+{ocl}+{std}", "subtotal"),
+        *([("odr", "Bank overdrafts / سحب على المكشوف", "=" + od_part)] if od_part else []),
+        ("tcl", "Total current liabilities / الالتزامات المتداولة", "={ap}+{acc}+{def}+{taxp}+{divp}+{ocl}+{std}" + ("+{odr}" if od_part else ""), "subtotal"),
         ("ltd", "Long-term debt / قروض طويلة الأجل", bs_line("long_term_debt", -1)),
         ("oncl", "Other non-current liabilities / التزامات غير متداولة أخرى", bs_line("other_noncurrent_liability", -1)),
         ("tl", "TOTAL LIABILITIES / إجمالي الالتزامات", "={tcl}+{ltd}+{oncl}", "total"),

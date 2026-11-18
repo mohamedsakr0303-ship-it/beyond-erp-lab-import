@@ -263,7 +263,10 @@ def balance_sheet_table(db, date_to=None, date_from=None, compare="none", bu_id=
     def sect(title, key, total_key, sign_label):
         rows.append(_row(L(title, lang), ["" for _ in pers], "header"))
         for code, name, vals in _merge_lines(res, lambda r: r[key]):
-            rows.append(_row(f"{code}  {nm.get(code, name)}".strip(), vals, "item", 1, code))
+            label = nm.get(code, name)
+            if name.startswith("Bank overdraft — "):      # a bank account below zero on its overdraft facility
+                label = ("سحب على المكشوف — " + nm.get(code, name[17:])) if lang == "ar" else name
+            rows.append(_row(f"{code}  {label}".strip(), vals, "item", 1, code))
         rows.append(_row(L(sign_label, lang), [r[total_key] for r in res], "subtotal"))
 
     rows.append(_row(L("assets", lang), ["" for _ in pers], "section"))

@@ -5913,11 +5913,23 @@ PAGES.coa = async (view, parts, q) => {
       opts: [["", fxBase()], ...[...new Set([...(S.boot.fx.currencies || []), ...(a.currency ? [a.currency] : [])])].map(c => [c, c])], v: a.currency || "",
       help: a.used || a.role ? L2("Fixed once the account has entries (system accounts stay in the company's currency)", "ثابتة بعد وجود قيود (الحسابات النظامية بعملة الشركة)")
         : L2("For a bank account or loan in a foreign currency: only that currency can be posted to it", "لحساب بنكي أو قرض بعملة أجنبية: لا يُرحَّل إليه إلا بها") }] : []),
+    { k: "od_on", l: L2("Overdraft facility: the bank lets this account go below zero", "تسهيلات سحب على المكشوف: يسمح البنك بأن يصبح رصيد هذا الحساب بالسالب"),
+      type: "checkbox", v: !!a.od_on, span: "spanall od-f", change: "aod" },
+    { k: "od_limit", l: L2("Agreed limit", "الحد المتفق عليه"), type: "number", step: "any", v: a.od_limit ? a.od_limit / 100 : "", span: "od-f od-x",
+      help: L2("Blank: not recorded (nothing is counted as room or flagged as over it)", "فارغ: غير مسجل (لا يُحتسب متاحاً ولا يُنبَّه لتجاوزه)") },
+    { k: "od_rate", l: L2("Interest % a year", "الفائدة % سنوياً"), type: "number", step: "any", v: a.od_rate || "", span: "od-f od-x",
+      help: L2("To estimate the bank's monthly interest", "لتقدير فائدة البنك الشهرية") },
     { k: "active", l: t("active"), type: "checkbox", v: a.active !== 0 },
     { html: a.role ? `<div class="banner info">${t("role")}: <b dir="ltr"><code>${esc(a.role)}</code></b> — ${S.lang === "ar" ? "يمكن تغيير الرقم والاسم؛ ويتبع النظام دور الحساب." : "The code and name can be changed; the system follows the account role."}</div>` : "", span: "spanall" }]),
   async v => { if (a.used) v.type = a.type; if (a.code && !a._new) await api("PUT", "/api/accounts/" + encodeURIComponent(a.code), v); else await api("POST", "/api/accounts", v); await refreshBoot(); toast(t("saved")); },
   { extraButtons: a.code && !a._new && !a.role && !a.used && can("accounting.coa", "edit") ? `<button type="button" class="btn danger" data-a="adel">${t("delete")}</button>` : "",
-    onOpen: f => { S.H.atype = () => { const ty = $("[name=type]", f).value; const s = $("[name=subtype]", f); s.innerHTML = S.boot.enums.subtypes[ty].map(x => `<option value="${x}" ${x === a.subtype ? "selected" : ""}>${esc(sub(x))}</option>`).join(""); }; S.H.atype(); } });
+    onOpen: f => {
+      // the overdraft facility belongs to a Cash & bank account; its limit and rate show once it is on
+      S.H.aod = () => { const cash = $("[name=subtype]", f).value === "cash", on = $("[name=od_on]", f).checked;
+        $$(".od-f", f).forEach(el => { el.hidden = !cash || (el.classList.contains("od-x") && !on); }); };
+      S.H.atype = () => { const ty = $("[name=type]", f).value; const s = $("[name=subtype]", f); s.innerHTML = S.boot.enums.subtypes[ty].map(x => `<option value="${x}" ${x === a.subtype ? "selected" : ""}>${esc(sub(x))}</option>`).join(""); S.H.aod(); };
+      $("[name=subtype]", f).addEventListener("change", () => S.H.aod());
+      S.H.atype(); } });
   const nextCode = ty => { const cs = rows.filter(a => a.type === ty && /^\d+$/.test(a.code)).map(a => +a.code).sort((x, y) => x - y);
     if (!cs.length) return ""; let c = cs[cs.length - 1] + 5; while (rows.some(a => a.code === String(c))) c++; return String(c); };
   S.H.anew = el => { const ty = (el && el.dataset.type) || "Expense"; edit({ type: ty, active: 1, code: nextCode(ty), _new: 1 }); };
@@ -14815,6 +14827,28 @@ PAGES["model-audit"] = async (view, parts, q) => {
     <div class="card"><h2>${L2("Integrity checks", "فحوصات السلامة")}</h2><div class="tbl"><table><thead><tr><th>${L2("Check", "الفحص")}</th><th class="num">A</th><th class="num">B</th><th>${t("status")}</th></tr></thead><tbody>
       ${d.checks.map(c => `<tr><td>${esc(ar && c.check_ar || c.check)}</td><td class="num">${esc(String(c.a))}</td><td class="num">${esc(String(c.b))}</td><td><span class="chip ${c.ok ? "ok" : "bad"}">${c.ok ? "✓ OK" : "✗ " + L2("Review", "مراجعة")}</span></td></tr>`).join("")}</tbody></table></div></div>`;
 };
+// Bank accounts with an overdraft facility (erp/overdraft.py): drawn, the room left under the limit, this month's
+// interest estimate — and the bank's figure booked in one step (interest expense / the bank)
+function overdraftCard(rows) {
+  if (!rows || !rows.length) return "";
+  const st = r => r.state === "over" ? ["bad", L2("Over the limit", "تجاوز الحد")] : r.state === "near" ? ["warn", L2("Near the limit", "قرب الحد")] : ["ok", L2("Within limit", "ضمن الحد")];
+  S.H.odint = async el => { const r = rows.find(x => x.code === el.dataset.code); if (!r) return;
+    const m = await uiForm(L2(`Overdraft interest — ${r.name}`, `فائدة السحب على المكشوف — ${S.lang === "ar" && r.name_ar || r.name}`),
+      [{ k: "month", l: L2("Month (YYYY-MM)", "الشهر (YYYY-MM)"), v: r.month, req: 1 }, { k: "amount", l: L2("Interest the bank charged", "الفائدة التي خصمها البنك"), v: r.interest_est || "", req: 1 }],
+      L2("Use the bank statement's figure; the estimate is from the daily balances and the rate. Booked as interest expense paid from this account.",
+         "استخدم الرقم في كشف البنك؛ التقدير محسوب من الأرصدة اليومية والنسبة. يُسجَّل كمصروف فوائد مدفوع من هذا الحساب."));
+    if (!m) return;
+    try { await api("POST", "/api/overdrafts/interest", { account: r.code, month: m.month, amount: m.amount }); toast(t("posted"), false, "ok"); route(); } catch (e) { fail(e); } };
+  return `<div class="card"><h2>${esc(L2("Bank overdraft facilities", "تسهيلات السحب على المكشوف"))}</h2><div class="tbl"><table><thead><tr>
+    <th>${esc(L2("Bank account", "الحساب البنكي"))}</th><th class="num">${esc(L2("Balance", "الرصيد"))}</th><th class="num">${esc(L2("Drawn", "المسحوب"))}</th>
+    <th class="num">${esc(L2("Limit", "الحد"))}</th><th class="num">${esc(L2("Room left", "المتاح"))}</th><th class="num">${esc(L2("Interest this month (est.)", "فائدة الشهر (تقديرية)"))}</th><th></th></tr></thead><tbody>
+    ${rows.map(r => { const [c, w] = st(r); return `<tr><td><a href="#/ledger?account=${encodeURIComponent(r.code)}">${esc(r.code)} ${esc(S.lang === "ar" && r.name_ar || r.name)}</a>${r.limit ? ` <span class="chip ${c}">${esc(w)}</span>` : ""}</td>
+      <td class="num ${r.balance < 0 ? "neg" : ""}">${money(r.balance)}</td><td class="num">${money(r.drawn)}</td><td class="num">${r.limit ? money(r.limit) : "—"}</td>
+      <td class="num">${r.room == null ? "—" : money(r.room)}</td><td class="num">${r.rate ? money(r.interest_est) : "—"}</td>
+      <td>${r.interest_booked ? `<span class="chip ok">✓ ${esc(L2("Booked", "مسجلة"))}</span>` : can("accounting.journal", "add") ? `<button class="btn sm" data-a="odint" data-code="${esc(r.code)}">${esc(L2("Book interest", "تسجيل الفائدة"))}</button>` : ""}</td></tr>`; }).join("")}
+    </tbody></table></div><p class="muted" style="font-size:.82em;margin-top:8px">${esc(L2("Below zero, these accounts are money borrowed from the bank: shown as a bank overdraft in the balance sheet, and the room left counts as money available.",
+      "عندما يصبح الرصيد بالسالب فهو مبلغ مقترض من البنك: يظهر كسحب على المكشوف في الميزانية، والمتاح من الحد يُحتسب ضمن الأموال المتاحة."))}</p></div>`;
+}
 PAGES["cash-forecast"] = async (view, parts, q) => {
   const days = +(q.days || store.get("cfDays", 90)), over = (q.overdue ?? store.get("cfOver", "1")) !== "0";
   const d = await api("GET", "/api/cash-forecast?" + qs({ days, overdue: over ? 1 : 0 }));
@@ -14836,15 +14870,18 @@ PAGES["cash-forecast"] = async (view, parts, q) => {
       <rect x="${x + 1}" y="${y(w.out)}" width="${b}" height="${Math.max(1, H - padB - y(w.out))}" rx="${b / 2}" class="c"/>${i % 2 ? "" : `<text x="${x}" y="${H - 8}">${esc(w.from.slice(8))}/${esc(w.from.slice(5, 7))}</text>`}</g>`; }).join("")}
     <path d="${line}" fill="none" stroke="var(--brand)" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${lo < 0 && hi > 0 ? `<line x1="0" x2="${W}" y1="${yb(0)}" y2="${yb(0)}" stroke="#ff5a5f" stroke-dasharray="3 4" vector-effect="non-scaling-stroke"/>` : ""}</svg><div class="tip" hidden></div></div>`;
   const neg = d.lowest.balance < 0;
+  const odCard = d.overdrafts ? overdraftCard(d.overdrafts.rows) : "";
   view.innerHTML = `<div class="toolbar"><h1>${t("m_cashplan")}</h1><span class="spacer"></span>
       <label class="f chk" style="margin:0"><input type="checkbox" data-change="cfover" ${over ? "checked" : ""}>${esc(L2("Treat overdue amounts as collected / paid today", "اعتبار المبالغ المتأخرة محصلة / مدفوعة اليوم"))}</label>
       <select data-change="cfdays" aria-label="${esc(L2("Days ahead", "الأيام القادمة"))}">${[30, 60, 90, 180].map(n => `<option value="${n}" ${n === d.days ? "selected" : ""}>${n} ${L2("Days", "يوماً")}</option>`).join("")}</select></div>
     ${neg ? `<div class="banner err">${esc(L2(`Cash is forecast to fall below zero: ${money(d.lowest.balance)} around ${fd(d.lowest.date)}.`, `يُتوقع أن تنخفض النقدية دون الصفر: ${money(d.lowest.balance)} في حدود ${fd(d.lowest.date)}.`))}</div>` : ""}
     <div class="kpis">${kpiBox(d.basis === "facility" ? L2("Funding room left today", "المتاح من حد التمويل اليوم") : L2("Cash and bank today", "النقدية والبنوك اليوم"), d.cash_now, "", [d.facility ? L2(`Limit ${money(d.facility.limit)} · fronted ${money(d.facility.fronted)}`, `الحد ${money(d.facility.limit)} · المموَّل ${money(d.facility.fronted)}`) : "",
+      d.overdrafts && d.overdrafts.limits > 0 ? L2(`with bank overdraft limits (${money(d.overdrafts.room)} unused)`, `مع حدود السحب على المكشوف (${money(d.overdrafts.room)} غير مستخدم)`) : "",
       d.other_funders && d.other_funders.held + d.other_funders.room > 0 ? L2(`includes ${money(d.other_funders.held + d.other_funders.room)} with other funding partners`, `يشمل ${money(d.other_funders.held + d.other_funders.room)} لدى الشركاء الممولين الآخرين`) : ""].filter(Boolean).join(" · "))}${d.windows.map(w => kpiBox(L2(`In ${w.days} days`, `بعد ${w.days} يوماً`), w.balance, w.balance < 0 ? "neg" : "",
       `${esc(L2("In", "وارد"))} ${money(w.in)} · ${esc(L2("Out", "منصرف"))} ${money(w.out)}`)).join("")}${kpiBox(L2("Lowest balance", "أدنى رصيد"), d.lowest.balance, neg ? "neg" : "", fd(d.lowest.date))}</div>
     ${d.overdue.rows.length ? `<div class="banner ${over ? "info" : "warn"}">${esc(L2(`Overdue (due before today): ${money(d.overdue.in)} to collect and ${money(d.overdue.out)} to pay; ${over ? "included in today's balance" : "excluded from the forecast"}.`, `متأخر (مستحق قبل اليوم): ${money(d.overdue.in)} للتحصيل و${money(d.overdue.out)} للسداد؛ ${over ? "مدرجة في رصيد اليوم" : "مستبعدة من التوقعات"}.`))}</div>` : ""}
     <div class="card"><h2 style="margin-bottom:2px">${esc(L2("Weekly", "أسبوعياً"))}</h2><div class="muted" style="font-size:.82em;margin-bottom:6px">${esc(L2("Green: inflows · Red: outflows · Line: balance", "الأخضر: الوارد · الأحمر: المنصرف · الخط: الرصيد"))}</div>${chart}</div>
+    ${odCard}
     <div class="grid g2"><div class="card"><h2>${esc(L2("Sources", "المصادر"))}</h2>${d.sources.length ? `<div class="tbl"><table><thead><tr><th></th><th class="num">${esc(L2("Inflow", "وارد"))}</th><th class="num">${esc(L2("Outflow", "منصرف"))}</th></tr></thead><tbody>
         ${d.sources.map(x => `<tr><td>${esc(SRC[x.source] || x.source)} <span class="muted">(${x.count})</span></td><td class="num pos">${x.in ? money(x.in) : ""}</td><td class="num neg">${x.out ? money(x.out) : ""}</td></tr>`).join("")}</tbody></table></div>`
         : `<div class="empty">${esc(L2("No dated inflows or outflows. Instalments, cheques, loans, subscriptions, recurring entries, payroll and purchase orders with delivery dates appear here.", "لا توجد تدفقات مؤرخة. تظهر هنا الأقساط والشيكات والقروض والاشتراكات والقيود المتكررة والرواتب وأوامر الشراء ذات تواريخ التسليم."))}</div>`}</div>

@@ -1032,6 +1032,8 @@ def save_account(db, d, old_code=None):
         currency = fx.code(d.get("currency")) if "currency" in d else ((db.one("SELECT currency FROM accounts WHERE code=?", (old_code,)) or {}).get("currency", "") if old_code else "")
         if currency == fx.base(db):
             currency = ""
+        from . import overdraft         # a bank account the bank lets go below zero: its overdraft facility
+        od = overdraft.settings_from(d, sub, db.one("SELECT od_on, od_limit, od_rate FROM accounts WHERE code=?", (old_code,)) if old_code else None)
         if old_code:
             cur = db.one("SELECT * FROM accounts WHERE code=?", (old_code,))
             if not cur:
@@ -1052,13 +1054,14 @@ def save_account(db, d, old_code=None):
                     raise ValidationError("A system account stays in the company's currency; open a new account for the foreign one")
                 if used:
                     raise ValidationError("This account has postings; its currency cannot change. Open a new account and move the balance.")
-            db.conn.execute("UPDATE accounts SET code=?, name=?, name_ar=?, type=?, subtype=?, normal=?, active=?, parent=?, currency=? "
-                            "WHERE code=?", (code, name, name_ar, typ, sub, normal_for(typ, sub), active, parent, currency, old_code))
+            db.conn.execute("UPDATE accounts SET code=?, name=?, name_ar=?, type=?, subtype=?, normal=?, active=?, parent=?, currency=?, "
+                            "od_on=?, od_limit=?, od_rate=? WHERE code=?",
+                            (code, name, name_ar, typ, sub, normal_for(typ, sub), active, parent, currency, *od, old_code))
         else:
             if db.one("SELECT 1 FROM accounts WHERE code=?", (code,)):
                 raise ValidationError(f"Code {code} is already used")
-            db.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,active,parent,currency) VALUES (?,?,?,?,?,?,?,?,?)",
-                            (code, name, name_ar, typ, sub, normal_for(typ, sub), active, parent, currency))
+            db.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,active,parent,currency,od_on,od_limit,od_rate) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (code, name, name_ar, typ, sub, normal_for(typ, sub), active, parent, currency, *od))
     return code
 
 
@@ -2128,6 +2131,13 @@ def balance_sheet(db, date_to=None, bu_id=None):
         cur_liab.remove(x)
         cur_assets.insert(0, {**x, "name": "Company money held in the funding partner's account", "subtype": "cash",
                               "amount": -x["amount"]})
+    # a bank account with an overdraft facility below zero: money borrowed from the bank, shown as a bank overdraft
+    from . import overdraft
+    od = {a["code"]: a for a in overdraft.accounts(db)}
+    for x in [x for x in cur_assets if x["code"] in od and x["amount"] < 0]:
+        cur_assets.remove(x)
+        cur_liab.insert(0, {**x, "name": f"Bank overdraft — {x['name']}", "subtype": "short_term_debt", "overdraft": True,
+                            "amount": -x["amount"]})
     equity = sect(BS_EQUITY, -1)
     # closed financial years (yearend.py): their profit is retained earnings; only the profit since is current earnings
     closed_to = db.one("SELECT MAX(year_end) e FROM year_closes" + (" WHERE year_end<=?" if date_to else ""),
@@ -2732,6 +2742,14 @@ def cash_position(db):
             out["facility"] = {k: f[k] for k in ("partner", "limit", "fronted", "after_suppliers", "room_after", "used", "state", "status", "status_ar")}
             out["gap"] = round(max(0.0, -f["room_after"]), 2)
     # the other funding partners: money of the company they hold and the room left under their limits is money too
+    from . import overdraft
+    ods = overdraft.facilities(db)
+    if ods:
+        out["overdrafts"] = ods
+        out["overdraft_room"] = round(sum(f["room"] or 0 for f in ods), 2)
+        out["overdraft_limits"] = round(sum(f["limit"] or 0 for f in ods), 2)
+        if not out["facility"]:    # what can be spent: the cash (a drawn overdraft in it, below zero) plus the limits
+            out["gap"] = round(max(0.0, out["floor"] - out["cash"] - out["overdraft_limits"]), 2)
     from . import funders
     others = funders.others_money(db)
     if others["rows"]:
@@ -2841,7 +2859,7 @@ def review_flags(db, date_from=None, date_to=None, partners=None):
                 f"{p['name']} سحب {-p['undistributed']:,.2f} أكثر من نصيبه في الربح", p["name"], "#/statement?party=" + quote(p["name"]))
     # cash / bank that went below zero on any day: money was paid out before it came in (someone paid from their pocket,
     # or a receipt is missing) — the year-end check only sees the closing balance
-    for acct in db.q("SELECT code, name, name_ar FROM accounts WHERE subtype='cash' ORDER BY code"):
+    for acct in db.q("SELECT code, name, name_ar, od_on, od_limit FROM accounts WHERE subtype='cash' ORDER BY code"):
         days = db.q(f"""SELECT e.date, SUM(l.debit-l.credit) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                         WHERE {LIVE} AND l.account=? {"AND e.date<=?" if date_to else ""} GROUP BY e.date ORDER BY e.date""",
                     (acct["code"],) + ((date_to,) if date_to else ()))
@@ -2852,6 +2870,12 @@ def review_flags(db, date_from=None, date_to=None, partners=None):
                 low, low_on = run, d["date"]
             if run < 0 and not first:
                 first = d["date"]
+        if acct["od_on"]:              # an overdraft facility: below zero is borrowed from the bank — over the limit is not
+            if acct["od_limit"] and -low > acct["od_limit"]:
+                add(f"{acct['name']} went over its overdraft limit of {to_major(acct['od_limit']):,.2f} (lowest {to_major(low):,.2f} on {low_on})",
+                    f"تجاوز {acct['name_ar'] or acct['name']} حد السحب على المكشوف البالغ {to_major(acct['od_limit']):,.2f} (أدنى رصيد "
+                    f"{to_major(low):,.2f} في {low_on})", acct["code"], "#/ledger?account=" + quote(acct["code"]))
+            continue
         if low < 0:
             add(f"{acct['name']} went below zero from {first} (lowest {to_major(low):,.2f} on {low_on}): money was paid out before it "
                 f"came in — record where it came from", f"رصيد {acct['name_ar'] or acct['name']} أصبح بالسالب من {first} (أدنى رصيد "

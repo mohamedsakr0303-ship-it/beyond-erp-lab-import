@@ -128,7 +128,11 @@ SHEETS = [
               # last, so the columns before it (and the workbook's formulas on them) stay where they were
               C("parent", "Group", "المجموعة", width=12, note="the account's group in Account Groups; blank = top level"),
               C("currency", "Currency", "العملة", width=8,
-                note="Only for an account kept in a foreign currency (e.g. a USD bank account): its three-letter code. Blank = the company's")]},
+                note="Only for an account kept in a foreign currency (e.g. a USD bank account): its three-letter code. Blank = the company's"),
+              C("od_on", "Overdraft Facility", "سحب على المكشوف", width=9, choices=["Yes", "No"],
+                note="A bank account the bank lets go below zero (overdraft facility): Yes. Below zero it is money borrowed from the bank"),
+              C("od_limit", "Overdraft Limit", "حد السحب على المكشوف", kind="money", note="The agreed limit; blank = not recorded"),
+              C("od_rate", "Overdraft Interest %", "فائدة السحب على المكشوف %", kind="num", note="Yearly %, e.g. 24 (to estimate the monthly interest)")]},
     {"name": "Cost Items", "ar": "بنود التكلفة", "module": "business_units",
      "title": "Cost items: one catalogue of work items for every project (01 = a trade, 01.02 = an item under it). "
               "Cost lines are tagged with them; budgets are per project and item",
@@ -724,7 +728,9 @@ def export_data(db):
         out["Chart of Accounts"].append({"code": a["code"], "name": a["name"], "name_ar": a["name_ar"], "type": a["type"],
                                          "subtype": a["subtype"], "role": a["role"] or "",
                                          "active": "Yes" if a["active"] else "No", "parent": a.get("parent") or "",
-                                         "currency": a.get("currency") or ""})
+                                         "currency": a.get("currency") or "",
+                                         **({"od_on": "Yes", "od_limit": to_major(a["od_limit"]) or "", "od_rate": a["od_rate"] or ""}
+                                            if a.get("od_on") else {})})
     for r in db.q("SELECT date, currency, rate, source FROM fx_rates ORDER BY date, currency"):
         out["Exchange Rates"].append(dict(r))
     bus = {b["id"]: b for b in db.q("SELECT * FROM business_units ORDER BY code")}
@@ -2574,6 +2580,9 @@ def _imp_account(db, r):
         d["parent"] = acc.text(r.get("parent"))
     if "currency" in r:
         d["currency"] = acc.text(r.get("currency"))
+    if "od_on" in r:           # a bank account's overdraft facility (erp/overdraft.py)
+        d["od_on"] = 1 if str(r.get("od_on") or "").strip().lower() in ("yes", "1", "true", "نعم") else 0
+        d["od_limit"], d["od_rate"] = r.get("od_limit"), r.get("od_rate")
     if by_role and by_role["code"] != code:
         acc.save_account(db, d, old_code=by_role["code"])  # renumbered system account
     elif existing:

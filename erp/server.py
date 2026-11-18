@@ -6128,6 +6128,21 @@ def cash_forecast(ctx):
     return ok(cashplan.build(ctx.db, ctx.q.get("days") or 90, ctx.q.get("overdue", "1") != "0"))
 
 
+# bank accounts with an overdraft facility (erp/overdraft.py): drawn, room, this month's interest estimate; book the interest
+@route("GET", "/api/overdrafts", "accounting.coa")
+def overdrafts_list(ctx):
+    from . import overdraft
+    return ok({"rows": overdraft.facilities(ctx.db, ctx.q.get("date_to"))})
+
+
+@route("POST", "/api/overdrafts/interest", "accounting.journal", "add")
+def overdraft_interest(ctx):
+    from . import overdraft
+    eid = overdraft.book_interest(ctx.db, ctx.body, ctx.user["username"])
+    ctx.log("overdraft.interest", f"{ctx.body.get('account')} {ctx.body.get('month')}")
+    return ok({"id": eid})
+
+
 @route("GET", "/api/forecast", "reports.forecast")
 def forecast_get(ctx):
     from . import forecast

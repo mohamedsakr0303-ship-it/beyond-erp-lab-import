@@ -191,6 +191,11 @@ def build(db, days=90, include_overdue=True, today=None):
     from . import funders
     others = funders.others_money(db)       # other funding partners: money of the company they hold, room under their limits
     start = round(start + others["held"] + others["room"], 2)
+    from . import overdraft                 # bank overdraft facilities: what can be spent is each balance plus its limit
+    ods = overdraft.facilities(db, today)   # (the balances, below zero when drawn, are already in the cash)
+    od_room = round(sum(f["room"] or 0 for f in ods), 2)
+    od_limits = round(sum(f["limit"] or 0 for f in ods), 2)
+    start = round(start + od_limits, 2)
     o_in = round(sum(r["amount"] for r in overdue if r["amount"] > 0), 2)
     o_out = round(-sum(r["amount"] for r in overdue if r["amount"] < 0), 2)
     opening = round(start + (o_in - o_out if include_overdue else 0), 2)
@@ -224,6 +229,7 @@ def build(db, days=90, include_overdue=True, today=None):
     return {"today": today, "until": until, "days": days, "cash_now": start, "basis": "facility" if fac else "cash",
             "facility": {k: fac[k] for k in ("partner", "limit", "fronted", "room")} if fac else None,
             "other_funders": others if others["rows"] else None, "include_overdue": bool(include_overdue),
+            "overdrafts": {"rows": ods, "room": od_room, "limits": od_limits} if ods else None,
             "overdue": {"in": o_in, "out": o_out, "rows": overdue}, "opening": opening, "windows": windows, "weeks": weeks,
             "lowest": {"balance": low[0], "date": low[1]}, "items": dated, "sources": sorted(by_source.values(), key=lambda s: s["source"]),
             "undated": _undated(db, today)}

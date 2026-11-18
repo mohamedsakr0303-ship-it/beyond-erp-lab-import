@@ -4,6 +4,12 @@ English stays the source; {} in a message is a value, {1}, {2}… place it in th
 generic message ("{} is required") have their own list."""
 
 MESSAGES = {
+    # bank overdraft facilities (erp/overdraft.py)
+    'The overdraft limit cannot be negative': 'لا يمكن أن يكون حد السحب على المكشوف سالباً',
+    'The overdraft interest rate is a yearly percentage between 0 and 100': 'فائدة السحب على المكشوف نسبة سنوية بين 0 و100',
+    'Choose a bank account with an overdraft facility': 'اختر حساباً بنكياً له تسهيلات سحب على المكشوف',
+    'Say which month (YYYY-MM)': 'حدد الشهر (YYYY-MM)',
+    'The interest for {} on {} is already booked': 'فائدة {1} على {2} مسجلة بالفعل',
     # earlier invoices brought in on opening balances (accounting._validate_lines)
     'The due date {} is before the invoice date {}': 'تاريخ الاستحقاق {1} قبل تاريخ الفاتورة {2}',
     "The invoice date {} is after the voucher's date {}. A line's invoice date is the original invoice's, on or before the voucher.":
@@ -1099,6 +1105,10 @@ FIELDS = {
     'down payment %': 'نسبة المقدم %',
     'due date': 'تاريخ الاستحقاق',
     'invoice date': 'تاريخ الفاتورة',
+    'overdraft limit': 'حد السحب على المكشوف',
+    'overdraft interest rate': 'فائدة السحب على المكشوف',
+    'interest amount': 'مبلغ الفائدة',
+    'interest account': 'حساب الفوائد',
     'employee holding the custody': 'الموظف صاحب العهدة',
     'end date': 'تاريخ الانتهاء',
     'entry type name': 'اسم نوع القيد',
