@@ -1,7 +1,8 @@
 # Sending email from info@mybeyonderp.com
 
 The owner console and support desk send customer emails (Announcements → Email customers) through an email
-service. Gmail forwarding (Cloudflare Email Routing) receives mail for info@mybeyonderp.com, but it cannot send
+service, and so does the workspace when someone is added to a company (Users → + New / Invite by email: "You were added
+to …", sent by the `manage-user` function with the same settings below). Gmail forwarding (Cloudflare Email Routing) receives mail for info@mybeyonderp.com, but it cannot send
 emails to many people; an email service does that. BeyondERP works with **Resend** or **Brevo**. Both have a free
 tier; check their current limits on their sites before choosing.
 
@@ -40,3 +41,11 @@ in a GitHub variable that is printed, or in a page.
 Owner console → Announcements → **✉ Email customers…**: the panel says *Sent from BeyondERP <info@…>* instead of
 "not set up yet". Write a message and press **Send me a test**: it arrives at your own address only. Check that it is
 not in spam. If it is, wait for the domain to finish verifying, and check the SPF and DKIM records.
+
+## 4. Replies (no paid mailbox needed)
+
+Resend only sends: it needs the domain verified, not a mailbox. Replies go to `MAIL_REPLY_TO` (info@mybeyonderp.com by
+default), which Cloudflare Email Routing forwards to the team's Gmail inbox. To answer *as* info@mybeyonderp.com from
+that Gmail (instead of from the Gmail address), add it in Gmail → Settings → Accounts → **Send mail as** → Add another
+email address, with Resend's SMTP: server `smtp.resend.com`, port `465` (SSL), username `resend`, password a Resend API
+key with sending permission (a separate key from the one in Supabase, so either can be revoked alone).
