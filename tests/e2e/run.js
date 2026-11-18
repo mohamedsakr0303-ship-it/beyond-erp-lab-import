@@ -47,6 +47,7 @@ async function open(browser, viewport = { width: 1280, height: 800 }, touch = fa
   await page.fill("[name=password]", who.password);
   await page.press("[name=password]", "Enter");
   await page.waitForSelector("#nav", { state: "attached" });
+  await passLock(page);
   for (let i = 0; i < 8; i++) {           // the first-run welcome: skip it
     const skip = await page.$(".dlg-bg [data-w=skip], .dlg-bg [data-a=skip]");
     if (skip) { await skip.click(); break; }
@@ -56,6 +57,19 @@ async function open(browser, viewport = { width: 1280, height: 800 }, touch = fa
   // the device-setup card comes back on a timer (about 20 s after sign-in) and can land over a button a journey clicks
   await page.addStyleTag({ content: "#nnudge{display:none!important}" });
   return page;
+}
+
+// the app lock after the password (erp/applock.py): the welcome, and the PIN the first time (required)
+async function passLock(page) {
+  if (!await page.waitForSelector("#lockscr", { timeout: 6000 }).catch(() => null)) return;
+  for (let i = 0; i < 40 && await page.$("#lockscr"); i++) {
+    const t = await page.evaluate(() => (document.querySelector("#lockscr .lk-t") || {}).textContent || "");
+    const typing = await page.evaluate(() => { const i = document.querySelector("#lockscr .lk-in"); return !!i && !i.hidden && !i.disabled && !document.querySelector("#lockscr .lk-boxes").hidden; });
+    if (typing && /PIN|Welcome back/.test(t)) { await page.keyboard.type("2580", { delay: 30 }); await sleep(2600); continue; }
+    const no = await page.$("#lockscr .lk-no"); if (no) { await no.click(); await sleep(400); continue; }
+    await sleep(300);
+  }
+  await page.waitForSelector("#lockscr", { state: "detached", timeout: 15000 });
 }
 
 async function go(page, hash) {

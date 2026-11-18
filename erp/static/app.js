@@ -107,6 +107,7 @@ async function apiSend(method, path, body, raw) {
   const r = raw && S.xfer ? await xhrSend(method, path, raw, S.xfer) : await fetch(path, opt);
   let data = null;
   try { data = await r.json(); } catch { data = null; }
+  if (r.status === 423 && data && data.locked && !/^\/api\/lock/.test(path)) { await LOCK.need(); return apiSend(method, path, body, raw); }
   if (r.status === 401) { S.boot.user = null; renderAuth(); throw new Error(data && data.error || L2("Please sign in", "يرجى تسجيل الدخول")); }
   if (r.status >= 500) errReport("server", (data && data.error) || `HTTP ${r.status}`, `${method} ${String(path).split("?")[0].replace(/\/\d+(?=\/|$)/g, "/N")}`);
   if (!r.ok) { const e = new Error((data && data.error) || (r.status >= 500 ? L2(`The server could not finish this (error ${r.status}). Try again in a moment.`, `تعذر على الخادم إتمام العملية (خطأ ${r.status}). حاول مرة أخرى بعد قليل.`)
@@ -123,11 +124,255 @@ async function staticApi(method, path, body, raw) {
   let data = null;
   try { data = JSON.parse(new TextDecoder().decode(r.body)); } catch { data = null; }
   if (data && "token" in data) store.set("token", data.token || "");
+  if (r.status === 423 && data && data.locked && !/^\/api\/lock/.test(path)) { await LOCK.need(); return staticApi(method, path, body, raw); }
   if (r.status === 401) { S.boot.user = null; renderAuth(); throw new Error(data && data.error || "Please sign in"); }
   if (r.status >= 500) errReport("server", (data && data.error) || `HTTP ${r.status}`, `${method} ${String(path).split("?")[0].replace(/\/\d+(?=\/|$)/g, "/N")}`);
   if (r.status >= 400) { const e = new Error((data && data.error) || `HTTP ${r.status}`); e.data = data; e.status = r.status; throw e; }
   return data;
 }
+// ------------------------------------------------------------------ the app lock (erp/applock.py)
+// A second layer after the password, on this device: a PIN (required, so every device — desktop too — has it) and,
+// where the device has one, fingerprint / face (WebAuthn). The app locks when it is opened again, when it comes back
+// from the background after the person's lock time, and after that long with nothing touched. One screen for all of
+// it, the same after the password: the code boxes, then they swirl away, the check counts up, access granted.
+const LOCK = (() => {
+  const ss = { get: k => { try { return sessionStorage.getItem("berp." + k); } catch { return null; } },
+               set: (k, v) => { try { if (v == null) sessionStorage.removeItem("berp." + k); else sessionStorage.setItem("berp." + k, v); } catch { /* private mode */ } } };
+  const RM = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const wait = ms => new Promise(r => setTimeout(r, RM() ? Math.min(ms, 60) : ms));
+  const b2u = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const u2b = s => Uint8Array.from(atob(String(s).replace(/-/g, "+").replace(/_/g, "/") + "===".slice((String(s).length + 3) % 4)), c => c.charCodeAt(0));
+  const call = (m, p, b) => apiSend(m, p, b);           // (straight to the app: lock calls are never locked themselves)
+  let open = null, hiddenAt = 0, idleT = 0, watching = false;
+  const st = () => (S.boot && S.boot.lock) || {};
+  const devName = () => { const u = navigator.userAgent; return /iPhone/.test(u) ? "iPhone" : /iPad/.test(u) ? "iPad" : /Android/.test(u) ? "Android" : /Windows/.test(u) ? "Windows" : /Mac/.test(u) ? "Mac" : L2("This device", "هذا الجهاز"); };
+  async function bioReady() {
+    try {
+      const h = location.hostname;
+      if (!window.PublicKeyCredential || /^[\d.]+$/.test(h) || h.includes(":") || !(location.protocol === "https:" || h === "localhost")) return false;
+      return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    } catch { return false; }
+  }
+  async function bioAdd() {
+    const o = await call("POST", "/api/lock/bio/begin", {});
+    const c = await navigator.credentials.create({ publicKey: { challenge: u2b(o.challenge), rp: { name: "BeyondERP", id: location.hostname },
+      user: { id: u2b(o.user_id), name: o.name || "user", displayName: o.display || o.name || "user" },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "discouraged" },
+      excludeCredentials: (o.key_ids || []).map(id => ({ type: "public-key", id: u2b(id) })), attestation: "none", timeout: 60000 } });
+    S.boot.lock = await call("POST", "/api/lock/bio/add", { client: b2u(c.response.clientDataJSON), attestation: b2u(c.response.attestationObject),
+      label: devName(), rp_id: location.hostname });
+  }
+  async function bioUnlock() {
+    const o = await call("POST", "/api/lock/bio/begin", {});
+    const a = await navigator.credentials.get({ publicKey: { challenge: u2b(o.challenge), rpId: location.hostname, userVerification: "required", timeout: 60000,
+      allowCredentials: (o.key_ids || []).map(id => ({ type: "public-key", id: u2b(id) })) } });
+    return call("POST", "/api/lock/bio/unlock", { id: a.id, client: b2u(a.response.clientDataJSON), auth: b2u(a.response.authenticatorData),
+      sig: b2u(a.response.signature), rp_id: location.hostname });
+  }
+
+  // ---- the screen
+  const FP = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 11v3a8 8 0 0 1-1.2 4.2M8.3 21a10 10 0 0 0 1.4-4.6V11a2.3 2.3 0 0 1 4.6 0v1.5M16.6 20.4c.3-1.3.4-2.6.4-4V11a5 5 0 0 0-9.4-2.4M4 15.5V11a8 8 0 0 1 13.3-6M20 11v2"/></svg>`;
+  function screen() {
+    let el = $("#lockscr");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "lockscr"; el.className = "lk"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true");
+    el.innerHTML = `<div class="lk-card"><div class="lk-av" aria-hidden="true"></div><h2 class="lk-t"></h2><p class="lk-s"></p>
+      <div class="lk-stage"><div class="lk-boxes"></div>
+        <div class="lk-ring" hidden><svg viewBox="0 0 80 80"><circle cx="40" cy="40" r="34" class="bg"/><circle cx="40" cy="40" r="34" class="fg"/></svg><b>0</b></div>
+        <div class="lk-ok" hidden><div class="lk-parts"></div><div class="lk-check"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div><span class="lk-pill">${esc(L2("VERIFIED", "تم التحقق"))}</span></div></div>
+      <input class="lk-in" inputmode="numeric" autocomplete="one-time-code" aria-label="${esc(L2("PIN", "الرمز"))}">
+      <div class="lk-msg" role="alert"></div><div class="lk-act"></div></div>`;
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("on"));
+    return el;
+  }
+  function close() { const el = $("#lockscr"); if (!el) return; el.classList.remove("on"); el.classList.add("off"); setTimeout(() => el.remove(), RM() ? 0 : 320); }
+  function head(el, t, s) {
+    const n = (st().name || (S.boot && S.boot.user && (S.boot.user.full_name || S.boot.user.username)) || "?").trim();
+    $(".lk-av", el).textContent = n.charAt(0).toUpperCase(); $(".lk-t", el).textContent = t; $(".lk-s", el).textContent = s || "";
+  }
+  async function ring(el, to, ms) {     // the check counting up (to 90 while waiting, 100 when through)
+    const r = $(".lk-ring", el), fg = $(".fg", r), num = $("b", r), C = 2 * Math.PI * 34;
+    r.hidden = false; fg.style.strokeDasharray = C;
+    const from = +(r.dataset.v || 0), t0 = performance.now();
+    await new Promise(res => { const step = now => { const k = Math.min(1, (now - t0) / (RM() ? 1 : ms)), v = from + (to - from) * (1 - Math.pow(1 - k, 3));
+      fg.style.strokeDashoffset = C * (1 - v / 100); num.textContent = Math.round(v); r.dataset.v = v; k < 1 ? requestAnimationFrame(step) : res(); }; requestAnimationFrame(step); });
+  }
+  async function granted(el, title, sub) {
+    $(".lk-ring", el).hidden = true; $(".lk-boxes", el).hidden = true; $(".lk-in", el).hidden = true; $(".lk-act", el).innerHTML = ""; $(".lk-msg", el).textContent = "";
+    head(el, title || L2("Access granted", "تم السماح بالدخول"), sub || L2("Welcome back.", "مرحباً بعودتك."));
+    const ok = $(".lk-ok", el), parts = $(".lk-parts", ok);
+    parts.innerHTML = Array.from({ length: 22 }, (_, i) => { const a = i / 22 * Math.PI * 2, d = 34 + (i % 3) * 14;
+      return `<i style="--x:${(Math.cos(a) * d).toFixed(1)}px;--y:${(Math.sin(a) * d).toFixed(1)}px;--d:${(i % 5) * 30}ms;--c:${["var(--brand)", "#22c55e", "#a78bfa", "#38bdf8", "#facc15"][i % 5]}"></i>`; }).join("");
+    ok.hidden = false; el.classList.add("lk-done");
+    await wait(1250);
+  }
+  // the code boxes: resolves with what was typed once all are filled (or null: the screen was left another way)
+  function pad(el, len, { title, sub, actions = "" }) {
+    head(el, title, sub);
+    el.classList.remove("lk-done"); $(".lk-ok", el).hidden = true; $(".lk-ring", el).hidden = true; $(".lk-ring", el).dataset.v = 0; $(".lk-stage", el).hidden = false;
+    const bx = $(".lk-boxes", el), inp = $(".lk-in", el), msg = $(".lk-msg", el);
+    bx.hidden = false; inp.hidden = false; inp.disabled = false; inp.value = ""; inp.maxLength = len;
+    bx.innerHTML = Array.from({ length: len }, () => `<span class="lk-b"></span>`).join("");
+    $(".lk-act", el).innerHTML = actions;
+    const draw = () => $$(".lk-b", bx).forEach((b, i) => { b.classList.toggle("on", i < inp.value.length); b.classList.toggle("at", i === inp.value.length);
+      b.textContent = i < inp.value.length ? "•" : ""; });
+    draw(); setTimeout(() => inp.focus(), 60);
+    bx.onclick = () => inp.focus();
+    return new Promise(res => {
+      el._leave = () => res(null);
+      inp.oninput = () => { inp.value = inp.value.replace(/\D/g, "").slice(0, len); msg.textContent = ""; draw();
+        if (inp.value.length === len) { inp.disabled = true; res(inp.value); } };
+    });
+  }
+  async function swirl(el) {           // the boxes leave their row, circle and collapse into the middle
+    const bx = $(".lk-boxes", el), bs = $$(".lk-b", bx), R = bx.getBoundingClientRect(), cx = R.left + R.width / 2, cy = R.top + R.height / 2;
+    if (RM()) { bx.hidden = true; return; }
+    const an = bs.map((b, i) => { const r = b.getBoundingClientRect(), ox = cx - (r.left + r.width / 2), oy = cy - (r.top + r.height / 2), t = i / bs.length * Math.PI * 2;
+      const at = (a, rad) => `translate(${(ox + Math.cos(a) * rad).toFixed(1)}px,${(oy + Math.sin(a) * rad).toFixed(1)}px)`;
+      return b.animate([{ transform: "none" }, { transform: `${at(t, 46)} rotate(90deg)`, offset: .32 }, { transform: `${at(t + 2.1, 46)} rotate(200deg)`, offset: .58 },
+        { transform: `${at(t + 4.2, 22)} rotate(320deg) scale(.6)`, offset: .82 }, { transform: `${at(t + 5.4, 0)} rotate(400deg) scale(.1)`, opacity: 0 }],
+        { duration: 1000, easing: "cubic-bezier(.55,0,.35,1)", fill: "forwards" }); });
+    await Promise.all(an.map(a => a.finished.catch(() => {})));
+    bx.hidden = true;
+  }
+  async function refuse(el, text) {
+    const bx = $(".lk-boxes", el);
+    $(".lk-ring", el).hidden = true; bx.hidden = false; $$(".lk-b", bx).forEach(b => b.getAnimations().forEach(a => a.cancel()));
+    $(".lk-msg", el).textContent = text; bx.classList.remove("lk-shake"); void bx.offsetWidth; bx.classList.add("lk-shake");
+    if (navigator.vibrate) try { navigator.vibrate(60); } catch { /* not allowed */ }
+  }
+  // typed in full → swirl + count while the app checks it → granted, or back to the boxes with why
+  async function attempt(el, check, title, sub) {
+    const sw = swirl(el); await wait(650);
+    $(".lk-s", el).textContent = L2("Verifying… securely checking your PIN", "جارٍ التحقق… فحص آمن للرمز");
+    const p = ring(el, 90, 900);
+    try { const r = await check(); await sw; await p; await ring(el, 100, 260); await granted(el, title, sub); return r || true; }
+    catch (e) { await sw; await refuse(el, e.message); if (e.status === 403 || e.status === 401) { close(); S.boot.user = null; renderAuth(); throw e; } return false; }
+  }
+
+  async function unlockScreen(s) {
+    const el = screen();
+    const bio = s.key_ids && s.key_ids.length && await bioReady();
+    const acts = () => `${bio ? `<button type="button" class="btn lk-bio">${FP} ${esc(L2("Fingerprint / face", "البصمة / الوجه"))}</button>` : ""}
+      <button type="button" class="btn sm lk-forgot">${esc(L2("Forgot PIN? Sign in with password", "نسيت الرمز؟ سجّل الدخول بكلمة المرور"))}</button>`;
+    let done = false;
+    const tryBio = async () => { if (done) return; try { await bioUnlock(); done = true; el._leave && el._leave(); } catch (e) {
+      if (e && e.name !== "NotAllowedError" && e.name !== "AbortError") $(".lk-msg", el).textContent = e.message; } };
+    for (;;) {
+      if (done) break;
+      const first = (st().name || s.name || "").split(" ")[0];
+      const pr = pad(el, s.pin_len || 4, { title: first ? L2(`Welcome back, ${first}`, `مرحباً بعودتك، ${first}`) : L2("Welcome back", "مرحباً بعودتك"),
+        sub: L2("Enter your PIN to continue", "أدخل الرمز للمتابعة"), actions: acts() });
+      const b = $(".lk-bio", el); if (b) b.onclick = tryBio;
+      $(".lk-forgot", el).onclick = async () => { ss.set("forgot", "1"); await call("POST", "/api/logout", {}).catch(() => {}); store.set("token", ""); close(); S.boot.user = null; renderAuth(); el._leave && el._leave(); };
+      if (s.wait > 0) { const inp = $(".lk-in", el); inp.disabled = true; $(".lk-msg", el).textContent = L2(`Too many wrong PINs — wait ${s.wait} seconds`, `محاولات خاطئة كثيرة — انتظر ${s.wait} ثانية`);
+        setTimeout(() => { inp.disabled = false; inp.focus(); $(".lk-msg", el).textContent = ""; }, s.wait * 1000); s.wait = 0; }
+      if (bio && !s._tried) { s._tried = 1; tryBio(); }
+      const pin = await pr;
+      if (done) { await granted(el); break; }
+      if (pin == null) return;
+      if (await attempt(el, () => call("POST", "/api/lock/unlock", { pin }).then(r => { S.boot.lock = r; return r; }))) break;
+      await wait(500);
+    }
+    if (S.boot) S.boot.lock = { ...(S.boot.lock || {}), locked: false };
+    ss.set("live", "1"); close(); arm();
+  }
+
+  // a new PIN: typed, then once more; then the offer of fingerprint / face. Required: there is no way round it.
+  async function setupScreen(changing) {
+    const el = screen();
+    let len = 4, current = null;
+    if (changing && !st().fresh) {
+      const pr = pad(el, st().pin_len || 4, { title: L2("Change your PIN", "تغيير الرمز"), sub: L2("Enter your current PIN", "أدخل الرمز الحالي"),
+        actions: `<button type="button" class="btn sm lk-cancel">${esc(t("cancel"))}</button>` });
+      $(".lk-cancel", el).onclick = () => el._leave();
+      current = await pr;
+      if (current == null) return close();
+    }
+    for (;;) {
+      const sizes = `<button type="button" class="btn sm lk-len">${esc(len === 4 ? L2("Use 6 digits", "استخدام 6 أرقام") : L2("Use 4 digits", "استخدام 4 أرقام"))}</button>`
+        + (changing ? `<button type="button" class="btn sm lk-cancel">${esc(t("cancel"))}</button>` : "");
+      const pr = pad(el, len, { title: changing ? L2("New PIN", "الرمز الجديد") : L2("Create your PIN", "أنشئ رمزك"),
+        sub: L2("A second lock after your password: you'll use it to open the app on this device.", "قفل ثانٍ بعد كلمة المرور: تستخدمه لفتح التطبيق على هذا الجهاز."), actions: sizes });
+      $(".lk-len", el).onclick = () => { len = len === 4 ? 6 : 4; el._leave(); };
+      const cn = $(".lk-cancel", el); if (cn) cn.onclick = () => { el._cancel = 1; el._leave(); };
+      const a = await pr;
+      if (el._cancel) { el._cancel = 0; return close(); }
+      if (a == null) continue;                            // (the length changed)
+      const b = await pad(el, len, { title: L2("Confirm your PIN", "أكّد الرمز"), sub: L2("Type it once more", "اكتبه مرة أخرى") });
+      if (b !== a) { await refuse(el, L2("The two PINs are not the same — start again", "الرمزان غير متطابقين — ابدأ من جديد")); await wait(900); continue; }
+      if (await attempt(el, () => call("POST", "/api/lock/pin", { pin: a, current }).then(r => { S.boot.lock = r; return r; }), L2("PIN set", "تم إنشاء الرمز"),
+        L2("You'll use it to open the app on this device.", "ستستخدمه لفتح التطبيق على هذا الجهاز."))) break;
+      await wait(500);
+    }
+    ss.set("forgot", null); ss.set("live", "1");
+    if (!changing && await bioReady() && !(st().key_ids || []).length) await bioOffer(el);
+    close(); arm();
+  }
+  async function bioOffer(el) {
+    el.classList.remove("lk-done"); $(".lk-ok", el).hidden = true; $(".lk-boxes", el).hidden = true; $(".lk-in", el).hidden = true;
+    $(".lk-stage", el).hidden = true;
+    head(el, L2("Faster next time?", "أسرع في المرة القادمة؟"), L2("Open the app with your fingerprint or face. Your PIN still works.", "افتح التطبيق ببصمتك أو وجهك. ويبقى الرمز متاحاً."));
+    $(".lk-act", el).innerHTML = `<button type="button" class="btn pri lk-on">${FP} ${esc(L2("Use fingerprint / face", "استخدام البصمة / الوجه"))}</button><button type="button" class="btn sm lk-no">${esc(L2("Not now", "ليس الآن"))}</button>`;
+    await new Promise(res => {
+      $(".lk-no", el).onclick = res;
+      $(".lk-on", el).onclick = async () => { try { await bioAdd(); $(".lk-stage", el).hidden = false; await granted(el, L2("Fingerprint / face is on", "تم تفعيل البصمة / الوجه")); res(); }
+        catch (e) { $(".lk-msg", el).textContent = e && e.name === "NotAllowedError" ? L2("Not turned on.", "لم يتم التفعيل.") : e.message; } };
+    });
+  }
+  async function welcome() {            // right after the password: the same check and the same "granted"
+    const el = screen();
+    head(el, L2("Signing you in", "جارٍ تسجيل الدخول"), L2("Verifying… securely checking your credentials", "جارٍ التحقق… فحص آمن لبيانات الدخول"));
+    $(".lk-boxes", el).hidden = true; $(".lk-in", el).hidden = true;
+    await ring(el, 100, 750); await granted(el);
+    if (!st().pin_set) return setupScreen(false);
+    close();
+  }
+
+  function need() {                     // the app said "locked": the screen until it opens again (calls wait for it)
+    if (open) return open;
+    open = (async () => { const s = await call("GET", "/api/lock"); if (S.boot) S.boot.lock = s; if (s.locked) await unlockScreen(s); })().finally(() => { open = null; });
+    return open;
+  }
+  async function lockNow() {
+    if (!st().pin_set || $("#lockscr")) return;
+    try { S.boot.lock = await call("POST", "/api/lock/lock", {}); } catch { return; }
+    return need();
+  }
+  function arm() {                      // locks after the person's lock time in the background, or that long untouched
+    clearTimeout(idleT);
+    if (!st().pin_set) return;
+    idleT = setTimeout(lockNow, (st().minutes || 5) * 60000);
+    if (watching) return;
+    watching = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) { hiddenAt = Date.now(); return; }
+      if (hiddenAt && Date.now() - hiddenAt > (st().minutes || 5) * 60000) lockNow();
+      hiddenAt = 0;
+    });
+    let last = 0;
+    ["pointerdown", "keydown", "touchstart", "wheel"].forEach(ev => addEventListener(ev, () => { const n = Date.now(); if (n - last > 15000) { last = n; arm(); } }, { passive: true, capture: true }));
+  }
+  // after every boot: just signed in → the welcome (and a PIN if there is none); a fresh start of the app → locked
+  // before the app is drawn: a fresh start of it is locked first, so nothing of the books shows behind the lock
+  async function gate() {
+    if (!S.boot || !S.boot.user || ss.get("justin") || !st().pin_set || ss.get("live")) return;
+    ss.set("live", "1");
+    await lockNow();
+  }
+  async function afterBoot() {
+    if (!S.boot || !S.boot.user) return;
+    if (ss.get("justin")) { ss.set("justin", null); ss.set("live", "1"); return welcome(); }
+    if (!st().pin_set) { ss.set("live", "1"); return setupScreen(false); }
+    if (!ss.get("live")) { ss.set("live", "1"); return lockNow(); }
+    arm();
+  }
+  return { need, gate, afterBoot, signedIn: () => ss.set("justin", "1"), justSigned: () => !!ss.get("justin"), lockNow, setup: setupScreen, bioReady, bioAdd,
+           refresh: async () => { S.boot.lock = await call("GET", "/api/lock"); return S.boot.lock; } };
+})();
 // Excel workbooks and templates leave out the sheets of what the company's subscription switches off (as for hidden sections)
 function withPlatformOff(url) {
   const b = S.billing; if (!b || !/^\/api\/(export|templates)\/workbook/.test(url)) return url;
@@ -1787,8 +2032,8 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
       if (mode === "signup") {
         const r = await C.signup(v.email, v.password);
         if (r.confirm) return renderCloudAuth(r.message, "ok", "email");
-        await cloudEnter(await C.info());
-      } else await cloudEnter(await CloudAPI.signin(v.email, v.password, false));
+        LOCK.signedIn(); await cloudEnter(await C.info());
+      } else { const inf = await CloudAPI.signin(v.email, v.password, false); LOCK.signedIn(); await cloudEnter(inf); }
     } catch (x) { show(plainNetErr(x)); } finally { btn.disabled = false; }
   });
 }
@@ -1806,11 +2051,11 @@ async function cloudReturn() {
       <button class="btn pri" type="submit">${t("save")}</button></form></div>`;
     pwWire($("#lf"));
     $("#lf").addEventListener("submit", async e => { e.preventDefault(); S.H.pwmatch(); if (!e.target.reportValidity()) return;
-      try { await window.BeyondCloud.setPassword(new FormData(e.target).get("password")); await cloudEnter(r.info); }
+      try { await window.BeyondCloud.setPassword(new FormData(e.target).get("password")); LOCK.signedIn(); await cloudEnter(r.info); }
       catch (x) { $("#lerr").innerHTML = `<div class="banner err">${esc(x.message)}</div>`; } });
     return true;
   }
-  try { await cloudEnter(r.info); } catch (e) { await renderCloudAuth(plainNetErr(e), "err", "start"); }
+  try { LOCK.signedIn(); await cloudEnter(r.info); } catch (e) { await renderCloudAuth(plainNetErr(e), "err", "start"); }
   return true;
 }
 // the browser's own words for a dropped download ("Failed to fetch", "Load failed"…) in plain language
@@ -1835,7 +2080,7 @@ async function cloudEnter(info) {
     const box = $("#lerr"); if (box) box.innerHTML = `<div class="banner info">${ar ? "جارٍ تنزيل دفاتر الشركة…" : "Downloading the company's books…"}</div>`;
     await C.join();
   } else await C.pull().catch(() => {});
-  const r = await C.openSession();
+  const r = await C.openSession(LOCK.justSigned());
   const data = JSON.parse(new TextDecoder().decode(r.body));
   if (r.status >= 400) throw new Error(data.error);
   store.set("token", data.token || ""); store.set("cloudLocal", false);
@@ -2007,6 +2252,7 @@ async function renderAuth() {
       if (setup) v.language = S.lang;
       if (v.demo) { sb.disabled = true; sb.textContent = S.lang === "ar" ? "جارٍ تجهيز الشركة التجريبية…" : "Setting up the demo company…"; }
       await api("POST", setup ? "/api/setup" : "/api/login", v);
+      LOCK.signedIn();                       // a password just typed: the welcome, then the PIN if there is none
       await boot();
     } catch (err) { sb.disabled = false; sb.textContent = setup ? t("save") : t("sign_in"); $("#lerr").innerHTML = `<div class="banner ${err.data && err.data.two_step && !v.code ? "info" : "err"}">${esc(err.message)}</div>`;
       if (err.data && err.data.two_step) { const cb = $("#codebox"); cb.hidden = false; $("input", cb).value = ""; $("input", cb).focus(); } }
@@ -7641,8 +7887,10 @@ async function boot() {
   applyLook();
   if (!S.boot.user) return renderAuth();
   if (S.boot.onboarding && !S.skipSetup) return renderOnboarding();
+  await LOCK.gate();
   renderShell();
   route();
+  LOCK.afterBoot();
   fixCompanyName();
   setTimeout(runRecurringOnOpen, 1500);
   const fresh = !tourPref() && Date.now() - Date.parse((S.boot.user_since || "").replace(" ", "T") + "Z") < 14 * 864e5;
@@ -11300,6 +11548,7 @@ PAGES.profile = async view => {
         ${phoneMenuSelect('data-change="ppm"')}${dockSelect()}
         <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select data-change="pmode">${[["auto", L2("Device setting", "حسب الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${modeNow() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
         <div class="muted" style="margin-top:6px">${esc(L2("Colours and saved themes: Settings → Theme.", "الألوان والسمات المحفوظة: الإعدادات ← السمات."))} <a href="#/settings?tab=theme">${esc(L2("Open", "فتح"))}</a></div></div>
+      <div class="card" id="lockcard"><h2>${esc(L2("App lock", "قفل التطبيق"))}</h2><div class="muted">${t("loading")}</div></div>
       <div class="card" id="tscard"><h2>${esc(L2("Two-step sign-in", "التحقق بخطوتين"))}</h2><div class="muted">${t("loading")}</div></div>
       <div class="card" id="notifcard"><h2>${esc(L2("Notifications", "الإشعارات"))}</h2>
         <p class="muted" style="margin-top:0">${esc(L2("Alerts, sound, vibration and pop-up notifications.", "التنبيهات والصوت والاهتزاز والإشعارات المنبثقة."))}</p>
@@ -11315,11 +11564,41 @@ PAGES.profile = async view => {
   S.H.pnav = el => { saveNavMode(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
   S.H.ppm = el => { savePhoneMenu(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
   S.H.pmode = el => { setMyLook({ mode: el.value }, { quiet: true }); applyLook(); renderShell(); route(); };
+  lockCard($("#lockcard", view));
   twoStepCard($("#tscard", view));
 };
 
 // Two-step sign-in card (profile): the shared workspace uses Supabase's own (the code is asked at every sign-in on
 // the website and the apps); the desktop / device-only books keep it with the account (auth.py)
+// My profile → App lock (LOCK): the PIN, how long the app may stay in the background, fingerprint / face, lock now
+async function lockCard(box) {
+  if (!box) return;
+  let s;
+  try { s = await LOCK.refresh(); } catch (e) { box.innerHTML = `<h2>${esc(L2("App lock", "قفل التطبيق"))}</h2><div class="banner err">${esc(e.message)}</div>`; return; }
+  const bio = await LOCK.bioReady();
+  const mins = m => m < 60 ? L2(`${m} minute${m === 1 ? "" : "s"}`, `${m} دقيقة`) : L2("1 hour", "ساعة");
+  box.innerHTML = `<h2>${esc(L2("App lock", "قفل التطبيق"))}</h2>
+    <p class="muted" style="margin-top:0">${esc(L2("A second lock after your password, on this device: your PIN (or fingerprint / face) opens the app when you come back to it.",
+      "قفل ثانٍ بعد كلمة المرور على هذا الجهاز: رمزك (أو البصمة / الوجه) يفتح التطبيق عند عودتك إليه."))}</p>
+    <div class="grid g2"><label class="f">${esc(L2("Lock after the app is away for", "القفل بعد غياب التطبيق لمدة"))}<select data-change="lkmin">${s.minutes_choices.map(m => `<option value="${m}" ${m === s.minutes ? "selected" : ""}>${esc(mins(m))}</option>`).join("")}</select>
+      <span class="muted" style="font-weight:400">${esc(L2("In the background, or untouched. Opening the app again always asks.", "في الخلفية أو دون استخدام. وفتح التطبيق من جديد يطلب الرمز دائماً."))}</span></label>
+      <div class="f"><span class="fl">${esc(L2("PIN", "الرمز"))}</span><div class="row" style="gap:8px;flex-wrap:wrap">
+        <span class="chip ${s.pin_set ? "ok" : "warn"}">${esc(s.pin_set ? L2(`${s.pin_len} digits`, `${s.pin_len} أرقام`) : L2("Not set", "غير محدد"))}</span>
+        <button type="button" class="btn sm" data-a="lkpin">${esc(s.pin_set ? L2("Change PIN", "تغيير الرمز") : L2("Set PIN", "تعيين الرمز"))}</button>
+        ${s.pin_set ? `<button type="button" class="btn sm" data-a="lknow">🔒 ${esc(L2("Lock now", "قفل الآن"))}</button>` : ""}</div></div></div>
+    <h3 style="margin:14px 0 6px">${esc(L2("Fingerprint / face", "البصمة / الوجه"))}</h3>
+    ${s.keys.length ? `<div class="tbl"><table><tbody>${s.keys.map(k => `<tr><td>${esc(k.label)}</td><td class="muted">${esc(L2("added", "أُضيف"))} ${esc(String(k.created_at).slice(0, 10))}${k.used_at ? ` · ${esc(L2("last used", "آخر استخدام"))} ${esc(String(k.used_at).slice(0, 10))}` : ""}</td>
+      <td style="text-align:end"><button type="button" class="btn sm danger" data-a="lkdel" data-id="${k.id}">${esc(t("remove"))}</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+    ${bio ? (s.pin_set ? `<button type="button" class="btn" data-a="lkbio" style="margin-top:6px">${esc(L2("Use fingerprint / face on this device", "استخدام البصمة / الوجه على هذا الجهاز"))}</button>` : "")
+      : `<p class="muted" style="margin:4px 0 0">${esc(L2("This device or browser does not offer fingerprint / face here — the PIN works everywhere.", "هذا الجهاز أو المتصفح لا يتيح البصمة / الوجه هنا — والرمز يعمل في كل مكان."))}</p>`}`;
+  S.H.lkmin = async el => { try { S.boot.lock = await api("PUT", "/api/lock/minutes", { minutes: +el.value }); toast(t("saved"), false, "ok"); } catch (e) { fail(e); } };
+  S.H.lkpin = async () => { await LOCK.setup(!!s.pin_set); lockCard(box); };
+  S.H.lknow = () => LOCK.lockNow();
+  S.H.lkbio = async () => { try { await LOCK.bioAdd(); toast(L2("Fingerprint / face is on for this device.", "تم تفعيل البصمة / الوجه لهذا الجهاز."), false, "ok"); lockCard(box); }
+    catch (e) { if (!e || e.name !== "NotAllowedError") fail(e); } };
+  S.H.lkdel = async el => { if (!await uiConfirm(L2("Remove this fingerprint / face sign-in? The PIN keeps working.", "إزالة الدخول بهذه البصمة / الوجه؟ يظل الرمز يعمل."))) return;
+    try { await api("DELETE", "/api/lock/bio/" + el.dataset.id); lockCard(box); } catch (e) { fail(e); } };
+}
 async function twoStepCard(box) {
   if (!box) return;
   const C = window.BeyondCloud, cloud = STATIC && cloudOn() && C && C.mfaFactors;

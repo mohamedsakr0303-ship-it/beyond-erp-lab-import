@@ -2421,3 +2421,52 @@ input[type=range]:active::-moz-range-thumb{transform:scale(1.4)}
 .join-card .co-ic{flex:none}.join-card.out{opacity:0;transform:translateY(8px);transition:opacity .2s,transform .2s}
 @media (max-width:700px){.join-card{inset-inline:16px;bottom:calc(84px + env(safe-area-inset-bottom,0px));max-width:none}}
 @media (prefers-reduced-motion:reduce){.join-card{animation:none}.join-card.out{transition:none}}
+/* ---------------------------------------------------------------- the app lock (LOCK in app.js) */
+.lk{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:16px;background:radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,var(--brand) 26%,#070816) 0%,#05060f 60%,#020208 100%);
+  opacity:0;transition:opacity .28s ease}
+.lk.on{opacity:1}.lk.off{opacity:0;pointer-events:none}
+.lk::before{content:"";position:absolute;inset:-20%;background:conic-gradient(from 210deg at 70% 10%,transparent 0 70%,color-mix(in srgb,var(--brand) 30%,transparent) 76%,transparent 84%);filter:blur(40px);opacity:.55;pointer-events:none}
+.lk-card{position:relative;width:min(380px,100%);padding:30px 24px 22px;border-radius:24px;text-align:center;color:#eef0ff;
+  background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.1);
+  box-shadow:0 30px 80px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  transform:translateY(10px) scale(.98);transition:transform .45s cubic-bezier(.2,.9,.25,1.1),border-color .4s}
+.lk.on .lk-card{transform:none}.lk.lk-done .lk-card{border-color:rgba(34,197,94,.45);box-shadow:0 30px 80px rgba(0,0,0,.55),0 0 0 1px rgba(34,197,94,.15),0 0 60px rgba(34,197,94,.12)}
+.lk-av{width:54px;height:54px;margin:0 auto 12px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:1.3em;color:#fff;
+  background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 40%,#22d3ee));box-shadow:0 0 0 4px rgba(255,255,255,.06),0 8px 26px color-mix(in srgb,var(--brand) 45%,transparent)}
+.lk-t{margin:0;font-size:1.15em;font-weight:700;letter-spacing:.01em}.lk-s{margin:6px 0 0;color:rgba(230,232,255,.62);font-size:.86em;min-height:1.2em}
+.lk-stage{position:relative;height:118px;display:grid;place-items:center;margin:14px 0 6px}
+.lk-boxes{display:flex;gap:12px;justify-content:center;cursor:text;direction:ltr}
+.lk-b{width:46px;height:54px;border-radius:12px;display:grid;place-items:center;font-size:1.5em;font-weight:800;color:#fff;
+  background:rgba(255,255,255,.04);border:1.5px solid rgba(255,255,255,.12);transition:border-color .18s,box-shadow .18s,transform .18s,background .18s}
+.lk-b.at{border-color:color-mix(in srgb,var(--brand) 80%,#fff);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 25%,transparent),0 0 18px color-mix(in srgb,var(--brand) 50%,transparent)}
+.lk-b.on{background:color-mix(in srgb,var(--brand) 22%,transparent);border-color:color-mix(in srgb,var(--brand) 70%,#fff);transform:translateY(-2px);
+  box-shadow:0 6px 18px color-mix(in srgb,var(--brand) 40%,transparent);animation:lkPop .22s cubic-bezier(.2,1.4,.4,1)}
+@keyframes lkPop{from{transform:scale(.82)}to{transform:translateY(-2px)}}
+.lk-shake{animation:lkShake .42s cubic-bezier(.36,.07,.19,.97)}.lk-shake .lk-b{border-color:#f43f5e;box-shadow:0 0 16px rgba(244,63,94,.35)}
+@keyframes lkShake{10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}30%,50%,70%{transform:translateX(-8px)}40%,60%{transform:translateX(8px)}}
+.lk-ring{position:absolute;width:92px;height:92px;display:grid;place-items:center;animation:lkIn .3s ease}
+.lk-ring svg{position:absolute;inset:0;transform:rotate(-90deg)}.lk-ring circle{fill:none;stroke-width:5}.lk-ring .bg{stroke:rgba(255,255,255,.08)}
+.lk-ring .fg{stroke:color-mix(in srgb,var(--brand) 85%,#fff);stroke-linecap:round;filter:drop-shadow(0 0 6px color-mix(in srgb,var(--brand) 70%,transparent))}
+.lk-ring b{font-size:1.15em;font-variant-numeric:tabular-nums;color:color-mix(in srgb,var(--brand) 40%,#fff)}
+@keyframes lkIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:none}}
+.lk-ok{position:absolute;inset:0;display:grid;place-items:center}
+.lk-parts{position:absolute;left:50%;top:44%;width:0;height:0}
+.lk-parts i{position:absolute;width:8px;height:8px;margin:-4px;border-radius:50%;background:var(--c);box-shadow:0 0 10px var(--c);opacity:0;animation:lkBurst .9s cubic-bezier(.2,.8,.3,1) var(--d) forwards}
+@keyframes lkBurst{0%{transform:translate(0,0) scale(.2);opacity:0}35%{transform:translate(var(--x),var(--y)) scale(1);opacity:1}100%{transform:translate(0,0) scale(0);opacity:0}}
+.lk-check{position:relative;top:-6px;width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#22c55e,#16a34a);
+  box-shadow:0 0 0 6px rgba(34,197,94,.14),0 10px 30px rgba(34,197,94,.45);transform:scale(0);animation:lkCheck .5s cubic-bezier(.2,1.5,.4,1) .55s forwards}
+.lk-check path{stroke-dasharray:24;stroke-dashoffset:24;animation:lkDraw .35s ease .85s forwards}
+@keyframes lkCheck{to{transform:scale(1)}}@keyframes lkDraw{to{stroke-dashoffset:0}}
+.lk-pill{position:absolute;bottom:4px;padding:3px 10px;border-radius:99px;font-size:.66em;font-weight:800;letter-spacing:.12em;color:#052e16;background:#4ade80;
+  opacity:0;transform:translateY(6px);animation:lkPill .35s ease .95s forwards}
+@keyframes lkPill{to{opacity:1;transform:none}}
+.lk-in{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.lk-msg{min-height:1.3em;margin-top:4px;font-size:.84em;color:#fda4af}
+.lk-act{display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:10px}
+.lk-act .btn{color:#e7e9ff;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.12)}
+.lk-act .btn.pri{color:#fff;background:var(--brand);border-color:transparent}
+.lk-act .btn.sm{background:none;border-color:transparent;color:rgba(230,232,255,.6)}
+.lk-bio{display:inline-flex;align-items:center;gap:8px;padding:10px 16px}
+@media (max-width:380px){.lk-b{width:40px;height:48px}.lk-boxes{gap:9px}}
+@media (prefers-reduced-motion:reduce){.lk,.lk-card{transition:none}.lk-b.on,.lk-shake,.lk-ring,.lk-parts i{animation:none}.lk-parts{display:none}
+  .lk-check,.lk-pill{animation:none;transform:none;opacity:1}.lk-check path{animation:none;stroke-dashoffset:0}}

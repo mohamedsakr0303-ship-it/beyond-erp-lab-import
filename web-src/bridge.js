@@ -726,9 +726,9 @@ def cloud_new_books(name, email):
         orderCheckout: async (order, phone) => req("POST", "/functions/v1/billing", { action: "checkout", order, phone: phone || "",
           return_url: appUrl() ? appUrl() + "#/subscription?paid=1" : "" }, await token()),
         // open the app user that matches the signed-in workspace account
-        async openSession() {
+        async openSession(signedIn) {      // signedIn: a password just typed (else the app reopened: locked until the PIN)
           const r = localRun("POST", "/api/cloud/session", { "x-requested-with": "BeyondERP", "content-type": "application/json", "x-beyond-static": "1" },
-            new TextEncoder().encode(JSON.stringify({ email: (get(SES) || {}).email || "" })));
+            new TextEncoder().encode(JSON.stringify({ email: (get(SES) || {}).email || "", signed_in: !!signedIn })));
           dirty = true; await persist();   // keep the session through page reloads
           return r;
         },

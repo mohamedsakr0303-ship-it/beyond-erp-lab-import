@@ -2207,6 +2207,13 @@ class Database:
         # a line standing for an earlier invoice / bill (opening balances): its number, date and due date (statements.py)
         self._add_cols("journal_lines", [("doc_ref", "TEXT NOT NULL DEFAULT ''"), ("doc_date", "TEXT NOT NULL DEFAULT ''"),
                                          ("due_date", "TEXT NOT NULL DEFAULT ''")])
+        # the app lock on this device (erp/applock.py): PIN and fingerprint / face keys; a session's lock and last call
+        from . import applock
+        for stmt in applock.SCHEMA.split(";"):    # (one by one: executescript would commit an open transaction)
+            if stmt.strip():
+                self.conn.execute(stmt)
+        self._add_cols("sessions", [("locked", "INTEGER NOT NULL DEFAULT 0"), ("seen", "TEXT NOT NULL DEFAULT ''"),
+                                    ("born", "TEXT NOT NULL DEFAULT ''")])
         # a bank account with an overdraft facility (erp/overdraft.py): on, the agreed limit, the yearly interest rate
         self._add_cols("accounts", [("od_on", "INTEGER NOT NULL DEFAULT 0"), ("od_limit", "INTEGER NOT NULL DEFAULT 0"),
                                     ("od_rate", "REAL NOT NULL DEFAULT 0")])

@@ -272,6 +272,8 @@ def bootstrap(ctx):
         except Exception:  # noqa: BLE001 — a reminder never stops the app from opening
             base["fx"]["reval_due"] = None
     base["user_since"] = (db.one("SELECT created_at FROM users WHERE id=?", (user["id"],)) or {}).get("created_at") or ""
+    from . import applock          # the app lock on this device: PIN set, length, biometric keys, lock time
+    base["lock"] = applock.state(db, user, ctx.token)
     pol = ai.policy(db)
     base["ai"] = {"allowed": ai.allowed(pol, user), "used_today": ai.used_today(db, user), "has_key": ai.has_key(db),
                   "models": ai.MODELS, "providers": ai.PROVIDERS, "policy": pol if user.get("is_super") else {k: pol[k] for k in ("enabled", "name", "avatar", "write", "model", "daily_limit")}}
@@ -6128,6 +6130,69 @@ def cash_forecast(ctx):
     return ok(cashplan.build(ctx.db, ctx.q.get("days") or 90, ctx.q.get("overdue", "1") != "0"))
 
 
+# the app lock on this device (erp/applock.py): PIN, fingerprint / face, lock now, lock time
+def _rp_id(ctx):
+    """The site fingerprint / face keys belong to: this app's host (the browser edition says it, having no server)."""
+    host = str(ctx.headers.get("host") or "").split(":")[0]
+    return host or str(ctx.body.get("rp_id") or "").split(":")[0]
+
+
+@route("GET", "/api/lock")
+def lock_state(ctx):
+    from . import applock
+    return ok(applock.state(ctx.db, ctx.user, ctx.token))
+
+
+@route("POST", "/api/lock/lock")
+def lock_now(ctx):
+    from . import applock
+    return ok(applock.lock(ctx.db, ctx.user, ctx.token))
+
+
+@route("POST", "/api/lock/unlock")
+def lock_unlock(ctx):
+    from . import applock
+    return ok(applock.unlock_pin(ctx.db, ctx.user, ctx.token, ctx.body.get("pin")))
+
+
+@route("POST", "/api/lock/pin")
+def lock_set_pin(ctx):
+    from . import applock
+    r = applock.set_pin(ctx.db, ctx.user, ctx.token, ctx.body.get("pin"), ctx.body.get("current"))
+    ctx.log("lock.pin", ctx.user["username"])
+    return ok(r)
+
+
+@route("PUT", "/api/lock/minutes")
+def lock_minutes(ctx):
+    from . import applock
+    return ok(applock.set_minutes(ctx.db, ctx.user, ctx.token, ctx.body.get("minutes")))
+
+
+@route("POST", "/api/lock/bio/begin")
+def lock_bio_begin(ctx):
+    from . import applock
+    return ok(applock.bio_begin(ctx.db, ctx.user, ctx.token))
+
+
+@route("POST", "/api/lock/bio/add")
+def lock_bio_add(ctx):
+    from . import applock
+    return ok(applock.bio_add(ctx.db, ctx.user, ctx.token, ctx.body, _rp_id(ctx)))
+
+
+@route("POST", "/api/lock/bio/unlock")
+def lock_bio_unlock(ctx):
+    from . import applock
+    return ok(applock.bio_unlock(ctx.db, ctx.user, ctx.token, ctx.body, _rp_id(ctx)))
+
+
+@route("DELETE", "/api/lock/bio/<kid>")
+def lock_bio_remove(ctx, kid):
+    from . import applock
+    return ok(applock.bio_remove(ctx.db, ctx.user, ctx.token, kid))
+
+
 # bank accounts with an overdraft facility (erp/overdraft.py): drawn, room, this month's interest estimate; book the interest
 @route("GET", "/api/overdrafts", "accounting.coa")
 def overdrafts_list(ctx):
@@ -6652,6 +6717,9 @@ def cloud_session(ctx):
     token = secrets.token_urlsafe(32)
     ctx.db.x("INSERT INTO sessions(token,user_id,expires) VALUES (?,?,datetime('now',?))",
              (token, u["id"], f"+{auth.SESSION_DAYS} days"))
+    if not ctx.body.get("signed_in"):
+        # the app reopened on a workspace sign-in it kept, not a password just typed: locked until the PIN (erp/applock.py)
+        ctx.db.x("UPDATE sessions SET locked=1, born='2000-01-01 00:00:00', seen=datetime('now') WHERE token=?", (token,))
     return ctx.with_session(ok({"user": auth.public_user(u)}), token)
 
 
@@ -7011,6 +7079,12 @@ def _handle(app, method, target, headers, raw, as_user, dry):
                 continue
             if not public and not user:
                 return ok({"error": "Sign in to continue."}, 401)
+            if user and token and as_user is None and not api_key:    # the app lock (erp/applock.py) — public routes too:
+                # a signed-in session that is locked gets nothing (the start-up data included) but the lock calls
+                from . import applock
+                locked = applock.check(db, user, token, url.path)
+                if locked:
+                    return ok(locked, 423)
             if headers.get("x-ai-call") == "1" and as_user is None:   # a call the AI assistant makes for this person
                 from . import ai
                 ai.guard(db, user, method, url.path, raw, headers, route_module(method, url.path) or module)   # policy; changes only after check + review

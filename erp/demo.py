@@ -813,7 +813,7 @@ def _trim(S, key, d, eom):
 # general chat room…) and the system's own records; every other table holding a row means the books are in use
 SETUP_TABLES = {"settings", "accounts", "account_groups", "warehouses", "tax_codes", "assets", "offer_types", "chat_rooms", "chat_members", "users",
                 "sessions", "audit_log", "user_profiles", "user_groups", "cloud_local", "ai_threads", "ai_usage", "support_tickets",
-                "rent_models", "einv_templates"}
+                "rent_models", "einv_templates", "app_lock", "lock_keys"}   # (the app lock: this device, not business data)
 
 
 # ---- languages: one universal data set; another language only translates it (demo_ar.py)
