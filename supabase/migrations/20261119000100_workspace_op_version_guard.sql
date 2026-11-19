@@ -1,37 +1,34 @@
 -- Reject unsupported client versions at the database boundary, not only in the desktop relay.
--- This prevents an authenticated workspace member from writing a future version into the shared log
--- and making every replica refuse to replay it. It also protects new-device joins from poisoned snapshots.
+-- A direct authenticated RPC call must not be able to poison the company log or a new-device snapshot.
 --
+-- The company-scoped wrappers were introduced in 2026-11-14. Keep their signatures and large-payload
+-- handling intact: validate first, then delegate to the original company-scoped functions.
 -- Keep the 1.3.0 ceiling in sync with erp.__version__ when a new application release is approved.
-create or replace function public.append_op(p_seq bigint, p_version text, p_app_user text, p_device text,
-  p_method text, p_path text, p_body text, p_content_type text, p_clock timestamp) returns json
+
+create or replace function public.append_op(
+  p_company uuid, p_seq bigint, p_version text, p_app_user text, p_device text,
+  p_method text, p_path text, p_body text, p_content_type text, p_clock timestamp
+) returns json
 language plpgsql security definer set search_path = public as $$
 declare
-  m members;
-  last bigint;
-  who text;
+  r json;
   route text;
 begin
-  select * into m from members where lower(email) = public.beyond_caller() and active;
-  if m.email is null then
-    raise exception 'not a member of this workspace' using errcode = '42501';
-  end if;
-
-  -- Exactly three numeric components; reject malformed and future versions before taking a sequence number.
-  if p_version is null or p_version !~ '^[0-9]+\.[0-9]+\.[0-9]+$' then
+  -- Reject malformed and unsupported versions before any sequence number or payload part is committed.
+  if p_version is null or p_version !~ '^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$' then
     raise exception 'invalid workspace client version' using errcode = '22023';
   end if;
-  if string_to_array(p_version, '.')::integer[] > array[1, 3, 0]::integer[] then
+  if string_to_array(p_version, '.')::numeric[] > array[1, 3, 0]::numeric[] then
     raise exception 'workspace client version % is newer than the supported version 1.3.0', p_version
       using errcode = '22023';
   end if;
 
-  if p_method not in ('POST', 'PUT', 'DELETE') or left(p_path, 5) <> '/api/' then
+  if p_method is null or p_path is null
+     or p_method not in ('POST', 'PUT', 'DELETE') or left(p_path, 5) <> '/api/' then
     raise exception 'invalid change' using errcode = '22023';
   end if;
 
-  -- Mirror cloud.LOCAL_ONLY at the database boundary. This RPC is callable by authenticated members directly,
-  -- so it must not trust the desktop/browser prepare() filter to keep local-only operations out of the shared log.
+  -- Mirror cloud.LOCAL_ONLY. The RPC is callable directly by authenticated members; do not trust client filters.
   route := split_part(p_path, '?', 1);
   if (p_method = 'POST' and route in (
         '/api/login', '/api/logout', '/api/setup', '/api/api-keys', '/api/maintenance',
@@ -47,41 +44,43 @@ begin
     raise exception 'device-local operations cannot be appended to the shared workspace log' using errcode = '22023';
   end if;
 
-  perform pg_advisory_xact_lock(424202);
-  select coalesce(max(seq), 0) into last from ops;
-  if p_seq <> last + 1 then
-    raise exception 'conflict: next change is %', last + 1 using errcode = '40001';
-  end if;
-  who := case when m.gateway and coalesce(p_app_user, '') <> '' then p_app_user else m.email end;
-  insert into ops(seq, version, actor, app_user, device, method, path, body, content_type, clock)
-  values (p_seq, p_version, m.email, who, left(p_device, 80), p_method, p_path, p_body, p_content_type, p_clock);
-  return json_build_object('seq', p_seq, 'app_user', who);
+  -- Delegation preserves company membership, workspace-role authorization, per-company sequence locking,
+  -- actor attribution, and storage. The wrapper also validates all uploaded parts in the same transaction.
+  r := public.beyond_append_op(
+    p_company, p_seq, p_version, p_app_user, p_device, p_method, p_path,
+    p_body, p_content_type, p_clock
+  );
+  perform public.beyond_take_parts(p_company, p_body, 'op');
+  return r;
 end $$;
 
 
--- Snapshot writes are privileged, but their version is still supplied by the caller. Keep the same version ceiling
--- so a gateway or administrator cannot poison future joins with a snapshot no client can open.
-create or replace function public.put_snapshot(p_seq bigint, p_version text, p_data text) returns bigint
+create or replace function public.put_snapshot(
+  p_company uuid, p_seq bigint, p_version text, p_data text
+) returns bigint
 language plpgsql security definer set search_path = public as $$
-declare m members;
+declare
+  r bigint;
 begin
-  select * into m from members where lower(email) = public.beyond_caller() and active;
-  if m.email is null or not (m.is_admin or m.gateway) then
-    raise exception 'only administrators can save workspace copies' using errcode = '42501';
-  end if;
-  if p_version is null or p_version !~ '^[0-9]+\.[0-9]+\.[0-9]+$' then
+  if p_version is null or p_version !~ '^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$' then
     raise exception 'invalid workspace client version' using errcode = '22023';
   end if;
-  if string_to_array(p_version, '.')::integer[] > array[1, 3, 0]::integer[] then
+  if string_to_array(p_version, '.')::numeric[] > array[1, 3, 0]::numeric[] then
     raise exception 'workspace client version % is newer than the supported version 1.3.0', p_version
       using errcode = '22023';
   end if;
-  if p_seq > (select coalesce(max(seq), 0) from ops) then
-    raise exception 'snapshot is ahead of the log';
-  end if;
-  insert into snapshots(seq, version, data, created_by) values (p_seq, p_version, p_data, m.email)
-  on conflict (seq) do update set version = excluded.version, data = excluded.data, created_by = excluded.created_by,
-                                  created_at = now();
-  delete from snapshots where seq not in (select seq from snapshots order by seq desc limit 3);
-  return p_seq;
+
+  -- Preserve the original authorization, sequence checks, and per-company snapshot storage.
+  r := public.beyond_put_snapshot(p_company, p_seq, p_version, p_data);
+  perform public.beyond_take_parts(p_company, p_data, 'snap');
+
+  -- Match the 2026-11-14 wrapper: discard pieces for snapshots no longer retained.
+  delete from op_parts p
+  where p.company_id = p_company and p.kind = 'snap'
+    and not exists (
+      select 1 from snapshots s
+      where s.company_id = p_company
+        and left(s.data, 64) like 'parts:' || p.part_id || ':%'
+    );
+  return r;
 end $$;
