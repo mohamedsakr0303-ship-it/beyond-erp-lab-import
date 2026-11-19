@@ -779,6 +779,8 @@ class CloudSync:
                     self._unsure = None
                     op["app_user"] = (stored or {}).get("app_user") or op["app_user"]  # exactly as the log has it
                     reply = apply(self.app, op)
+                    if reply.status >= 400:
+                        raise ReplayError(op["seq"], reply.status, local_get(self.db, "sync_failed_reason"))
                     self._maybe_snapshot(force=is_heavy(op["method"], op["path"]))
                     return reply
                 return ok({"error": "The workspace is busy. Try again."}, 409)
