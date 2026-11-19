@@ -28,9 +28,9 @@ class CrossTenant(unittest.TestCase):
         cls.cid = cls.a.rpc("create_company", p_name=MARK + " Ltd")["id"]
         cls.bid = cls.b.rpc("create_company", p_name="B Ltd")["id"]
         for i in range(1, 4):
-            cls.a.rpc("append_op", p_company=cls.cid, p_seq=i, p_version="2.5.0", p_device="pc",
+            cls.a.rpc("append_op", p_company=cls.cid, p_seq=i, p_version="1.3.0", p_device="pc",
                       p_body='{"memo": "%s %d"}' % (MARK, i), **OP)
-        cls.a.rpc("put_snapshot", p_company=cls.cid, p_seq=3, p_version="2.5.0", p_data=MARK + "-snapshot")
+        cls.a.rpc("put_snapshot", p_company=cls.cid, p_seq=3, p_version="1.3.0", p_data=MARK + "-snapshot")
         cls.ticket = cls.a.rpc("support_open", p_company=cls.cid, p_kind="issue", p_subject=MARK + " subject",
                                p_body=MARK + " body", p_diag={}, p_log=[], p_files=[], p_app_user="")["id"]
         cls.before = cls.state()
