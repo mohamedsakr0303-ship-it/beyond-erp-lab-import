@@ -139,6 +139,33 @@ class LocalOnly(unittest.TestCase):
         self.assertEqual(cloud.local_get(n.db, "sync_failed_seq"), "1")
         self.assertIn("HTTP 403", cloud.local_get(n.db, "sync_failed_reason"))
 
+    def test_pull_stops_at_the_first_failed_replay(self):
+        tmp = tempfile.TemporaryDirectory()
+        n = Node(tmp.name, "pull-failure")
+        n.call("POST", "/api/setup", {"username": "admin", "password": "secret123"})
+        cloud.local_set(n.db, "last_seq", 0)
+        op = {"seq": 1, "version": "1.3.0", "clock": "2026-11-19T10:00:00", "method": "POST",
+              "path": "/api/contacts", "body": "{}", "content_type": "application/json", "app_user": "admin"}
+        failure = SimpleNamespace(status=403, body=b'{"error":"not allowed"}')
+
+        class FakeClient:
+            calls = 0
+
+            def select(self, *args):
+                self.calls += 1
+                return [op]
+
+        client = FakeClient()
+        with patch.object(n.srv.cloud, "client", return_value=client), patch.object(
+            n.srv.cloud, "token", return_value="token"
+        ), patch.object(n.srv.cloud, "_co", return_value="company"), patch(
+            "erp.server.handle", return_value=failure
+        ):
+            with self.assertRaises(cloud.ReplayError):
+                n.srv.cloud.pull()
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(cloud.last_seq(n.db), 0)
+
     def test_the_role_change_is_refused_without_the_workspace(self):
         tmp = tempfile.TemporaryDirectory()
         n = Node(tmp.name, "solo")
