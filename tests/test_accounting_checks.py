@@ -87,6 +87,7 @@ class Books(unittest.TestCase):
 
     def test_rounding_is_half_up_in_decimal(self):
         self.assertEqual([to_minor(x) for x in (1.005, 2.675, 0.125, 8.325)], [101, 268, 13, 833])
+        self.assertEqual(to_minor("90071992547409.93"), 9007199254740993)
         self.assertEqual((tax_of(475, 0.14), tax_of(-475, 0.14), tax_of(2075, 0.14)), (67, -67, 291))
 
     def test_asset_cost_is_locked_once_its_purchase_is_booked(self):
