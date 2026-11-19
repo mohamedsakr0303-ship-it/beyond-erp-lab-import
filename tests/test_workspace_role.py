@@ -25,6 +25,11 @@ class WorkspaceRole(unittest.TestCase):
         cls.ws.__exit__(None, None, None)
 
     def test_only_the_company_s_super_administrator_says_so(self):
+        # Direct RPC calls must not be able to poison the shared log with a future or malformed version.
+        for version in ("999.0.0", "not-a-version"):
+            bad = {**OP, "p_version": version, "p_path": "/api/contacts"}
+            with self.assertRaisesRegex(pgtest.SQLError, "workspace client version|invalid workspace client version"):
+                self.boss.rpc("append_op", p_company=self.cid, p_seq=1, **bad)
         with self.assertRaises(pgtest.SQLError) as cm:                    # an administrator, not a super administrator
             self.clerk.rpc("append_op", p_company=self.cid, p_seq=1, **OP)
         self.assertIn("super administrator", str(cm.exception))
