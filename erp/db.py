@@ -61,7 +61,7 @@ def to_minor(amount) -> int:
     if amount in (None, ""):
         return 0
     from decimal import ROUND_HALF_UP, Decimal
-    return int((Decimal(str(float(amount))) * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    return int((Decimal(str(amount)) * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def to_major(minor) -> float:
