@@ -688,6 +688,9 @@ class Handler(BaseHTTPRequestHandler):
         if fn == "append_op":
             if not m:
                 return _err("42501", "not a member of this company", 403)
+            version = str(p.get("p_version") or "")
+            if not re.fullmatch(r"\\d+\\.\\d+\\.\\d+", version) or tuple(map(int, version.split("."))) > (1, 3, 0):
+                return _err("22023", "unsupported workspace client version")
             if not st.bstate(cid)["can_write"]:
                 return _err("P0402", "subscription_ended: the free trial / paid period of this company has ended — an administrator "
                                      "can subscribe in Settings → Subscription. Everything stays available to view, print and export.")
