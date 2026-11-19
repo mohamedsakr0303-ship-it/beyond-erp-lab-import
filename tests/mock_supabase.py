@@ -734,6 +734,9 @@ class Handler(BaseHTTPRequestHandler):
         if fn == "put_snapshot":
             if not m or not (m["is_admin"] or m["gateway"]):
                 return _err("42501", "only administrators can save company copies", 403)
+            version = str(p.get("p_version") or "")
+            if not re.fullmatch(r"\\d+\\.\\d+\\.\\d+", version) or tuple(map(int, version.split("."))) > (1, 3, 0):
+                return _err("22023", "unsupported workspace client version")
             bad = take_parts(p["p_data"], "snap")
             if bad:
                 return bad
