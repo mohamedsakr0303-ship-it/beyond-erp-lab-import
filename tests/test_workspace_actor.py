@@ -117,6 +117,11 @@ class WorkspaceActor(unittest.TestCase):
         hostile = {**op, "p_version": "999.0.0", "p_path": "/api/contacts"}
         with self.assertRaises((PermissionError, RuntimeError)):
             clerk.rpc("append_op", hostile, ctok)
+        local_only = {**op, "p_path": "/api/einvoice/submit"}
+        with self.assertRaises((PermissionError, RuntimeError)):
+            owner.rpc("append_op", local_only, otok)
+        with self.assertRaises((PermissionError, RuntimeError)):
+            owner.rpc("put_snapshot", {"p_company": cid, "p_seq": 0, "p_version": "999.0.0", "p_data": "poison"}, otok)
         self.assertEqual(self.sb.state.ops[cid], [])
         self.assertEqual(owner.rpc("append_op", op, otok)["seq"], 1)                  # the creator may
         self.assertFalse(clerk.rpc("my_super", {"p_company": cid}, ctok))
