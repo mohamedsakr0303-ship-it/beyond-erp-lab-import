@@ -14,6 +14,8 @@ name: deploy
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -81,6 +83,7 @@ jobs:
 
   database:
     needs: test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -202,7 +205,7 @@ jobs:
     needs: [test, database, desktop]
     # the site still deploys when the database step fails (e.g. an outdated database password): the app works with an
     # older workspace and says what is missing, and the next database run catches up
-    if: always() && needs.test.result == 'success' && needs.database.result != 'cancelled'
+    if: always() && github.event_name != 'pull_request' && needs.test.result == 'success' && needs.database.result != 'cancelled'
     runs-on: ubuntu-24.04
     env:
       BEYOND_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
