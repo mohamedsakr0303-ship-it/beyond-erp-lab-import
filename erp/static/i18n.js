@@ -148,7 +148,7 @@ window.I18N = {
   legacy: ["Original BEYOND workbook (v0.6–v0.9)", "مصنف BEYOND الأصلي (v0.6–v0.9)"],
   // ---- settings
   company: ["Company", "الشركة"], company_name: ["Company name", "اسم الشركة"], tagline: ["Tagline", "الشعار"], address: ["Address", "العنوان"],
-  tax_id: ["Tax registration no.", "رقم التسجيل الضريبي"], currency: ["Currency", "العملة"], appearance: ["Appearance", "المظهر"],
+  currency: ["Currency", "العملة"], appearance: ["Appearance", "المظهر"],
   font_family: ["Font", "الخط"], font_size: ["Font size", "حجم الخط"], default_lang: ["Default language", "اللغة الافتراضية"],
   menu_names: ["Menu names", "أسماء القوائم"], menu_note: ["Rename any menu or group. Leave blank to use the standard term.", "أعد تسمية أي قائمة أو مجموعة. اتركه فارغاً لاستخدام الاسم المعتاد."],
   units: ["Units of measure", "وحدات القياس"], backups_keep: ["Backups to keep", "عدد النسخ الاحتياطية"], maintenance: ["Compact & optimise database", "ضغط وتحسين قاعدة البيانات"],
@@ -311,7 +311,7 @@ Object.assign(window.I18N, {
   perm_help: ["Set a whole module in its dark row, then fine-tune each screen under it. View = open and export; View + add = also create new records; Full = also edit, void and delete.", "حدد صلاحية القسم كله من سطره الداكن ثم عدّل كل شاشة تحته. عرض = فتح وتصدير؛ عرض + إضافة = إنشاء سجلات جديدة أيضاً؛ كامل = تعديل وإلغاء وحذف أيضاً."],
   preset: ["Quick set", "ضبط سريع"], pr_none: ["No access to anything", "بدون أي صلاحية"], pr_view: ["View everything", "عرض الكل"], pr_add: ["View + add everywhere", "عرض + إضافة للكل"], pr_full: ["Full access (not administrator)", "صلاحية كاملة (ليس مسؤولاً)"],
   tab_workspace: ["Workspace (cloud)", "مساحة العمل (سحابية)"], email: ["Email", "البريد الإلكتروني"],
-  effective: ["Effective", "الفعلية"], screen: ["Screen", "الشاشة"], perm_full: ["Full (edit, void, delete)", "كامل (تعديل وإلغاء وحذف)"],
+  effective: ["Effective", "الفعلية"], screen: ["Screen", "الشاشة"],
 });
 
 Object.assign(window.I18N, {
