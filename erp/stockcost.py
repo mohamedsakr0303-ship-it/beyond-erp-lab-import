@@ -116,18 +116,18 @@ def compute(db, item_id, how=None):
             if m["kind"] == "Transfer" and m["link_id"] in values:
                 v, unit_avg = values[m["link_id"]], units[m["link_id"]]
             elif m["fixed"]:
-                v = int(m["value"] if m["value"] is not None else round(q * (m["rate"] or 0)))
+                v = int(m["value"] if m["value"] is not None else half_up(q * (m["rate"] or 0)))
                 unit_avg = m["rate"] or (v / q if q > EPS else 0.0)
             else:                             # a count gain at the cost of what is on hand
                 unit_avg = s.avg if how == "average" else s.on_hand_unit()
-                v = int(round(q * unit_avg)) if how == "average" else half_up(q * unit_avg)
+                v = half_up(q * unit_avg)
             s.take_in(q, v, unit_avg)
             values[m["id"]], units[m["id"]] = v, unit_avg if how == "average" else (v / q if q > EPS else 0.0)
         else:
             if q > s.qty + EPS:
                 short.append((m, max(s.qty, 0.0)))
             if how == "average":
-                v, unit = int(round(q * s.avg)), s.avg
+                v, unit = half_up(q * s.avg), s.avg
             else:
                 v = half_up(s.first_cost(s.qout + q) - s.first_cost(s.qout))
                 unit = v / q if q > EPS else 0.0
