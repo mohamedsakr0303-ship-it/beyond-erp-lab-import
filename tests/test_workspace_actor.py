@@ -11,6 +11,8 @@ import sys
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -108,16 +110,35 @@ class WorkspaceActor(unittest.TestCase):
         code = self.sb.state.companies[cid]["invite_code"]
         clerk.rpc("join_company", {"p_code": code}, ctok)
         self.sb.state.members[(cid, "clerk@y.com")]["pending"] = False
-        op = {"p_company": cid, "p_seq": 1, "p_version": "9", "p_app_user": "", "p_device": "x", "p_method": "POST",
+        op = {"p_company": cid, "p_seq": 1, "p_version": "1.3.0", "p_app_user": "", "p_device": "x", "p_method": "POST",
               "p_path": "/api/users/workspace-role", "p_body": "{}", "p_content_type": "application/json", "p_clock": "2026-01-01T00:00:00"}
         with self.assertRaises((PermissionError, RuntimeError)):
             clerk.rpc("append_op", op, ctok)
+        hostile = {**op, "p_version": "999.0.0", "p_path": "/api/contacts"}
+        with self.assertRaises((PermissionError, RuntimeError)):
+            clerk.rpc("append_op", hostile, ctok)
+        self.assertEqual(self.sb.state.ops[cid], [])
         self.assertEqual(owner.rpc("append_op", op, otok)["seq"], 1)                  # the creator may
         self.assertFalse(clerk.rpc("my_super", {"p_company": cid}, ctok))
         self.assertTrue(owner.rpc("my_super", {"p_company": cid}, otok))
 
 
 class LocalOnly(unittest.TestCase):
+    def test_failed_replay_does_not_advance_the_sync_cursor(self):
+        tmp = tempfile.TemporaryDirectory()
+        n = Node(tmp.name, "replay")
+        n.call("POST", "/api/setup", {"username": "admin", "password": "secret123"})
+        cloud.local_set(n.db, "last_seq", 0)
+        op = {"seq": 1, "version": "1.3.0", "clock": "2026-11-19T10:00:00", "method": "POST",
+              "path": "/api/contacts", "body": "{}", "content_type": "application/json", "app_user": "admin"}
+        failure = SimpleNamespace(status=403, body=b'{"error":"not allowed"}')
+        with patch("erp.server.handle", return_value=failure):
+            reply = cloud.apply(n.srv, op)
+        self.assertEqual(reply.status, 403)
+        self.assertEqual(cloud.last_seq(n.db), 0)
+        self.assertEqual(cloud.local_get(n.db, "sync_failed_seq"), "1")
+        self.assertIn("HTTP 403", cloud.local_get(n.db, "sync_failed_reason"))
+
     def test_the_role_change_is_refused_without_the_workspace(self):
         tmp = tempfile.TemporaryDirectory()
         n = Node(tmp.name, "solo")
