@@ -22,6 +22,43 @@ def one_by_one(s, x):
 
 
 class FastFifo(unittest.TestCase):
+    def test_average_cost_uses_half_up_for_fractional_quantities(self):
+        class FakeDB:
+            def setting(self, key):
+                return "average"
+
+            def q(self, sql, params=()):
+                return [
+                    {"id": 1, "item_id": 1, "warehouse_id": 1, "date": "2026-01-01", "qty": 0.5,
+                     "rate": 101, "value": 51, "booked": 1, "link_id": None, "fixed": 1,
+                     "kind": "Receipt", "entry_id": None, "bu_id": None},
+                    {"id": 2, "item_id": 1, "warehouse_id": 1, "date": "2026-01-02", "qty": -0.5,
+                     "rate": 0, "value": None, "booked": 1, "link_id": None, "fixed": 0,
+                     "kind": "Issue", "entry_id": None, "bu_id": None},
+                ]
+
+        result = stockcost.compute(FakeDB(), 1)
+        self.assertEqual(result["values"][2], 51)
+        self.assertEqual(result["levels"][1][:2], (0.0, 0))
+
+    def test_average_count_gain_uses_half_up(self):
+        class FakeDB:
+            def setting(self, key):
+                return "average"
+
+            def q(self, sql, params=()):
+                return [
+                    {"id": 1, "item_id": 1, "warehouse_id": 1, "date": "2026-01-01", "qty": 0.5,
+                     "rate": 101, "value": 51, "booked": 1, "link_id": None, "fixed": 1,
+                     "kind": "Receipt", "entry_id": None, "bu_id": None},
+                    {"id": 2, "item_id": 1, "warehouse_id": 1, "date": "2026-01-02", "qty": 0.5,
+                     "rate": 0, "value": None, "booked": 1, "link_id": None, "fixed": 0,
+                     "kind": "Adjustment", "entry_id": None, "bu_id": None},
+                ]
+
+        result = stockcost.compute(FakeDB(), 1)
+        self.assertEqual(result["values"][2], 51)
+
     def test_the_same_as_one_by_one(self):
         rnd = random.Random(7)
         for _ in range(20):
