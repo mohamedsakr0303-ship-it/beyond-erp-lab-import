@@ -140,9 +140,9 @@ def _local_only(method, path):
             "/api/me/two-step", "/api/me/two-step/off",
         })
         or (method == "PUT" and route == "/api/me/password")
-        or (method == "DELETE" and re.fullmatch(r"/api/api-keys/\\d+", route) is not None)
-        or (method == "POST" and re.fullmatch(r"/api/einvoice/\\d+/(refresh|cancel)", route) is not None)
-        or (method == "POST" and re.fullmatch(r"/api/[\\w-]+-preview(?:/[\\w-]+)?", route) is not None)
+        or (method == "DELETE" and re.fullmatch(r"/api/api-keys/\d+", route) is not None)
+        or (method == "POST" and re.fullmatch(r"/api/einvoice/\d+/(refresh|cancel)", route) is not None)
+        or (method == "POST" and re.fullmatch(r"/api/[\w-]+-preview(?:/[\w-]+)?", route) is not None)
         or route.startswith(("/api/cloud/", "/api/ai/", "/api/lock/"))
         or route in ("/api/cloud", "/api/ai", "/api/lock")
         or (method == "POST" and route == "/api/import" and re.search(r"[?&]dry_run=1(?:&|$)", str(path or "")) is not None)
@@ -735,7 +735,7 @@ class Handler(BaseHTTPRequestHandler):
             if not m or not (m["is_admin"] or m["gateway"]):
                 return _err("42501", "only administrators can save company copies", 403)
             version = str(p.get("p_version") or "")
-            if not re.fullmatch(r"\\d+\\.\\d+\\.\\d+", version) or tuple(map(int, version.split("."))) > (1, 3, 0):
+            if not re.fullmatch(r"\d+\.\d+\.\d+", version) or tuple(map(int, version.split("."))) > (1, 3, 0):
                 return _err("22023", "unsupported workspace client version")
             bad = take_parts(p["p_data"], "snap")
             if bad:
