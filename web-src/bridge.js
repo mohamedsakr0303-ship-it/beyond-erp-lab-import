@@ -404,6 +404,13 @@ def cloud_new_books(name, email):
             const r = unpackReply(P("cloud_apply")(JSON.stringify(op)));
             if (unsure && unsure.op === opKey(op)) unsure.reply = r;   // the change whose answer was lost did reach the log
             if (r.status === 0) { blocked = new TextDecoder().decode(r.body); setStatus("update", `A newer app version (${blocked}) is in use — reload this page to update`); throw new CloudError(status.error, "update"); }
+            if (r.status >= 400) {
+              let detail = new TextDecoder().decode(r.body || new Uint8Array());
+              try { const parsed = JSON.parse(detail); detail = parsed.error || parsed.message || detail; } catch (_) {}
+              const message = `Workspace change ${op.seq} could not be replayed (HTTP ${r.status}): ${detail.slice(0, 240)}`;
+              setStatus("error", message);
+              throw new CloudError(message, "replay", r.status);
+            }
             n++;
             await breathe();   // let taps and scrolling through between changes
           }
@@ -448,6 +455,14 @@ def cloud_new_books(name, email):
           op.app_user = (stored && stored.app_user) || op.app_user;
           if (big) { progress("apply"); await paint(); }
           const r = unpackReply(P("cloud_apply")(JSON.stringify(op)));
+          if (r.status === 0) { blocked = new TextDecoder().decode(r.body); setStatus("update", `A newer app version (${blocked}) is in use — reload this page to update`); throw new CloudError(status.error, "update"); }
+          if (r.status >= 400) {
+            let detail = new TextDecoder().decode(r.body || new Uint8Array());
+            try { const parsed = JSON.parse(detail); detail = parsed.error || parsed.message || detail; } catch (_) {}
+            const message = `Workspace change ${op.seq} could not be replayed locally (HTTP ${r.status}): ${detail.slice(0, 240)}`;
+            setStatus("error", message);
+            throw new CloudError(message, "replay", r.status);
+          }
           schedule(); setStatus("ok"); if (heavy(op)) maybeSnapshot(true); else { if (big) progress("end"); maybeSnapshot(false); }   // after an import / demo / erase: a fresh copy at once, so other devices load it instead of replaying
           return r;
         }
