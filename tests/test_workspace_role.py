@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "pg"))
 import pgtest  # noqa: E402
 
 OP = dict(p_app_user="", p_device="pc", p_method="POST", p_path="/api/users/workspace-role", p_body="{}",
-          p_content_type="application/json", p_clock="2026-11-16 10:00:00", p_version="2.6.0")
+          p_content_type="application/json", p_clock="2026-11-16 10:00:00", p_version="1.3.0")
 
 
 @unittest.skipUnless(pgtest.available(), "PostgreSQL is not installed")
