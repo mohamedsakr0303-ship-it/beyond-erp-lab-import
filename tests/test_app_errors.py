@@ -74,12 +74,12 @@ class AppErrors(unittest.TestCase):
         self.assertEqual(self.a.rpc("app_errors_report", p_company=self.one, p_items=[{"message": ""}] * 30)["saved"], 0)
 
     def test_a_companys_devices_versions_and_errors(self):
-        for i, (dev, ver) in enumerate((("laptop", "2.3.0"), ("phone", "2.5.0"), ("phone", "2.5.1")), 1):
+        for i, (dev, ver) in enumerate((("laptop", "1.0.0"), ("phone", "1.2.0"), ("phone", "1.3.0")), 1):
             self.a.rpc("append_op", p_company=self.one, p_seq=i, p_version=ver, p_device=dev, p_body="{}", **OP)
         self.report(self.a, self.one, message="Device test error")
         h = self.sales.rpc("console_company_health", p_company=self.one)       # the customers right reads it
         devs = {d["device"]: d for d in h["devices"]}
-        self.assertEqual((devs["phone"]["version"], devs["phone"]["changes"], devs["laptop"]["version"]), ("2.5.1", 2, "2.3.0"))
+        self.assertEqual((devs["phone"]["version"], devs["phone"]["changes"], devs["laptop"]["version"]), ("1.3.0", 2, "1.0.0"))
         self.assertIn("Device test error", [e["message"] for e in h["errors"]])
         self.assertTrue(h["latest"])
         with self.assertRaises(pgtest.SQLError):
@@ -127,7 +127,7 @@ class AppErrors(unittest.TestCase):
 
     def test_a_companys_recent_changes_without_figures(self):
         for i in range(1, 4):
-            self.b.rpc("append_op", p_company=self.two, p_seq=i, p_version="2.5.0", p_device="pc", p_body='{"amount": 5000}',
+            self.b.rpc("append_op", p_company=self.two, p_seq=i, p_version="1.3.0", p_device="pc", p_body='{"amount": 5000}',
                        **{**OP, "p_path": f"/api/journal/{i}?x=secret"})
         ch = self.lead.rpc("console_company_changes", p_company=self.two, p_limit=2)
         self.assertEqual([c["seq"] for c in ch], [3, 2])
