@@ -122,7 +122,7 @@ class WorkspaceActor(unittest.TestCase):
             owner.rpc("append_op", local_only, otok)
         with self.assertRaises((PermissionError, RuntimeError)):
             owner.rpc("put_snapshot", {"p_company": cid, "p_seq": 0, "p_version": "999.0.0", "p_data": "poison"}, otok)
-        self.assertEqual(self.sb.state.ops[cid], [])
+        self.assertEqual(self.sb.state.ops.get(cid, []), [])
         self.assertEqual(owner.rpc("append_op", op, otok)["seq"], 1)                  # the creator may
         self.assertFalse(clerk.rpc("my_super", {"p_company": cid}, ctok))
         self.assertTrue(owner.rpc("my_super", {"p_company": cid}, otok))
