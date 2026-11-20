@@ -18,7 +18,7 @@ is undone with its movement. Stock that would fall below zero at any point from 
 """
 import bisect
 import datetime as _dt
-import math
+from decimal import Decimal, ROUND_HALF_UP
 
 from .db import to_major
 
@@ -40,7 +40,7 @@ def method(db):
 
 def half_up(x):
     """Round to a whole minor unit the way a spreadsheet's ROUND does (halves away from zero)."""
-    return int(math.floor(x + 0.5)) if x >= 0 else -int(math.floor(-x + 0.5))
+    return int(Decimal(str(x)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def phase(m):
