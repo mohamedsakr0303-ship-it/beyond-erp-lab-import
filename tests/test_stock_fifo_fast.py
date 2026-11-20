@@ -22,6 +22,12 @@ def one_by_one(s, x):
 
 
 class FastFifo(unittest.TestCase):
+    def test_half_up_uses_decimal_ties_away_from_zero(self):
+        self.assertEqual(stockcost.half_up(2.5), 3)
+        self.assertEqual(stockcost.half_up(-2.5), -3)
+        self.assertEqual(stockcost.half_up(2.675), 3)
+        self.assertEqual(stockcost.half_up(-2.675), -3)
+
     def test_average_cost_uses_half_up_for_fractional_quantities(self):
         class FakeDB:
             def setting(self, key):
