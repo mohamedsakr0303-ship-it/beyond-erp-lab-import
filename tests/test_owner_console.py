@@ -48,7 +48,7 @@ class OwnerConsole(unittest.TestCase):
         st = self.state(self.alice, self.a2)
         self.assertEqual((st["status"], st["can_write"]), ("unpaid", False))
         with self.assertRaisesRegex(pgtest.SQLError, "not in a subscription yet"):
-            self.alice.rpc("append_op", p_company=self.a2, p_seq=1, p_version="t", p_app_user="", p_device="d", p_method="POST",
+            self.alice.rpc("append_op", p_company=self.a2, p_seq=1, p_version="1.3.0", p_app_user="", p_device="d", p_method="POST",
                            p_path="/api/x", p_body="{}", p_content_type="application/json", p_clock="2026-10-27 10:00:00")
 
     def test_companies_existing_when_this_arrives_keep_their_trial(self):
