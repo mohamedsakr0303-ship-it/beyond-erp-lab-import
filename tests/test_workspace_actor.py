@@ -117,6 +117,9 @@ class WorkspaceActor(unittest.TestCase):
         hostile = {**op, "p_version": "999.0.0", "p_path": "/api/contacts"}
         with self.assertRaises((PermissionError, RuntimeError)):
             clerk.rpc("append_op", hostile, ctok)
+        for malformed in ("1", "1.3.0.0", "not-a-version", "1000000000.0.0"):
+            with self.assertRaises((PermissionError, RuntimeError)):
+                clerk.rpc("append_op", {**op, "p_version": malformed, "p_path": "/api/contacts"}, ctok)
         local_only = {**op, "p_path": "/api/einvoice/submit"}
         with self.assertRaises((PermissionError, RuntimeError)):
             owner.rpc("append_op", local_only, otok)
