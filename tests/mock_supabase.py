@@ -131,6 +131,13 @@ def _q(q, key):
     return re.sub(r"^(eq|gt|ilike|neq)\.", "", v)
 
 
+def _supported_version(value):
+    version = str(value or "")
+    if not re.fullmatch(r"[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}", version):
+        return False
+    return tuple(map(int, version.split("."))) <= (1, 3, 0)
+
+
 def _local_only(method, path):
     route = str(path or "").split("?", 1)[0]
     return (
@@ -707,8 +714,7 @@ class Handler(BaseHTTPRequestHandler):
         if fn == "append_op":
             if not m:
                 return _err("42501", "not a member of this company", 403)
-            version = str(p.get("p_version") or "")
-            if not re.fullmatch(r"\d+\.\d+\.\d+", version) or tuple(map(int, version.split("."))) > (1, 3, 0):
+            if not _supported_version(p.get("p_version")):
                 return _err("22023", "unsupported workspace client version")
             if p.get("p_method") not in ("POST", "PUT", "DELETE") or not str(p.get("p_path") or "").startswith("/api/"):
                 return _err("22023", "invalid change")
@@ -734,8 +740,7 @@ class Handler(BaseHTTPRequestHandler):
         if fn == "put_snapshot":
             if not m or not (m["is_admin"] or m["gateway"]):
                 return _err("42501", "only administrators can save company copies", 403)
-            version = str(p.get("p_version") or "")
-            if not re.fullmatch(r"\d+\.\d+\.\d+", version) or tuple(map(int, version.split("."))) > (1, 3, 0):
+            if not _supported_version(p.get("p_version")):
                 return _err("22023", "unsupported workspace client version")
             bad = take_parts(p["p_data"], "snap")
             if bad:
