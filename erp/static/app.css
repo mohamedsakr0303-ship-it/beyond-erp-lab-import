@@ -275,11 +275,11 @@ tr.pending td{background:rgba(37,99,235,.06)}
 .cgrid .ccard{margin:0;cursor:pointer;min-width:0}
 .cgrid .ccard b{overflow-wrap:anywhere}
 /* Bank-account tiles: keep headings and actions aligned when account names wrap. */
-.cgrid>.card{display:flex;flex-direction:column;min-width:0}
-.cgrid>.card>b{display:block;min-height:2.8em;line-height:1.4;overflow-wrap:anywhere}
-.cgrid>.card>.kpis{margin:8px 0 6px}
-.cgrid>.card>.muted{min-height:1.5em}
-.cgrid>.card>.row{margin-top:auto!important}
+.cgrid>.ccard{display:flex;flex-direction:column;min-width:0}
+.cgrid>.ccard>b{display:block;min-height:2.8em;line-height:1.4;overflow-wrap:anywhere}
+.cgrid>.ccard>.kpis{margin:8px 0 6px}
+.cgrid>.ccard>.muted{min-height:1.5em}
+.cgrid>.ccard>.row{margin-top:auto!important}
 .ccard .muted{font-size:.85em;overflow-wrap:anywhere}
 h4.fsec{margin:14px 0 4px;font-size:.85em;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
 .combo{position:fixed;z-index:1000;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);overflow-y:auto;overscroll-behavior:contain}
