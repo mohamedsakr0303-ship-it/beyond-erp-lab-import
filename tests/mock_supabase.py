@@ -131,6 +131,32 @@ def _q(q, key):
     return re.sub(r"^(eq|gt|ilike|neq)\.", "", v)
 
 
+def _supported_version(value):
+    version = str(value or "")
+    if not re.fullmatch(r"[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}", version):
+        return False
+    return tuple(map(int, version.split("."))) <= (1, 3, 0)
+
+
+def _local_only(method, path):
+    route = str(path or "").split("?", 1)[0]
+    return (
+        (method == "POST" and route in {
+            "/api/login", "/api/logout", "/api/setup", "/api/api-keys", "/api/maintenance",
+            "/api/offers-preview", "/api/einvoice/test", "/api/einvoice/submit", "/api/ereceipts-submit",
+            "/api/me/two-step", "/api/me/two-step/off",
+        })
+        or (method == "PUT" and route == "/api/me/password")
+        or (method == "DELETE" and re.fullmatch(r"/api/api-keys/\d+", route) is not None)
+        or (method == "POST" and re.fullmatch(r"/api/einvoice/\d+/(refresh|cancel)", route) is not None)
+        or (method == "POST" and re.fullmatch(r"/api/[\w-]+-preview(?:/[\w-]+)?", route) is not None)
+        or route.startswith(("/api/cloud/", "/api/ai/", "/api/lock/"))
+        or route in ("/api/cloud", "/api/ai", "/api/lock")
+        or (method == "POST" and route == "/api/import" and re.search(r"[?&]dry_run=1(?:&|$)", str(path or "")) is not None)
+    )
+
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -688,6 +714,12 @@ class Handler(BaseHTTPRequestHandler):
         if fn == "append_op":
             if not m:
                 return _err("42501", "not a member of this company", 403)
+            if not _supported_version(p.get("p_version")):
+                return _err("22023", "unsupported workspace client version")
+            if p.get("p_method") not in ("POST", "PUT", "DELETE") or not str(p.get("p_path") or "").startswith("/api/"):
+                return _err("22023", "invalid change")
+            if _local_only(p.get("p_method"), p.get("p_path")):
+                return _err("22023", "device-local operations cannot be appended to the shared workspace log")
             if not st.bstate(cid)["can_write"]:
                 return _err("P0402", "subscription_ended: the free trial / paid period of this company has ended — an administrator "
                                      "can subscribe in Settings → Subscription. Everything stays available to view, print and export.")
@@ -708,6 +740,8 @@ class Handler(BaseHTTPRequestHandler):
         if fn == "put_snapshot":
             if not m or not (m["is_admin"] or m["gateway"]):
                 return _err("42501", "only administrators can save company copies", 403)
+            if not _supported_version(p.get("p_version")):
+                return _err("22023", "unsupported workspace client version")
             bad = take_parts(p["p_data"], "snap")
             if bad:
                 return bad

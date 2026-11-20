@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "pg"))
 import pgtest  # noqa: E402
 
-OP = dict(p_version="t", p_app_user="", p_device="d", p_method="POST", p_path="/api/import?format=parsed",
+OP = dict(p_version="1.3.0", p_app_user="", p_device="d", p_method="POST", p_path="/api/import?format=parsed",
           p_content_type="application/x-beyond-import", p_clock="2026-11-14 10:00:00")
 PID = "abcdef0123456789abcd"
 
@@ -80,13 +80,13 @@ class BigChanges(unittest.TestCase):
             seqs.append(self.seq)
             pid = PID[:-2] + f"s{i}"
             self.admin.rpc("put_part", p_company=self.cid, p_id=pid, p_idx=0, p_data=f"copy{i}")
-            self.admin.rpc("put_snapshot", p_company=self.cid, p_seq=self.seq, p_version="t", p_data=f"parts:{pid}:1")
+            self.admin.rpc("put_snapshot", p_company=self.cid, p_seq=self.seq, p_version="1.3.0", p_data=f"parts:{pid}:1")
         kept = self.admin.select("select part_id from public.op_parts where kind = 'snap' order by part_id")
         self.assertEqual([r["part_id"] for r in kept], [PID[:-2] + f"s{i}" for i in (1, 2, 3)])   # the latest three copies
         with self.assertRaises(pgtest.SQLError):                  # a copy whose piece never arrived
-            self.admin.rpc("put_snapshot", p_company=self.cid, p_seq=self.seq, p_version="t", p_data=f"parts:{PID[:-2]}zz:1")
+            self.admin.rpc("put_snapshot", p_company=self.cid, p_seq=self.seq, p_version="1.3.0", p_data=f"parts:{PID[:-2]}zz:1")
         with self.assertRaises(pgtest.SQLError):                  # copies: administrators only, as before
-            self.clerk.rpc("put_snapshot", p_company=self.cid, p_seq=self.seq, p_version="t", p_data="plain")
+            self.clerk.rpc("put_snapshot", p_company=self.cid, p_seq=self.seq, p_version="1.3.0", p_data="plain")
 
 
 if __name__ == "__main__":

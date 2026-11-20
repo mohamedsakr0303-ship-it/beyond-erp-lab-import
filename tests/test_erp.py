@@ -1645,7 +1645,7 @@ class HostedBilling(unittest.TestCase):
         st = sb.state
         st.owners.add("boss@x.com")
         cid = rpc("create_company", {"p_name": "Acme"}, "ali@x.com")[1]["id"]
-        appended = lambda seq: rpc("append_op", {"p_company": cid, "p_seq": seq, "p_version": "1", "p_app_user": "", "p_device": "t",  # noqa: E731
+        appended = lambda seq: rpc("append_op", {"p_company": cid, "p_seq": seq, "p_version": "1.0.0", "p_app_user": "", "p_device": "t",  # noqa: E731
                                                   "p_method": "POST", "p_path": "/api/x", "p_body": "{}", "p_content_type": "application/json",
                                                   "p_clock": "2026-01-01T00:00:00"}, "ali@x.com")[0]
         self.assertEqual(rpc("billing_status", {"p_company": cid}, "ali@x.com")[1]["status"], "free")
@@ -2860,7 +2860,7 @@ class Companies(unittest.TestCase):
             self.assertEqual(len(cli.select("ops", f"company_id=eq.{alpha}&seq=gt.0", tok)), 1)
             self.assertEqual(cli.select("ops", f"company_id=eq.{beta}&seq=gt.0", tok), [])      # Beta stays closed
             with self.assertRaises(PermissionError):
-                cli.rpc("append_op", {"p_company": beta, "p_seq": 1, "p_version": "1", "p_app_user": "", "p_device": "x",
+                cli.rpc("append_op", {"p_company": beta, "p_seq": 1, "p_version": "1.0.0", "p_app_user": "", "p_device": "x",
                                       "p_method": "POST", "p_path": "/api/bus", "p_body": "{}", "p_content_type": "",
                                       "p_clock": "2026-01-01T00:00:00"}, tok)
             # a fresh offline install: the owner belongs to two companies, so it asks which one to open

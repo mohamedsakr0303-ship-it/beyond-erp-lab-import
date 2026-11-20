@@ -81,6 +81,14 @@ class NeedsUpdate(Exception):
     """The log contains changes made by a newer app version."""
 
 
+class ReplayError(RuntimeError):
+    """A workspace change could not be replayed; the cursor stays before that change."""
+
+    def __init__(self, seq, status, message):
+        self.seq, self.status = int(seq), int(status)
+        super().__init__(message or f"Workspace change {seq} failed with HTTP {status}")
+
+
 def version_tuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", str(v or "0"))[:3])
 
@@ -234,9 +242,17 @@ def apply(app, op):
         reply = handle(app, op["method"], op["path"], headers, decode_body(op.get("body")), as_user=op["app_user"])
     finally:
         _db.CLOCK["at"] = None
+    if reply.status >= 400:
+        detail = (reply.body or b"").decode("utf-8", "replace")[:240]
+        reason = f"Workspace change {op.get('seq')} could not be replayed (HTTP {reply.status}): {detail}"
+        local_set(app.db, "sync_failed_seq", int(op["seq"]))
+        local_set(app.db, "sync_failed_reason", reason)
+        return reply
     local_set(app.db, "last_seq", int(op["seq"]))
+    local_set(app.db, "sync_failed_seq", None)
+    local_set(app.db, "sync_failed_reason", None)
     pw = op.get("_password")
-    if pw and reply.status < 400:  # this device's own change: set the password locally only
+    if pw:  # this device's own change: set the password locally only
         _set_local_password(app.db, op, reply, pw)
     return reply
 
@@ -680,6 +696,8 @@ class CloudSync:
                         raise RuntimeError("The workspace log is incomplete. Try again shortly.")
                     op["body"] = self.get_big(op.get("body"))
                     r = apply(self.app, op)
+                    if r.status >= 400:
+                        raise ReplayError(op["seq"], r.status, local_get(self.db, "sync_failed_reason"))
                     u = getattr(self, "_unsure", None)
                     if u and u["op"] == _op_key(op):
                         u["reply"] = r            # the change whose answer was lost did reach the log
@@ -761,9 +779,14 @@ class CloudSync:
                     self._unsure = None
                     op["app_user"] = (stored or {}).get("app_user") or op["app_user"]  # exactly as the log has it
                     reply = apply(self.app, op)
+                    if reply.status >= 400:
+                        raise ReplayError(op["seq"], reply.status, local_get(self.db, "sync_failed_reason"))
                     self._maybe_snapshot(force=is_heavy(op["method"], op["path"]))
                     return reply
                 return ok({"error": "The workspace is busy. Try again."}, 409)
+            except ReplayError as e:
+                self.status.update(state="error", error=str(e))
+                return ok({"error": str(e), "failed_seq": e.seq}, 409)
             except Offline as e:
                 self.status.update(state="offline", error=str(e))
                 return ok({"error": f"{e}. Changes need a connection to the shared workspace."}, 503)

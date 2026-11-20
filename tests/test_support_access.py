@@ -11,7 +11,7 @@ import pgtest  # noqa: E402
 
 OWNER = "owner@platform.test"
 AGENT = "agent@platform.test"
-OP = dict(p_version="t", p_app_user="", p_device="d", p_method="POST", p_path="/api/x", p_body="{}",
+OP = dict(p_version="1.3.0", p_app_user="", p_device="d", p_method="POST", p_path="/api/x", p_body="{}",
           p_content_type="application/json", p_clock="2026-11-01 10:00:00")
 
 
@@ -61,7 +61,7 @@ class SupportAccess(unittest.TestCase):
         actor = self.ws.sql(f"select actor from ops where company_id = '{cid}' order by seq desc limit 1").strip().splitlines()[-1].strip()
         self.assertEqual(actor, AGENT)
         with self.assertRaises(pgtest.SQLError):                                           # never an administrator
-            self.agent.rpc("put_snapshot", p_company=cid, p_seq=0, p_version="t", p_data="x")
+            self.agent.rpc("put_snapshot", p_company=cid, p_seq=0, p_version="1.3.0", p_data="x")
         self.assertEqual(cust.rpc("billing_status", p_company=cid)["users"], 1)             # no seat taken
         events = [m["body"] for m in cust.rpc("support_get", p_ticket=t["id"])["messages"] if m["kind"] == "event"]
         self.assertTrue(events[-1].startswith("access_fix:"))

@@ -13,7 +13,7 @@ from erp import industries  # noqa: E402
 from erp.db import MODULES  # noqa: E402
 
 OWNER = "owner@platform.test"
-OP = dict(p_seq=1, p_version="t", p_app_user="", p_device="d", p_method="POST", p_path="/api/users", p_body="{}",
+OP = dict(p_seq=1, p_version="1.3.0", p_app_user="", p_device="d", p_method="POST", p_path="/api/users", p_body="{}",
           p_content_type="application/json", p_clock="2026-10-30 10:00:00")
 
 

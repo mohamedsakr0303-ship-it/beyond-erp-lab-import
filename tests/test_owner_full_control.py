@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "pg"))
 import pgtest  # noqa: E402
 
 OWNER = "owner@platform.test"
-OP = dict(p_seq=1, p_version="t", p_app_user="", p_device="d", p_method="PUT", p_path="/api/users/2", p_body="{}",
+OP = dict(p_seq=1, p_version="1.3.0", p_app_user="", p_device="d", p_method="PUT", p_path="/api/users/2", p_body="{}",
           p_content_type="application/json", p_clock="2026-11-08 10:00:00")
 
 
